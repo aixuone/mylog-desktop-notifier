@@ -1,0 +1,36 @@
+{
+  "name": "mylog-desktop-notifier",
+  "version": "1.0.0",
+  "description": "MyLog 桌面通知代理 - 系统级来电/消息提醒",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "build": "node build.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.mylog.desktop-notifier",
+    "productName": "MyLog 通知助手",
+    "directories": { "output": "dist-installer" },
+    "files": ["dist/**/*", "assets/**/*", "package.json"],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "MyLog 通知助手"
+    }
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}

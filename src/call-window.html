@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>来电提醒</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: transparent;
+  width: 380px;
+  height: 280px;
+  overflow: hidden;
+  user-select: none;
+}
+#app {
+  width: 100%;
+  height: 100%;
+  background: rgba(255,255,255,0.96);
+  border-radius: 16px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 24px 20px;
+  position: relative;
+  overflow: hidden;
+}
+/* 顶部提示条 */
+.tip {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  border-radius: 16px 16px 0 0;
+}
+.tip-audio { background: linear-gradient(90deg, #185FA5, #378ADD); }
+.tip-video { background: linear-gradient(90deg, #3B6D11, #639922); }
+.tip-meeting { background: linear-gradient(90deg, #BA7517, #EF9F27); }
+
+/* 头像 */
+.avatar {
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  background: #E6F1FB;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; font-weight: 500; color: #185FA5;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+.avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+
+/* 文字 */
+.call-type {
+  font-size: 13px; color: #888780; margin-bottom: 4px;
+}
+.name {
+  font-size: 16px; font-weight: 500; color: #2C2C2A;
+  margin-bottom: 6px; max-width: 280px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.message {
+  font-size: 13px; color: #5F5E5A;
+  max-width: 300px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-bottom: 20px;
+}
+
+/* 按钮组 */
+.actions { display: flex; gap: 16px; margin-top: auto; }
+.btn {
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+.btn:hover { transform: scale(1.08); }
+.btn:active { transform: scale(0.96); }
+.btn-accept { background: #3B6D11; box-shadow: 0 4px 16px rgba(59,109,17,0.35); }
+.btn-accept:hover { box-shadow: 0 6px 24px rgba(59,109,17,0.5); }
+.btn-reject { background: #A32D2D; box-shadow: 0 4px 16px rgba(163,45,45,0.35); }
+.btn-reject:hover { box-shadow: 0 6px 24px rgba(163,45,45,0.5); }
+.btn-ignore {
+  background: #F1EFE8; color: #5F5E5A;
+  width: auto; border-radius: 32px; padding: 0 20px;
+  font-size: 13px; height: 36px; margin-top: 12px;
+}
+.btn svg { display: block; }
+
+/* 倒计时 */
+.timeout-bar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 3px; background: #E6F1FB;
+}
+.timeout-fill { height: 100%; background: #185FA5; transition: width 1s linear; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="tip" class="tip tip-audio"></div>
+
+  <div class="avatar" id="avatar">
+    <span id="avatar-text">?</span>
+  </div>
+
+  <div class="call-type" id="call-type-label">语音通话</div>
+  <div class="name" id="caller-name">未知用户</div>
+  <div class="message" id="call-message">正在邀请你</div>
+
+  <div class="actions">
+    <!-- 挂断 -->
+    <button class="btn btn-reject" id="btn-reject" title="挂断">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" fill="none"/>
+        <path d="M6.46 6.46l11.08 11.08M17.54 6.46L6.46 17.54" stroke="white" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <!-- 接听 -->
+    <button class="btn btn-accept" id="btn-accept" title="接听">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+        <path d="M22 16.92v3a2 2 0 01-2.18 2 19.86 19.86 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.86 19.86 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 0021.4 16.9 2 2 0 0122 16.92z" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+
+  <button class="btn btn-ignore" id="btn-ignore">忽略</button>
+
+  <div class="timeout-bar">
+    <div class="timeout-fill" id="timeout-fill" style="width:100%"></div>
+  </div>
+</div>
+
+<script>
+const { electronAPI } = window
+
+let callData = {}
+let timeoutTimer = null
+let elapsed = 0
+const TIMEOUT = 45
+
+// 接收数据
+electronAPI.onCallData((data) => {
+  callData = data
+  render(data)
+  startTimeout()
+})
+
+function render(data) {
+  const { callerName, callerAvatar, callType, message } = data
+
+  // 头像
+  const avatarEl = document.getElementById('avatar')
+  const avatarText = document.getElementById('avatar-text')
+  if (callerAvatar) {
+    avatarEl.innerHTML = `<img src="${callerAvatar}" alt="">`
+  } else {
+    avatarText.textContent = (callerName || '?').charAt(0)
+  }
+
+  // 类型标签
+  const typeLabel = document.getElementById('call-type-label')
+  const tip = document.getElementById('tip')
+  if (callType === 'video') {
+    typeLabel.textContent = '视频通话'
+    tip.className = 'tip tip-video'
+  } else if (callType === 'meeting') {
+    typeLabel.textContent = '多人会议'
+    tip.className = 'tip tip-meeting'
+  } else {
+    typeLabel.textContent = '语音通话'
+    tip.className = 'tip tip-audio'
+  }
+
+  document.getElementById('caller-name').textContent = callerName || '未知用户'
+  document.getElementById('call-message').textContent = message || '正在邀请你'
+}
+
+function startTimeout() {
+  elapsed = 0
+  const fill = document.getElementById('timeout-fill')
+  timeoutTimer = setInterval(() => {
+    elapsed++
+    const pct = 100 - (elapsed / TIMEOUT) * 100
+    fill.style.width = pct + '%'
+    if (elapsed >= TIMEOUT) {
+      clearInterval(timeoutTimer)
+      electronAPI.sendCallAction('timeout')
+    }
+  }, 1000)
+}
+
+// 按钮事件
+document.getElementById('btn-accept').addEventListener('click', () => {
+  clearInterval(timeoutTimer)
+  electronAPI.sendCallAction('accept')
+})
+
+document.getElementById('btn-reject').addEventListener('click', () => {
+  clearInterval(timeoutTimer)
+  electronAPI.sendCallAction('reject')
+})
+
+document.getElementById('btn-ignore').addEventListener('click', () => {
+  clearInterval(timeoutTimer)
+  electronAPI.sendCallAction('ignore')
+})
+</script>
+</body>
+</html>

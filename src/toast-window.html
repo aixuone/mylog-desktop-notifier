@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>消息提醒</title>
+<style>
+* { margin:0; padding:0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: transparent;
+  width: 340px;
+  height: 100px;
+  overflow: hidden;
+  user-select: none;
+}
+#app {
+  width: 100%; height: 100%;
+  background: rgba(255,255,255,0.97);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.06);
+  display: flex;
+  align-items: center;
+  padding: 14px 16px;
+  gap: 12px;
+  cursor: pointer;
+  transition: opacity 0.3s, transform 0.3s;
+}
+#app:hover { transform: translateY(-2px); box-shadow: 0 6px 28px rgba(0,0,0,0.16); }
+
+.avatar {
+  width: 44px; height: 44px; border-radius: 50%; background: #E6F1FB;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 500; color: #185FA5; flex-shrink: 0;
+  overflow: hidden;
+}
+.avatar img { width:100%; height:100%; border-radius:50%; object-fit: cover; }
+
+.content { flex:1; min-width:0; }
+.name { font-size:13px; font-weight:500; color:#2C2C2A; margin-bottom:2px; }
+.msg {
+  font-size:12px; color:#5F5E5A;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 200px;
+}
+
+.close-btn {
+  width: 20px; height: 20px; border-radius:50%; border:none;
+  background: #F1EFE8; color:#888780; font-size:12px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  transition: background 0.15s;
+}
+.close-btn:hover { background:#E0DDD6; color:#444441; }
+
+/* 入场动画 */
+@keyframes slideIn { from { opacity:0; transform: translateX(40px); } to { opacity:1; transform: translateX(0); } }
+#app { animation: slideIn 0.35s cubic-bezier(0.16,1,0.3,1); }
+/* 退场 */
+#app.hiding { opacity:0; transform: translateX(40px); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="avatar" id="avatar"><span id="avatar-text">?</span></div>
+  <div class="content">
+    <div class="name" id="sender-name">未知用户</div>
+    <div class="msg" id="msg-preview">发来一条消息</div>
+  </div>
+  <button class="close-btn" id="btn-close" title="忽略">×</button>
+</div>
+
+<script>
+const { electronAPI } = window;
+
+let toastData = {};
+
+electronAPI.onToastData((data) => {
+  toastData = data;
+  render(data);
+});
+
+function render(data) {
+  const { senderName, senderAvatar, content } = data;
+  const avatarEl = document.getElementById('avatar');
+  const avatarText = document.getElementById('avatar-text');
+
+  if (senderAvatar) {
+    avatarEl.innerHTML = `<img src="${senderAvatar}" alt="">`;
+  } else {
+    avatarText.textContent = (senderName || '?').charAt(0);
+  }
+
+  document.getElementById('sender-name').textContent = senderName || '未知用户';
+
+  // 消息内容截断
+  let preview = content || '';
+  if (preview.length > 80) preview = preview.substring(0, 80) + '...';
+  document.getElementById('msg-preview').textContent = preview;
+}
+
+// 点击弹窗 → 打开浏览器对应会话
+document.getElementById('app').addEventListener('click', (e) => {
+  if (e.target.closest('.close-btn')) return;
+  // 通知主进程打开浏览器
+  electronAPI.openBrowser(toastData.conversationId || '');
+});
+
+document.getElementById('btn-close').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const el = document.getElementById('app');
+  el.classList.add('hiding');
+  setTimeout(() => { electronAPI.closeToast(); }, 300);
+});
+</script>
+</body>
+</html>
