@@ -5,6 +5,10 @@ const { app, Tray, Menu, BrowserWindow, ipcMain, shell } = require('electron')
 const path = require('path')
 const { WebSocketServer } = require('ws')
 
+// ─── Load config ──────────────────────────────────────────
+const config = require('./config.js')
+console.log('[Config] Loaded from config.js')
+
 // ─── Global state ──────────────────────────────────────────
 let tray = null
 let wsServer = null
@@ -13,16 +17,15 @@ let meetingWindow = null     // incoming meeting invitation popup
 let toastWindow = null        // message toast (bottom right)
 let isQuitting = false
 
-const WS_PORT = 18999
+const WS_PORT = config.wsPort
 const PRELOAD_PATH = path.join(__dirname, 'src', 'preload.js')
-const CALL_W = 380
-const CALL_H = 280
-const MEETING_W = 380
-const MEETING_H = 320
+const CALL_W = config.callWindow.width
+const CALL_H = config.callWindow.height
+const MEETING_W = config.meetingWindow.width
+const MEETING_H = config.meetingWindow.height
 
 // Ringtone file (M4A - played via HTML5 Audio in renderer, not PowerShell)
 const RINGTONE_FILE = path.join(__dirname, 'assets', 'ringtone.m4a')
-const fs = require('fs')
 function getRingtonePath() {
   if (fs.existsSync(RINGTONE_FILE)) {
     return 'file:///' + RINGTONE_FILE.replace(/\\/g, '/')
@@ -33,8 +36,8 @@ function getRingtonePath() {
 // Deduplication: prevent duplicate notifications from multiple browser tabs
 const recentCalls = new Map()
 const recentToasts = new Map()
-const DEDUP_CALL_WINDOW_MS = 5000
-const DEDUP_TOAST_WINDOW_MS = 3000
+const DEDUP_CALL_WINDOW_MS = config.deduplication.callWindowMs
+const DEDUP_TOAST_WINDOW_MS = config.deduplication.toastWindowMs
 
 // Check if acrylic material is supported (Win10 1803+)
 function supportsAcrylic() {
@@ -110,7 +113,7 @@ function createTray() {
     { type: 'separator' },
     {
       label: 'Open MyLog / 打开 MyLog',
-      click: () => shell.openExternal('http://localhost:5173'),
+      click: () => shell.openExternal(config.localUrl),
     },
     {
       label: 'Launch at startup / 开机自启',
@@ -141,7 +144,7 @@ function createTray() {
   tray.setContextMenu(contextMenu)
 
   tray.on('click', () => {
-    shell.openExternal('http://localhost:5173')
+    shell.openExternal(config.localUrl)
   })
 }
 
@@ -316,7 +319,7 @@ function showCallWindow(payload, ws) {
         }))
       }
     }
-  }, 45000)
+  }, config.timeout.call)
   callWindow._timer = timer
 }
 
@@ -385,7 +388,7 @@ function showMeetingWindow(payload, ws) {
         }))
       }
     }
-  }, 45000)
+  }, config.timeout.call)
   meetingWindow._timer = timer
 }
 
@@ -409,10 +412,11 @@ function showToast(payload) {
   const { screen } = require('electron')
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width: sw, height: sh } = primaryDisplay.workAreaSize
-  const w = 340
-  const h = 100
-  const x = sw - w - 20
-  const y = sh - h - 20
+  const w = config.toastWindow.width
+  const h = config.toastWindow.height
+  const margin = config.toastWindow.margin
+  const x = sw - w - margin
+  const y = sh - h - margin
 
   toastWindow = new BrowserWindow({
     width: w,
@@ -443,7 +447,7 @@ function showToast(payload) {
       try { toastWindow.close() } catch (e) {}
       toastWindow = null
     }
-  }, 8000)
+  }, config.timeout.toast)
 }
 
 // ─── IPC handlers ─────────────────────────────────────
