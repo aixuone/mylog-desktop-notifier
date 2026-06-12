@@ -1,21 +1,33 @@
-// preload.js - 预加载脚本（安全桥接）
-// 弹窗页面通过此文件安全地与主进程通信
+// preload.js - Preload script (secure IPC bridge)
+// Call & toast windows use this to safely communicate with the main process
 
 const { contextBridge, ipcRenderer } = require('electron')
 
+console.log('[Preload] Loaded')
+
 contextBridge.exposeInMainWorld('electronAPI', {
-  // 用户点击接听/挂断/忽略
+  // ─── Call window ──────────────────────────────
+  /** Send user action (accept/reject/ignore/timeout) for audio/video calls */
   sendCallAction: (action) => ipcRenderer.send('call-action', action),
 
-  // 关闭消息提醒弹窗
-  closeToast: () => ipcRenderer.send('close-toast'),
-
-  // 监听弹窗数据
+  /** Receive call data (caller info + ringtone path) */
   onCallData: (callback) => ipcRenderer.on('call-data', (_, data) => callback(data)),
 
-  // 监听消息提醒数据
+  // ─── Meeting window ───────────────────────────
+  /** Send user action (accept/reject/timeout) for meeting invitations */
+  sendMeetingAction: (action) => ipcRenderer.send('meeting-action', action),
+
+  /** Receive meeting invite data */
+  onMeetingData: (callback) => ipcRenderer.on('meeting-data', (_, data) => callback(data)),
+
+  // ─── Toast window ─────────────────────────────
+  /** Close message toast */
+  closeToast: () => ipcRenderer.send('close-toast'),
+
+  /** Receive toast data (sender info + message) */
   onToastData: (callback) => ipcRenderer.on('toast-data', (_, data) => callback(data)),
 
-  // 打开浏览器（协议唤起）
+  // ─── Browser ──────────────────────────────────
+  /** Open browser to conversation page */
   openBrowser: (url) => ipcRenderer.send('open-browser', url),
 })

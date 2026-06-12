@@ -4,7 +4,7 @@
   "description": "MyLog 桌面通知代理 - 系统级来电/消息提醒",
   "main": "main.js",
   "scripts": {
-    "dev": "electron .",
+    "dev": "scripts\\start.bat",
     "build": "node build.js",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
@@ -30,7 +30,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "electron": "^32.0.0",
+    "electron": "^32.3.3",
     "electron-builder": "^25.0.0"
   }
 }

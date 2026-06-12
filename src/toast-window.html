@@ -2,41 +2,62 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>消息提醒</title>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Message Notification / 消息提醒</title>
 <style>
+@font-face {
+  font-family: 'System UI';
+  src: local('Microsoft YaHei UI'), local('Microsoft YaHei'),
+       local('PingFang SC'), local('PingFang HK'),
+       local('Noto Sans CJK SC'), local('SimHei'),
+       local(system-ui), local(sans-serif);
+}
 * { margin:0; padding:0; box-sizing: border-box; }
 body {
-  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: 'System UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
   background: transparent;
   width: 340px;
   height: 100px;
   overflow: hidden;
   user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 #app {
   width: 100%; height: 100%;
-  background: rgba(255,255,255,0.97);
-  border-radius: 12px;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.06);
+  background: rgba(255,255,255,0.92);
+  border-radius: 10px;
   display: flex;
   align-items: center;
   padding: 14px 16px;
   gap: 12px;
   cursor: pointer;
-  transition: opacity 0.3s, transform 0.3s;
+  transition: transform 0.2s, box-shadow 0.2s;
 }
-#app:hover { transform: translateY(-2px); box-shadow: 0 6px 28px rgba(0,0,0,0.16); }
+#app:hover { transform: translateY(-2px); }
 
 .avatar {
   width: 44px; height: 44px; border-radius: 50%; background: #E6F1FB;
   display: flex; align-items: center; justify-content: center;
-  font-size: 16px; font-weight: 500; color: #185FA5; flex-shrink: 0;
-  overflow: hidden;
+  font-size: 16px; font-weight: 600; color: #185FA5; flex-shrink: 0;
+  overflow: hidden; position: relative;
 }
-.avatar img { width:100%; height:100%; border-radius:50%; object-fit: cover; }
+.avatar img {
+  width:100%; height:100%; border-radius:50%; object-fit: cover;
+  position: absolute; top:0; left:0;
+}
+.avatar .fallback {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%; font-size: 17px; font-weight: 600;
+  color: #185FA5;
+}
 
 .content { flex:1; min-width:0; }
-.name { font-size:13px; font-weight:500; color:#2C2C2A; margin-bottom:2px; }
+.name {
+  font-size:13px; font-weight:600; color:#2C2C2A;
+  margin-bottom:3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .msg {
   font-size:12px; color:#5F5E5A;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -44,72 +65,107 @@ body {
 }
 
 .close-btn {
-  width: 20px; height: 20px; border-radius:50%; border:none;
-  background: #F1EFE8; color:#888780; font-size:12px; cursor:pointer;
+  width: 22px; height: 22px; border-radius:50%; border:none;
+  background: #E8E6E0; color:#888780; font-size:13px; cursor:pointer;
   display:flex; align-items:center; justify-content:center; flex-shrink:0;
-  transition: background 0.15s;
+  transition: background 0.15s; font-family: inherit; line-height: 1;
 }
-.close-btn:hover { background:#E0DDD6; color:#444441; }
+.close-btn:hover { background:#D8D5CF; color:#555552; }
 
-/* 入场动画 */
-@keyframes slideIn { from { opacity:0; transform: translateX(40px); } to { opacity:1; transform: translateX(0); } }
+/* Entrance animation */
+@keyframes slideIn {
+  from { opacity:0; transform: translateX(40px); }
+  to { opacity:1; transform: translateX(0); }
+}
 #app { animation: slideIn 0.35s cubic-bezier(0.16,1,0.3,1); }
-/* 退场 */
-#app.hiding { opacity:0; transform: translateX(40px); }
+#app.hiding { opacity:0; transform: translateX(40px); transition: all 0.25s; }
 </style>
 </head>
 <body>
 <div id="app">
-  <div class="avatar" id="avatar"><span id="avatar-text">?</span></div>
-  <div class="content">
-    <div class="name" id="sender-name">未知用户</div>
-    <div class="msg" id="msg-preview">发来一条消息</div>
+  <div class="avatar" id="avatar">
+    <div class="fallback" id="avatar-fallback"></div>
   </div>
-  <button class="close-btn" id="btn-close" title="忽略">×</button>
+  <div class="content">
+    <div class="name" id="sender-name"></div>
+    <div class="msg" id="msg-preview"></div>
+  </div>
+  <button class="close-btn" id="btn-close">
+    <!-- X icon -->
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+      <path d="M18 6L6 18M6 6l12 12" stroke="#888780" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>
+  </button>
 </div>
 
 <script>
-const { electronAPI } = window;
+var DEFAULT_NAME = '\u672a\u77e5\u7528\u6237';   // 未知用户
+var DEFAULT_MSG  = '\u53d1\u6765\u4e00\u6761\u6d88\u606f'; // 发来一条消息
 
-let toastData = {};
+document.getElementById('sender-name').textContent = DEFAULT_NAME;
+document.getElementById('msg-preview').textContent = DEFAULT_MSG;
 
-electronAPI.onToastData((data) => {
-  toastData = data;
-  render(data);
-});
+var electronAPI = window.electronAPI;
+if (!electronAPI) {
+  document.body.innerHTML = '<div style="color:red;padding:20px;font-family:sans-serif;">Error: electronAPI not available</div>';
+} else {
+  var toastData = {};
 
-function render(data) {
-  const { senderName, senderAvatar, content } = data;
-  const avatarEl = document.getElementById('avatar');
-  const avatarText = document.getElementById('avatar-text');
+  electronAPI.onToastData(function(data) {
+    toastData = data;
+    render(data);
+  });
 
-  if (senderAvatar) {
-    avatarEl.innerHTML = `<img src="${senderAvatar}" alt="">`;
-  } else {
-    avatarText.textContent = (senderName || '?').charAt(0);
+  function render(data) {
+    var senderName = data.senderName;
+    var senderAvatar = data.senderAvatar;
+    var content = data.content;
+
+    // Avatar
+    var avatarEl = document.getElementById('avatar');
+    var fallbackEl = document.getElementById('avatar-fallback');
+    var prevImg = avatarEl.querySelector('img');
+    if (prevImg) prevImg.remove();
+
+    if (senderAvatar) {
+      var img = document.createElement('img');
+      img.src = senderAvatar;
+      img.alt = '';
+      img.onerror = function() { this.style.display = 'none'; fallbackEl.style.display = 'flex'; };
+      img.onload = function() { fallbackEl.style.display = 'none'; };
+      avatarEl.insertBefore(img, fallbackEl);
+      fallbackEl.style.display = '';
+    } else {
+      fallbackEl.style.display = 'flex';
+    }
+    fallbackEl.textContent = (senderName || '?').charAt(0);
+
+    // Name
+    var displayName = senderName;
+    if (!displayName || displayName === 'undefined' || displayName === 'null') {
+      displayName = DEFAULT_NAME;
+    }
+    document.getElementById('sender-name').textContent = displayName;
+
+    // Message preview
+    var preview = content || '';
+    if (preview.length > 80) preview = preview.substring(0, 80) + '...';
+    document.getElementById('msg-preview').textContent = preview || DEFAULT_MSG;
   }
 
-  document.getElementById('sender-name').textContent = senderName || '未知用户';
+  // Click bubble -> open browser conversation
+  document.getElementById('app').addEventListener('click', function(e) {
+    if (e.target.closest('#btn-close') || e.target.closest('.close-btn')) return;
+    electronAPI.openBrowser(toastData.conversationId || '');
+  });
 
-  // 消息内容截断
-  let preview = content || '';
-  if (preview.length > 80) preview = preview.substring(0, 80) + '...';
-  document.getElementById('msg-preview').textContent = preview;
+  document.getElementById('btn-close').addEventListener('click', function(e) {
+    e.stopPropagation();
+    var el = document.getElementById('app');
+    el.classList.add('hiding');
+    setTimeout(function() { electronAPI.closeToast(); }, 280);
+  });
 }
-
-// 点击弹窗 → 打开浏览器对应会话
-document.getElementById('app').addEventListener('click', (e) => {
-  if (e.target.closest('.close-btn')) return;
-  // 通知主进程打开浏览器
-  electronAPI.openBrowser(toastData.conversationId || '');
-});
-
-document.getElementById('btn-close').addEventListener('click', (e) => {
-  e.stopPropagation();
-  const el = document.getElementById('app');
-  el.classList.add('hiding');
-  setTimeout(() => { electronAPI.closeToast(); }, 300);
-});
 </script>
 </body>
 </html>

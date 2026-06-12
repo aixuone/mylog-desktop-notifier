@@ -1,31 +1,94 @@
 // main.js - Electron main process: tray + WS server + notification windows
 process.env.ELECTRON_NO_ATTACH_CONSOLE = '1'
 
-const { app, Tray, Menu, BrowserWindow, ipcMain, shell, Notification, nativeImage } = require('electron')
+const { app, Tray, Menu, BrowserWindow, ipcMain, shell } = require('electron')
 const path = require('path')
 const { WebSocketServer } = require('ws')
 
 // ─── Global state ──────────────────────────────────────────
 let tray = null
 let wsServer = null
-let callWindow = null        // incoming call popup (screen center)
+let callWindow = null        // incoming audio/video call popup (screen center)
+let meetingWindow = null     // incoming meeting invitation popup
 let toastWindow = null        // message toast (bottom right)
-let audioPlayer = null
 let isQuitting = false
 
 const WS_PORT = 18999
 const PRELOAD_PATH = path.join(__dirname, 'src', 'preload.js')
+const CALL_W = 380
+const CALL_H = 280
+const MEETING_W = 380
+const MEETING_H = 320
+
+// Ringtone file (M4A - played via HTML5 Audio in renderer, not PowerShell)
+const RINGTONE_FILE = path.join(__dirname, 'assets', 'ringtone.m4a')
+const fs = require('fs')
+function getRingtonePath() {
+  if (fs.existsSync(RINGTONE_FILE)) {
+    return 'file:///' + RINGTONE_FILE.replace(/\\/g, '/')
+  }
+  return ''
+}
+
+// Deduplication: prevent duplicate notifications from multiple browser tabs
+const recentCalls = new Map()
+const recentToasts = new Map()
+const DEDUP_CALL_WINDOW_MS = 5000
+const DEDUP_TOAST_WINDOW_MS = 3000
+
+// Check if acrylic material is supported (Win10 1803+)
+function supportsAcrylic() {
+  return process.platform === 'win32'
+}
+
+// Shared webPreferences for notification windows
+function makeWebPrefs() {
+  return {
+    preload: PRELOAD_PATH,
+    contextIsolation: true,
+    nodeIntegration: false,
+    // Allow Audio.play() without user gesture — critical for ringtone reliability
+    autoplayPolicy: 'no-user-gesture-required',
+  }
+}
+
+// Shared BrowserWindow options for center-popup notification windows
+function makePopupWindowOpts(w, h) {
+  return {
+    width: w,
+    height: h,
+    show: false,
+    frame: false,
+    // Use acrylic material instead of transparent:true to keep ClearType font rendering
+    // transparent:true creates WS_EX_LAYERED which disables subpixel anti-aliasing on Windows,
+    // causing CJK characters to appear broken/garbled (Electron issue #40515)
+    ...(supportsAcrylic()
+      ? { backgroundMaterial: 'acrylic' }
+      : { backgroundColor: '#FFFFFF', transparent: false }),
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    focusable: true,
+    hasShadow: false,
+    webPreferences: makeWebPrefs(),
+  }
+}
 
 // ─── App lifecycle ────────────────────────────────────────
 app.whenReady().then(() => {
   createTray()
   startWSServer()
   registerProtocol()
+  preCreateCallWindow()
+  preCreateMeetingWindow()
   console.log('[MyLog Notifier] Ready | WS port:', WS_PORT)
 })
 
 app.on('window-all-closed', (e) => {
-  // Prevent default: tray app should not quit when all windows are closed
   if (!isQuitting) e.preventDefault()
 })
 
@@ -33,27 +96,24 @@ app.on('before-quit', () => { isQuitting = true })
 
 // ─── System tray ──────────────────────────────────────────
 function createTray() {
-  // 使用默认图标（若 assets/icon.png 存在则使用）
   let iconPath = path.join(__dirname, 'assets', 'icon.png')
-  const fs = require('fs')
   if (!fs.existsSync(iconPath)) {
-    // 创建一个简单的占位图标（1x1 透明 PNG）
     iconPath = path.join(__dirname, 'assets', 'tray.png')
   }
 
   tray = new Tray(iconPath)
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'MyLog 通知助手',
+      label: 'MyLog Notification Assistant / MyLog 通知助手',
       enabled: false,
     },
     { type: 'separator' },
     {
-      label: '打开 MyLog',
+      label: 'Open MyLog / 打开 MyLog',
       click: () => shell.openExternal('http://localhost:5173'),
     },
     {
-      label: '开机自启',
+      label: 'Launch at startup / 开机自启',
       type: 'checkbox',
       checked: app.getLoginItemSettings().openAtLogin,
       click: (item) => {
@@ -62,15 +122,13 @@ function createTray() {
     },
     { type: 'separator' },
     {
-      label: '退出',
+      label: 'Exit / 退出',
       click: () => {
         isQuitting = true
-        // Must destroy tray before quit, otherwise app.quit() is blocked
         if (tray) {
           tray.destroy()
           tray = null
         }
-        // 关闭 WS 服务器
         if (wsServer) {
           wsServer.close()
           wsServer = null
@@ -79,18 +137,16 @@ function createTray() {
       },
     },
   ])
-  tray.setToolTip('MyLog 通知助手')
+  tray.setToolTip('MyLog Notification Assistant / MyLog 通知助手')
   tray.setContextMenu(contextMenu)
 
   tray.on('click', () => {
-    // 单击托盘图标：打开主网页
     shell.openExternal('http://localhost:5173')
   })
 }
 
 // ─── Protocol handler ─────────────────────────────────────
 function registerProtocol() {
-  // 注册 web+mylog:// 协议（仅做基础支持，浏览器置顶本期不做）
   if (process.defaultApp) return
   app.setAsDefaultProtocolClient('web+mylog')
 }
@@ -101,11 +157,8 @@ function startWSServer() {
 
   wsServer.on('connection', (ws) => {
     console.log('[WS] Browser connected')
-
-    // 发送连接确认
     ws.send(JSON.stringify({ type: 'CONNECTED', payload: { version: '1.0.0' } }))
 
-    // 心跳：收到 PING 回复 PONG
     ws.on('message', (raw) => {
       try {
         const msg = JSON.parse(raw)
@@ -122,19 +175,18 @@ function startWSServer() {
 
   wsServer.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-      console.warn(`[WS] Port ${WS_PORT} in use (another instance running?)`)
-      // 不退出，让位于已运行的实例
+      console.warn('[WS] Port', WS_PORT, 'in use (another instance running?)')
     } else {
       console.error('[WS] Server error:', err)
     }
   })
 
-  console.log(`[WS] Server listening on ws://127.0.0.1:${WS_PORT}`)
+  console.log('[WS] Server listening on ws://127.0.0.1:', WS_PORT)
 }
 
 // ─── Handle browser messages ──────────────────────────
 function handleBrowserMessage(ws, msg) {
-  console.log('[WS] Message:', msg.type, msg)
+  console.log('[WS] Message:', msg.type)
 
   switch (msg.type) {
     case 'REGISTER':
@@ -142,17 +194,29 @@ function handleBrowserMessage(ws, msg) {
       break
 
     case 'SHOW_CALL_NOTIFICATION':
-      showCallWindow(msg.payload, ws)
+      if (isDuplicateCall(msg.payload?.callId)) {
+        console.log('[Dedup] Skip duplicate call:', msg.payload?.callId)
+        return
+      }
+      if (msg.payload?.callType === 'meeting') {
+        showMeetingWindow(msg.payload, ws)
+      } else {
+        showCallWindow(msg.payload, ws)
+      }
       break
 
     case 'SHOW_MESSAGE_NOTIFICATION':
+      if (isDuplicateToast(msg.payload?.conversationId, msg.payload?.content)) {
+        console.log('[Dedup] Skip duplicate toast')
+        return
+      }
       showToast(msg.payload)
       break
 
     case 'CALL_CONNECTED':
     case 'CALL_ENDED':
       closeCallWindow()
-      stopRingtone()
+      closeMeetingWindow()
       break
 
     case 'PING':
@@ -164,79 +228,174 @@ function handleBrowserMessage(ws, msg) {
   }
 }
 
-// ─── Incoming call window (screen center, topmost) ────
-function showCallWindow(payload, ws) {
-  closeCallWindow() // 关闭已有弹窗
+// ─── Deduplication helpers ────────────────────────────
+function hashCode(str) {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i)
+    hash = ((hash << 5) - hash) + c
+    hash |= 0
+  }
+  return hash
+}
 
+function isDuplicateCall(callId) {
+  if (!callId) return false
+  const now = Date.now()
+  for (const [key, ts] of recentCalls) {
+    if (now - ts > DEDUP_CALL_WINDOW_MS) recentCalls.delete(key)
+  }
+  if (recentCalls.has(callId)) return true
+  recentCalls.set(callId, now)
+  return false
+}
+
+function isDuplicateToast(convId, content) {
+  const now = Date.now()
+  const contentHash = hashCode((content || '').slice(0, 100))
+  const key = `${convId || 'no-conv'}:${contentHash}`
+  for (const [k, ts] of recentToasts) {
+    if (now - ts > DEDUP_TOAST_WINDOW_MS) recentToasts.delete(k)
+  }
+  if (recentToasts.has(key)) return true
+  recentToasts.set(key, now)
+  return false
+}
+
+// ─── Incoming call window (pre-created for instant show) ─
+function preCreateCallWindow() {
   const { screen } = require('electron')
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const { width: sw, height: sh } = primaryDisplay.workAreaSize
-  const w = 380
-  const h = 280
-  const x = Math.round((sw - w) / 2)
-  const y = Math.round((sh - h) / 2)
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
 
   callWindow = new BrowserWindow({
-    width: w,
-    height: h,
-    x,
-    y,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    closable: false,
-    focusable: true,
-    hasShadow: false,
-    webPreferences: {
-      preload: PRELOAD_PATH,
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
+    ...makePopupWindowOpts(CALL_W, CALL_H),
+    x: Math.round((sw - CALL_W) / 2),
+    y: Math.round((sh - CALL_H) / 2),
   })
-
-  // Always on top (even when focus is lost)
   callWindow.setAlwaysOnTop(true, 'screen-saver')
   callWindow.setVisibleOnAllWorkspaces(true)
-
-  // 加载来电弹窗 HTML
   callWindow.loadFile(path.join(__dirname, 'src', 'call-window.html'))
+}
 
-  // 传递数据给弹窗
-  callWindow.webContents.once('did-finish-load', () => {
-    callWindow.webContents.send('call-data', payload)
-  })
+function showCallWindow(payload, ws) {
+  if (!callWindow || callWindow.isDestroyed()) {
+    preCreateCallWindow()
+  }
 
-  // 播放铃声
-  playRingtone(payload.callType)
+  if (callWindow._timer) {
+    clearTimeout(callWindow._timer)
+    callWindow._timer = null
+  }
 
-  // Timer auto-close (45 seconds)
-  setTimeout(() => {
-    if (callWindow) {
-      closeCallWindow()
-      stopRingtone()
-      // 通知浏览器：超时未接
-      ws.send(JSON.stringify({
-        type: 'USER_ACTION',
-        payload: { action: 'timeout', callId: payload.callId }
-      }))
+  const { screen } = require('electron')
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  callWindow.setPosition(Math.round((sw - CALL_W) / 2), Math.round((sh - CALL_H) / 2))
+  callWindow.show()
+  callWindow.focus()
+
+  function sendCallPayload() {
+    callWindow.webContents.send('call-data', {
+      ...payload,
+      ringtonePath: getRingtonePath(),
+    })
+  }
+  if (callWindow.webContents.isLoading()) {
+    callWindow.webContents.once('did-finish-load', sendCallPayload)
+  } else {
+    sendCallPayload()
+  }
+  callWindow._callId = payload.callId || ''
+
+  const timer = setTimeout(() => {
+    if (callWindow && !callWindow.isDestroyed() && callWindow.isVisible()) {
+      callWindow.hide()
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({
+          type: 'USER_ACTION',
+          payload: { action: 'timeout', callId: payload.callId }
+        }))
+      }
     }
   }, 45000)
+  callWindow._timer = timer
 }
 
 function closeCallWindow() {
-  if (callWindow) {
-    try {
-      if (!callWindow.isDestroyed()) callWindow.destroy()
-    } catch (e) {
-      // fallback to close() if destroy() fails
-      try { callWindow.close() } catch (_) {}
+  if (callWindow && !callWindow.isDestroyed()) {
+    callWindow.hide()
+    if (callWindow._timer) {
+      clearTimeout(callWindow._timer)
+      callWindow._timer = null
     }
-    callWindow = null
+  }
+}
+
+// ─── Meeting window (screen center, dedicated to meeting invites) ─
+function preCreateMeetingWindow() {
+  const { screen } = require('electron')
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+
+  meetingWindow = new BrowserWindow({
+    ...makePopupWindowOpts(MEETING_W, MEETING_H),
+    x: Math.round((sw - MEETING_W) / 2),
+    y: Math.round((sh - MEETING_H) / 2),
+  })
+  meetingWindow.setAlwaysOnTop(true, 'screen-saver')
+  meetingWindow.setVisibleOnAllWorkspaces(true)
+  meetingWindow.loadFile(path.join(__dirname, 'src', 'meeting-window.html'))
+}
+
+function showMeetingWindow(payload, ws) {
+  if (!meetingWindow || meetingWindow.isDestroyed()) {
+    preCreateMeetingWindow()
+  }
+
+  if (meetingWindow._timer) {
+    clearTimeout(meetingWindow._timer)
+    meetingWindow._timer = null
+  }
+
+  const { screen } = require('electron')
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  meetingWindow.setPosition(Math.round((sw - MEETING_W) / 2), Math.round((sh - MEETING_H) / 2))
+  meetingWindow.show()
+  meetingWindow.focus()
+
+  function sendMeetingPayload() {
+    meetingWindow.webContents.send('meeting-data', {
+      ...payload,
+      ringtonePath: getRingtonePath(),
+    })
+  }
+  if (meetingWindow.webContents.isLoading()) {
+    meetingWindow.webContents.once('did-finish-load', sendMeetingPayload)
+  } else {
+    sendMeetingPayload()
+  }
+  meetingWindow._callId = payload.callId || ''
+  meetingWindow._callType = 'meeting'
+
+  const timer = setTimeout(() => {
+    if (meetingWindow && !meetingWindow.isDestroyed() && meetingWindow.isVisible()) {
+      meetingWindow.hide()
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({
+          type: 'USER_ACTION',
+          payload: { action: 'timeout', callId: payload.callId, callType: 'meeting' }
+        }))
+      }
+    }
+  }, 45000)
+  meetingWindow._timer = timer
+}
+
+function closeMeetingWindow() {
+  if (meetingWindow && !meetingWindow.isDestroyed()) {
+    meetingWindow.hide()
+    if (meetingWindow._timer) {
+      clearTimeout(meetingWindow._timer)
+      meetingWindow._timer = null
+    }
   }
 }
 
@@ -261,16 +420,15 @@ function showToast(payload) {
     x,
     y,
     frame: false,
-    transparent: true,
+    ...(supportsAcrylic()
+      ? { backgroundMaterial: 'acrylic' }
+      : { backgroundColor: '#FFFFFF', transparent: false }),
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
     focusable: false,
     hasShadow: false,
-    webPreferences: {
-      preload: PRELOAD_PATH,
-      contextIsolation: true,
-    },
+    webPreferences: makeWebPrefs(),
   })
 
   toastWindow.setAlwaysOnTop(true, 'normal')
@@ -280,7 +438,6 @@ function showToast(payload) {
     toastWindow.webContents.send('toast-data', payload)
   })
 
-  // Auto-dismiss after 8 seconds
   setTimeout(() => {
     if (toastWindow) {
       try { toastWindow.close() } catch (e) {}
@@ -289,73 +446,41 @@ function showToast(payload) {
   }, 8000)
 }
 
-// ─── Ringtone playback ──────────────────────────────────
-let ringtoneProc = null
-
-function playRingtone(callType = 'audio') {
-  stopRingtone()
-
-  // 使用系统默认声音（跨平台兼容）
-  // Windows: 使用系统来电铃声
-  // macOS: 使用系统通知声音
-  if (process.platform === 'win32') {
-    // 使用 PowerShell 播放系统声音
-    const { spawn } = require('child_process')
-    // 备用：播放内置音频文件
-    const soundFile = path.join(__dirname, 'assets', 'ringtone.m4a')
-    const fs = require('fs')
-    if (fs.existsSync(soundFile)) {
-      // 使用系统音频 API 播放（不依赖浏览器）
-      ringtoneProc = spawn('powershell', [
-        '-c', `(New-Object Media.SoundPlayer '${soundFile}').PlayLooping()`
-      ], { detached: true, shell: true })
-    } else {
-      // 没有音频文件时使用系统声音
-      spawn('powershell', ['-c', '[System.Media.SystemSounds]::Hand.Play()'], { shell: true })
-    }
-  } else {
-    // macOS / Linux: 使用系统通知声音
-    const { exec } = require('child_process')
-    exec('afplay /System/Library/Sounds/Ping.aiff &', (err) => {})
-  }
-}
-
-function stopRingtone() {
-  if (ringtoneProc) {
-    try {
-      process.kill(-ringtoneProc.pid)
-    } catch (e) {}
-    ringtoneProc = null
-  }
-}
-
 // ─── IPC handlers ─────────────────────────────────────
 ipcMain.on('call-action', (event, action) => {
-  // action = 'accept' | 'reject' | 'ignore'
-  console.log('[IPC] User action:', action)
+  console.log('[IPC] Call action:', action)
+  const callId = (callWindow && callWindow._callId) ? callWindow._callId : ''
 
-  // 找到连接的浏览器 WS 客户端，回传操作
-  // （简化版：遍历所有 WS 客户端）
   if (wsServer) {
     wsServer.clients.forEach((client) => {
-      if (client.readyState === 1) { // OPEN
+      if (client.readyState === 1) {
         client.send(JSON.stringify({
           type: 'USER_ACTION',
-          payload: {
-            action,
-            callId: callWindow?._callId || '',
-            timestamp: Date.now(),
-          }
+          payload: { action, callId, callType: 'audio', timestamp: Date.now() }
         }))
       }
     })
   }
-
   closeCallWindow()
-  stopRingtone()
 })
 
-// Toast close button handler
+ipcMain.on('meeting-action', (event, action) => {
+  console.log('[IPC] Meeting action:', action)
+  const callId = (meetingWindow && meetingWindow._callId) ? meetingWindow._callId : ''
+
+  if (wsServer) {
+    wsServer.clients.forEach((client) => {
+      if (client.readyState === 1) {
+        client.send(JSON.stringify({
+          type: 'USER_ACTION',
+          payload: { action, callId, callType: 'meeting', timestamp: Date.now() }
+        }))
+      }
+    })
+  }
+  closeMeetingWindow()
+})
+
 ipcMain.on('close-toast', () => {
   if (toastWindow) {
     try {
@@ -367,8 +492,7 @@ ipcMain.on('close-toast', () => {
   }
 })
 
-// ─── Single-instance lock (port probe) ────────────────
-// 如果端口已被占用，说明已有实例运行，当前实例退出
+// ─── Single-instance lock ──────────────────────────
 const net = require('net')
 const probe = net.createServer()
 probe.once('error', (err) => {
@@ -377,7 +501,5 @@ probe.once('error', (err) => {
     app.quit()
   }
 })
-probe.once('listening', () => {
-  probe.close()
-})
-probe.listen(WS_PORT + 1, '127.0.0.1') // 用 +1 端口做互斥检测
+probe.once('listening', () => { probe.close() })
+probe.listen(WS_PORT + 1, '127.0.0.1')

@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Meeting Invitation</title>
+<style>
+@font-face {
+  font-family: 'System UI';
+  src: local('Microsoft YaHei UI'), local('Microsoft YaHei'),
+       local('PingFang SC'), local('PingFang HK'),
+       local('Noto Sans CJK SC'), local('SimHei'),
+       local(system-ui), local(sans-serif);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'System UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  background: transparent;
+  width: 380px; height: 320px;
+  overflow: hidden; user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+#app {
+  width: 100%; height: 100%;
+  background: rgba(255,255,255,0.92);
+  border-radius: 12px;
+  display: flex; flex-direction: column;
+  align-items: center;
+  padding: 28px 24px 20px;
+  position: relative; overflow: hidden;
+}
+.tip {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 4px; border-radius: 12px 12px 0 0;
+  background: linear-gradient(90deg, #BA7517, #EF9F27);
+}
+
+/* Avatar */
+.avatar {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: #FEF3E4;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; font-weight: 500; color: #BA7517;
+  margin-bottom: 12px; flex-shrink: 0; overflow: hidden;
+  position: relative;
+}
+.avatar img {
+  width: 100%; height: 100%; border-radius: 50%; object-fit: cover;
+  position: absolute; top: 0; left: 0;
+}
+.avatar .fallback {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%; font-size: 26px; font-weight: 600;
+  color: #BA7517;
+}
+
+/* Meeting icon badge */
+.meeting-icon-row {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 4px;
+}
+.meeting-icon-svg { width: 18px; height: 18px; flex-shrink: 0; }
+.meeting-icon-svg svg { width: 100%; height: 100%; }
+.meeting-type-label { font-size: 13px; color: #BA7517; font-weight: 500; }
+
+/* Text */
+.name {
+  font-size: 16px; font-weight: 600; color: #2C2C2A;
+  margin-bottom: 2px; max-width: 280px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.room-name {
+  font-size: 13px; color: #888780;
+  margin-bottom: 6px; max-width: 280px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.message {
+  font-size: 13px; color: #5F5E5A; max-width: 300px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-bottom: 20px;
+}
+
+/* Buttons */
+.actions {
+  display: flex; gap: 16px; margin-top: auto;
+}
+.btn {
+  border: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 6px;
+  transition: transform 0.15s;
+  outline: none; font-family: inherit;
+  background: none; padding: 0;
+  font-size: 12px; color: #5F5E5A;
+}
+.btn:hover { transform: scale(1.05); }
+.btn:active { transform: scale(0.96); }
+
+.btn-join {
+  width: 130px; height: 56px;
+  border-radius: 28px;
+  background: linear-gradient(135deg, #BA7517, #EF9F27);
+  color: white; font-size: 15px; font-weight: 600;
+  box-shadow: 0 4px 16px rgba(186,117,23,0.35);
+  flex-direction: row; gap: 8px;
+}
+.btn-join:hover { box-shadow: 0 6px 24px rgba(186,117,23,0.5); }
+.btn-join .btn-icon { width: 22px; height: 22px; flex-shrink: 0; }
+.btn-join .btn-icon svg { width: 100%; height: 100%; }
+
+.btn-decline {
+  width: 130px; height: 56px;
+  border-radius: 28px;
+  background: #F1EFE8; color: #5F5E5A;
+  font-size: 15px; font-weight: 600;
+  flex-direction: row; gap: 8px;
+}
+.btn-decline:hover { background: #E0DDD6; color: #444441; }
+.btn-decline .btn-icon { width: 22px; height: 22px; flex-shrink: 0; }
+.btn-decline .btn-icon svg { width: 100%; height: 100%; }
+
+/* Timeout bar */
+.timeout-bar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 3px; background: #FEF3E4;
+  border-radius: 0 0 12px 12px;
+}
+.timeout-fill {
+  height: 100%;
+  background: #BA7517;
+  transition: width 1s linear;
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="tip" class="tip"></div>
+
+  <div class="avatar" id="avatar">
+    <div class="fallback" id="avatar-fallback"></div>
+  </div>
+
+  <div class="meeting-icon-row">
+    <div class="meeting-icon-svg">
+      <!-- Users group icon -->
+      <svg viewBox="0 0 24 24" fill="none">
+        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="#BA7517" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="9" cy="7" r="4" stroke="#BA7517" stroke-width="2"/>
+        <path d="M23 21v-2a4 4 0 00-3-3.87" stroke="#BA7517" stroke-width="2" stroke-linecap="round"/>
+        <path d="M16 3.13a4 4 0 010 7.75" stroke="#BA7517" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div class="meeting-type-label" id="call-type-label"></div>
+  </div>
+
+  <div class="name" id="caller-name"></div>
+  <div class="room-name" id="room-label"></div>
+  <div class="message" id="call-message"></div>
+
+  <div class="actions">
+    <button class="btn btn-decline" id="btn-decline">
+      <div class="btn-icon">
+        <!-- X icon -->
+        <svg viewBox="0 0 24 24" fill="none">
+          <path d="M18 6L6 18M6 6l12 12" stroke="#5F5E5A" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <span id="btn-decline-label"></span>
+    </button>
+    <button class="btn btn-join" id="btn-join">
+      <div class="btn-icon">
+        <!-- Door/enter icon -->
+        <svg viewBox="0 0 24 24" fill="none">
+          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <span id="btn-join-label"></span>
+    </button>
+  </div>
+
+  <div class="timeout-bar">
+    <div class="timeout-fill" id="timeout-fill" style="width:100%"></div>
+  </div>
+</div>
+
+<audio id="ringtone" loop hidden></audio>
+
+<script>
+// ─── Text labels ──────────────────────────────────────
+var LABELS = {
+  meeting: '\u591a\u4eba\u4f1a\u8bae',          // 多人会议
+  join: '\u52a0\u5165\u4f1a\u8bae',             // 加入会议
+  decline: '\u62d2\u7edd',                       // 拒绝
+  unknown: '\u672a\u77e5\u7528\u6237',            // 未知用户
+  inviting: '\u9080\u8bf7\u4f60\u53c2\u52a0\u4f1a\u8bae', // 邀请你参加会议
+};
+
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('btn-join-label').textContent = LABELS.join;
+  document.getElementById('btn-decline-label').textContent = LABELS.decline;
+  document.getElementById('call-type-label').textContent = LABELS.meeting;
+  document.getElementById('caller-name').textContent = LABELS.unknown;
+  document.getElementById('call-message').textContent = LABELS.inviting;
+
+  if (!window.electronAPI) {
+    document.body.innerHTML = '<div style="color:red;padding:20px;font-family:sans-serif;">Error: electronAPI not available</div>';
+    return;
+  }
+
+  var callData = {};
+  var timeoutTimer = null;
+  var elapsed = 0;
+  var TIMEOUT = 45;
+
+  function getAPI() { return window.electronAPI; }
+
+  window.electronAPI.onMeetingData(function(data) {
+    callData = data;
+    render(data);
+    startTimeout();
+    startRingtone(data.ringtonePath);
+  });
+
+  function render(data) {
+    // Avatar
+    var avatarEl = document.getElementById('avatar');
+    var fallbackEl = document.getElementById('avatar-fallback');
+    var prevImg = avatarEl.querySelector('img');
+    if (prevImg) prevImg.remove();
+
+    var name = data.callerName || LABELS.unknown;
+    var avatarUrl = data.callerAvatar || '';
+
+    if (avatarUrl) {
+      var img = document.createElement('img');
+      img.src = avatarUrl;
+      img.alt = '';
+      img.onerror = function() { this.style.display = 'none'; fallbackEl.style.display = 'flex'; };
+      img.onload = function() { fallbackEl.style.display = 'none'; };
+      avatarEl.insertBefore(img, fallbackEl);
+      fallbackEl.style.display = '';
+    } else {
+      fallbackEl.style.display = 'flex';
+    }
+    fallbackEl.textContent = name.charAt(0);
+
+    document.getElementById('caller-name').textContent = name;
+
+    // Room name (shown as subtitle)
+    var roomMsg = data.message || '';
+    document.getElementById('room-label').textContent = roomMsg;
+
+    document.getElementById('call-message').textContent = LABELS.inviting;
+  }
+
+  function startRingtone(ringtonePath) {
+    var audio = document.getElementById('ringtone');
+    if (!ringtonePath) {
+      // Fallback: looping beep pattern
+      try {
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === 'suspended') ctx.resume();
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.3);
+        osc.frequency.setValueAtTime(880, ctx.currentTime + 0.6);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.0);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 1.0);
+      } catch(e) { console.warn('[Ringtone] Oscillator fallback failed:', e); }
+      return;
+    }
+    audio.src = ringtonePath;
+    audio.load();
+    audio.play().then(function() {
+      console.log('[Ringtone] Playing in meeting window');
+    }).catch(function(err) {
+      console.warn('[Ringtone] Play rejected in meeting window:', err.name, err.message);
+      // Retry after delay
+      setTimeout(function() {
+        audio.play().catch(function(e2) {
+          console.warn('[Ringtone] Retry also failed:', e2.name);
+        });
+      }, 300);
+    });
+  }
+
+  function stopRingtone() {
+    var audio = document.getElementById('ringtone');
+    try { audio.pause(); } catch(e) {}
+    audio.src = '';
+  }
+
+  function startTimeout() {
+    if (timeoutTimer) clearInterval(timeoutTimer);
+    elapsed = 0;
+    var fill = document.getElementById('timeout-fill');
+    timeoutTimer = setInterval(function() {
+      elapsed++;
+      var pct = 100 - (elapsed / TIMEOUT) * 100;
+      fill.style.width = Math.max(0, pct) + '%';
+      if (elapsed >= TIMEOUT) {
+        clearInterval(timeoutTimer);
+        stopRingtone();
+        var api = getAPI();
+        if (api) api.sendMeetingAction('timeout');
+      }
+    }, 1000);
+  }
+
+  function doAction(action) {
+    clearInterval(timeoutTimer);
+    stopRingtone();
+    var api = getAPI();
+    if (api) api.sendMeetingAction(action);
+  }
+
+  document.getElementById('btn-join').addEventListener('click', function() { doAction('accept'); });
+  document.getElementById('btn-decline').addEventListener('click', function() { doAction('reject'); });
+});
+</script>
+</body>
+</html>

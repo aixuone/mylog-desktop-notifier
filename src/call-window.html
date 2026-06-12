@@ -2,99 +2,131 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>来电提醒</title>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Incoming Call</title>
 <style>
+@font-face {
+  font-family: 'System UI';
+  src: local('Microsoft YaHei UI'), local('Microsoft YaHei'),
+       local('PingFang SC'), local('PingFang HK'),
+       local('Noto Sans CJK SC'), local('SimHei'),
+       local(system-ui), local(sans-serif);
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: 'System UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
   background: transparent;
-  width: 380px;
-  height: 280px;
-  overflow: hidden;
-  user-select: none;
+  width: 380px; height: 280px;
+  overflow: hidden; user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
+/* Acrylic material provides window-level blur; this card floats on top */
 #app {
-  width: 100%;
-  height: 100%;
-  background: rgba(255,255,255,0.96);
-  border-radius: 16px;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
-  display: flex;
-  flex-direction: column;
+  width: 100%; height: 100%;
+  background: rgba(255,255,255,0.92);
+  border-radius: 12px;
+  display: flex; flex-direction: column;
   align-items: center;
   padding: 28px 24px 20px;
-  position: relative;
-  overflow: hidden;
+  position: relative; overflow: hidden;
 }
-/* 顶部提示条 */
+/* Top accent bar */
 .tip {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 4px;
-  border-radius: 16px 16px 0 0;
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 4px; border-radius: 12px 12px 0 0;
 }
 .tip-audio { background: linear-gradient(90deg, #185FA5, #378ADD); }
 .tip-video { background: linear-gradient(90deg, #3B6D11, #639922); }
 .tip-meeting { background: linear-gradient(90deg, #BA7517, #EF9F27); }
 
-/* 头像 */
+/* Avatar */
 .avatar {
-  width: 64px; height: 64px;
-  border-radius: 50%;
+  width: 64px; height: 64px; border-radius: 50%;
   background: #E6F1FB;
   display: flex; align-items: center; justify-content: center;
   font-size: 24px; font-weight: 500; color: #185FA5;
-  margin-bottom: 12px;
-  flex-shrink: 0;
+  margin-bottom: 12px; flex-shrink: 0; overflow: hidden;
+  position: relative;
 }
-.avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.avatar img {
+  width: 100%; height: 100%; border-radius: 50%; object-fit: cover;
+  position: absolute; top: 0; left: 0;
+}
+.avatar .fallback {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%; font-size: 26px; font-weight: 600;
+  color: #185FA5;
+}
 
-/* 文字 */
-.call-type {
-  font-size: 13px; color: #888780; margin-bottom: 4px;
+/* Call type badge with icon */
+.call-type-row {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 4px;
 }
+.call-type-icon { width: 16px; height: 16px; flex-shrink: 0; }
+.call-type-icon svg { width: 100%; height: 100%; }
+.call-type-label { font-size: 13px; color: #888780; }
+
+/* Name */
 .name {
-  font-size: 16px; font-weight: 500; color: #2C2C2A;
-  margin-bottom: 6px; max-width: 280px;
+  font-size: 16px; font-weight: 600; color: #2C2C2A;
+  margin-bottom: 4px; max-width: 280px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .message {
-  font-size: 13px; color: #5F5E5A;
-  max-width: 300px;
+  font-size: 13px; color: #5F5E5A; max-width: 300px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   margin-bottom: 20px;
 }
 
-/* 按钮组 */
-.actions { display: flex; gap: 16px; margin-top: auto; }
+/* Buttons row */
+.actions {
+  display: flex; align-items: center; gap: 40px; margin-top: auto;
+}
 .btn {
-  width: 64px; height: 64px;
-  border-radius: 50%;
-  border: none;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: transform 0.15s, box-shadow 0.15s;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  border: none; cursor: pointer;
+  background: none; padding: 0;
+  font-family: inherit; font-size: 12px;
+  color: #5F5E5A;
+  transition: transform 0.15s;
   outline: none;
 }
 .btn:hover { transform: scale(1.08); }
 .btn:active { transform: scale(0.96); }
-.btn-accept { background: #3B6D11; box-shadow: 0 4px 16px rgba(59,109,17,0.35); }
-.btn-accept:hover { box-shadow: 0 6px 24px rgba(59,109,17,0.5); }
-.btn-reject { background: #A32D2D; box-shadow: 0 4px 16px rgba(163,45,45,0.35); }
-.btn-reject:hover { box-shadow: 0 6px 24px rgba(163,45,45,0.5); }
-.btn-ignore {
-  background: #F1EFE8; color: #5F5E5A;
-  width: auto; border-radius: 32px; padding: 0 20px;
-  font-size: 13px; height: 36px; margin-top: 12px;
-}
-.btn svg { display: block; }
 
-/* 倒计时 */
+.btn-circle {
+  width: 56px; height: 56px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.btn-accept .btn-circle {
+  background: #3B6D11;
+  box-shadow: 0 4px 16px rgba(59,109,17,0.35);
+}
+.btn-reject .btn-circle {
+  background: #A32D2D;
+  box-shadow: 0 4px 16px rgba(163,45,45,0.35);
+}
+
+.btn-ignore {
+  position: absolute; bottom: 16px; right: 20px;
+  padding: 4px 14px; border-radius: 12px;
+  font-size: 12px; color: #888780;
+  background: #F1EFE8; border: none; cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.btn-ignore:hover { background: #E0DDD6; color: #555552; }
+
+/* Timeout bar */
 .timeout-bar {
   position: absolute; bottom: 0; left: 0; right: 0;
   height: 3px; background: #E6F1FB;
+  border-radius: 0 0 12px 12px;
 }
-.timeout-fill { height: 100%; background: #185FA5; transition: width 1s linear; }
+.timeout-fill { height: 100%; transition: width 1s linear; }
 </style>
 </head>
 <body>
@@ -102,110 +134,212 @@ body {
   <div id="tip" class="tip tip-audio"></div>
 
   <div class="avatar" id="avatar">
-    <span id="avatar-text">?</span>
+    <div class="fallback" id="avatar-fallback"></div>
   </div>
 
-  <div class="call-type" id="call-type-label">语音通话</div>
-  <div class="name" id="caller-name">未知用户</div>
-  <div class="message" id="call-message">正在邀请你</div>
+  <div class="call-type-row">
+    <div class="call-type-icon" id="call-type-icon"></div>
+    <div class="call-type-label" id="call-type-label"></div>
+  </div>
+  <div class="name" id="caller-name"></div>
+  <div class="message" id="call-message"></div>
 
   <div class="actions">
-    <!-- 挂断 -->
-    <button class="btn btn-reject" id="btn-reject" title="挂断">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" fill="none"/>
-        <path d="M6.46 6.46l11.08 11.08M17.54 6.46L6.46 17.54" stroke="white" stroke-width="2" stroke-linecap="round"/>
-      </svg>
+    <button class="btn btn-reject" id="btn-reject">
+      <div class="btn-circle">
+        <!-- Phone down icon -->
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <path d="M10.68 13.32a16.5 16.5 0 003.64 3.64l1.22-1.22a1.88 1.88 0 011.93-.47 12.84 12.84 0 007.27 7.27A2 2 0 0122 20.28V17a2 2 0 01-2-2.18" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M3 3l18 18" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <span id="btn-reject-label"></span>
     </button>
-    <!-- 接听 -->
-    <button class="btn btn-accept" id="btn-accept" title="接听">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-        <path d="M22 16.92v3a2 2 0 01-2.18 2 19.86 19.86 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.86 19.86 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 0021.4 16.9 2 2 0 0122 16.92z" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
+    <button class="btn btn-accept" id="btn-accept">
+      <div class="btn-circle">
+        <!-- Phone icon -->
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <path d="M22 16.92v3a2 2 0 01-2.18 2 19.86 19.86 0 01-8.63-3.53 19.5 19.5 0 01-6-6A19.86 19.86 0 012.84 4.18 2 2 0 014.92 2.17a12.84 12.84 0 007.27 7.36A2 2 0 0122 9.72v2.36a2 2 0 01-1.45 1.95 12.84 12.84 0 00-7.27 7.27A2 2 0 0111.28 22H9a2 2 0 01-2-2.18z" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <span id="btn-accept-label"></span>
     </button>
   </div>
 
-  <button class="btn btn-ignore" id="btn-ignore">忽略</button>
+  <button class="btn-ignore" id="btn-ignore"></button>
 
   <div class="timeout-bar">
     <div class="timeout-fill" id="timeout-fill" style="width:100%"></div>
   </div>
 </div>
 
+<audio id="ringtone" loop hidden></audio>
+
 <script>
-const { electronAPI } = window
+// ─── SVG icons for call types ─────────────────────────
+var ICONS = {
+  audio: '<svg viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 01-2.18 2A19.86 19.86 0 015.69 18.82a19.5 19.5 0 01-6-6A19.86 19.86 0 012.84 4.18 2 2 0 014.92 2.17a12.84 12.84 0 007.27 7.36A2 2 0 0122 9.72v2.36a2 2 0 01-1.45 1.95 12.84 12.84 0 00-7.27 7.27A2 2 0 0111.28 22H9a2 2 0 01-2-2.18z" fill="none" stroke="#888780" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  video: '<svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="14" height="18" rx="2" stroke="#888780" stroke-width="2"/><path d="M22 8l-6 4 6 4V8z" fill="#888780"/></svg>',
+  meeting: '<svg viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="#888780" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="#888780" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87" stroke="#888780" stroke-width="2" stroke-linecap="round"/><path d="M16 3.13a4 4 0 010 7.75" stroke="#888780" stroke-width="2" stroke-linecap="round"/></svg>',
+};
 
-let callData = {}
-let timeoutTimer = null
-let elapsed = 0
-const TIMEOUT = 45
+// ─── Text labels ──────────────────────────────────────
+var LABELS = {
+  audio: '\u8bed\u97f3\u901a\u8bdd',       // 语音通话
+  video: '\u89c6\u9891\u901a\u8bdd',       // 视频通话
+  accept: '\u63a5\u542c',                  // 接听
+  reject: '\u6302\u65ad',                  // 挂断
+  ignore: '\u5ffd\u7565',                  // 忽略
+  unknown: '\u672a\u77e5\u7528\u6237',      // 未知用户
+  inviting: '\u6b63\u5728\u9080\u8bf7\u4f60', // 正在邀请你
+  meeting: '\u591a\u4eba\u4f1a\u8bae',     // 多人会议
+};
 
-// 接收数据
-electronAPI.onCallData((data) => {
-  callData = data
-  render(data)
-  startTimeout()
-})
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('btn-reject-label').textContent = LABELS.reject;
+  document.getElementById('btn-accept-label').textContent = LABELS.accept;
+  document.getElementById('btn-ignore').textContent = LABELS.ignore;
+  document.getElementById('caller-name').textContent = LABELS.unknown;
+  document.getElementById('call-message').textContent = LABELS.inviting;
+  document.getElementById('call-type-label').textContent = LABELS.audio;
 
-function render(data) {
-  const { callerName, callerAvatar, callType, message } = data
-
-  // 头像
-  const avatarEl = document.getElementById('avatar')
-  const avatarText = document.getElementById('avatar-text')
-  if (callerAvatar) {
-    avatarEl.innerHTML = `<img src="${callerAvatar}" alt="">`
-  } else {
-    avatarText.textContent = (callerName || '?').charAt(0)
+  if (!window.electronAPI) {
+    document.body.innerHTML = '<div style="color:red;padding:20px;font-family:sans-serif;">Error: electronAPI not available</div>';
+    return;
   }
 
-  // 类型标签
-  const typeLabel = document.getElementById('call-type-label')
-  const tip = document.getElementById('tip')
-  if (callType === 'video') {
-    typeLabel.textContent = '视频通话'
-    tip.className = 'tip tip-video'
-  } else if (callType === 'meeting') {
-    typeLabel.textContent = '多人会议'
-    tip.className = 'tip tip-meeting'
-  } else {
-    typeLabel.textContent = '语音通话'
-    tip.className = 'tip tip-audio'
-  }
+  var callData = {};
+  var timeoutTimer = null;
+  var elapsed = 0;
+  var TIMEOUT = 45;
 
-  document.getElementById('caller-name').textContent = callerName || '未知用户'
-  document.getElementById('call-message').textContent = message || '正在邀请你'
-}
+  function getAPI() { return window.electronAPI; }
 
-function startTimeout() {
-  elapsed = 0
-  const fill = document.getElementById('timeout-fill')
-  timeoutTimer = setInterval(() => {
-    elapsed++
-    const pct = 100 - (elapsed / TIMEOUT) * 100
-    fill.style.width = pct + '%'
-    if (elapsed >= TIMEOUT) {
-      clearInterval(timeoutTimer)
-      electronAPI.sendCallAction('timeout')
+  window.electronAPI.onCallData(function(data) {
+    callData = data;
+    render(data);
+    startTimeout();
+    startRingtone(data.ringtonePath);
+  });
+
+  function render(data) {
+    // Avatar: try image first, fall back to initial letter
+    var avatarEl = document.getElementById('avatar');
+    var fallbackEl = document.getElementById('avatar-fallback');
+    // Remove any previous img
+    var prevImg = avatarEl.querySelector('img');
+    if (prevImg) prevImg.remove();
+
+    var name = data.callerName || LABELS.unknown;
+    var avatarUrl = data.callerAvatar || '';
+
+    if (avatarUrl) {
+      var img = document.createElement('img');
+      img.src = avatarUrl;
+      img.alt = '';
+      img.onerror = function() { this.style.display = 'none'; fallbackEl.style.display = 'flex'; };
+      img.onload = function() { fallbackEl.style.display = 'none'; };
+      avatarEl.insertBefore(img, fallbackEl);
+      fallbackEl.style.display = ''; // hidden by default if img loads
+    } else {
+      fallbackEl.style.display = 'flex';
     }
-  }, 1000)
-}
+    fallbackEl.textContent = name.charAt(0);
 
-// 按钮事件
-document.getElementById('btn-accept').addEventListener('click', () => {
-  clearInterval(timeoutTimer)
-  electronAPI.sendCallAction('accept')
-})
+    // Call type icon + label
+    var iconEl = document.getElementById('call-type-icon');
+    var tipEl = document.getElementById('tip');
+    var typeLabel = document.getElementById('call-type-label');
 
-document.getElementById('btn-reject').addEventListener('click', () => {
-  clearInterval(timeoutTimer)
-  electronAPI.sendCallAction('reject')
-})
+    if (data.callType === 'video') {
+      iconEl.innerHTML = ICONS.video;
+      typeLabel.textContent = LABELS.video;
+      tipEl.className = 'tip tip-video';
+      document.getElementById('timeout-fill').style.background = '#639922';
+    } else if (data.callType === 'meeting') {
+      iconEl.innerHTML = ICONS.meeting;
+      typeLabel.textContent = LABELS.meeting;
+      tipEl.className = 'tip tip-meeting';
+      document.getElementById('timeout-fill').style.background = '#BA7517';
+    } else {
+      iconEl.innerHTML = ICONS.audio;
+      typeLabel.textContent = LABELS.audio;
+      tipEl.className = 'tip tip-audio';
+      document.getElementById('timeout-fill').style.background = '#185FA5';
+    }
 
-document.getElementById('btn-ignore').addEventListener('click', () => {
-  clearInterval(timeoutTimer)
-  electronAPI.sendCallAction('ignore')
-})
+    document.getElementById('caller-name').textContent = name;
+    document.getElementById('call-message').textContent = data.message || LABELS.inviting;
+  }
+
+  function startRingtone(ringtonePath) {
+    var audio = document.getElementById('ringtone');
+    if (!ringtonePath) {
+      // Fallback: 0.8s beep via oscillator
+      try {
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === 'suspended') ctx.resume();
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.3);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.8);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.8);
+      } catch(e) { console.warn('[Ringtone] Oscillator fallback failed:', e); }
+      return;
+    }
+    audio.src = ringtonePath;
+    audio.load();
+    audio.play().then(function() {
+      console.log('[Ringtone] Playing');
+    }).catch(function(err) {
+      console.warn('[Ringtone] Play rejected:', err.name, err.message);
+      // Retry once after a short delay (autoplay policy may be transient)
+      setTimeout(function() {
+        audio.play().catch(function() {});
+      }, 300);
+    });
+  }
+
+  function stopRingtone() {
+    var audio = document.getElementById('ringtone');
+    try { audio.pause(); } catch(e) {}
+    audio.src = '';
+  }
+
+  function startTimeout() {
+    if (timeoutTimer) clearInterval(timeoutTimer);
+    elapsed = 0;
+    var fill = document.getElementById('timeout-fill');
+    timeoutTimer = setInterval(function() {
+      elapsed++;
+      var pct = 100 - (elapsed / TIMEOUT) * 100;
+      fill.style.width = Math.max(0, pct) + '%';
+      if (elapsed >= TIMEOUT) {
+        clearInterval(timeoutTimer);
+        stopRingtone();
+        var api = getAPI();
+        if (api) api.sendCallAction('timeout');
+      }
+    }, 1000);
+  }
+
+  function doAction(action) {
+    clearInterval(timeoutTimer);
+    stopRingtone();
+    var api = getAPI();
+    if (api) api.sendCallAction(action);
+  }
+
+  document.getElementById('btn-accept').addEventListener('click', function() { doAction('accept'); });
+  document.getElementById('btn-reject').addEventListener('click', function() { doAction('reject'); });
+  document.getElementById('btn-ignore').addEventListener('click', function() { doAction('ignore'); });
+});
 </script>
 </body>
 </html>
