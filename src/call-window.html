@@ -62,7 +62,7 @@ body {
 /* Call type badge with icon */
 .call-type-row {
   display: flex; align-items: center; gap: 6px;
-  margin-bottom: 4px;
+  margin-bottom: 20px;
 }
 .call-type-icon { width: 16px; height: 16px; flex-shrink: 0; }
 .call-type-icon svg { width: 100%; height: 100%; }
@@ -71,8 +71,9 @@ body {
 /* Name */
 .name {
   font-size: 16px; font-weight: 600; color: #2C2C2A;
-  margin-bottom: 4px; max-width: 280px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-bottom: 20px; max-width: 280px;
+  line-height: 20px; height: 20px;
+  text-overflow: ellipsis; white-space: nowrap;
 }
 .message {
   font-size: 13px; color: #5F5E5A; max-width: 300px;
@@ -101,17 +102,17 @@ body {
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
-.btn-accept .btn-circle {
+/* .btn-accept .btn-circle {
   background: #3B6D11;
   box-shadow: 0 4px 16px rgba(59,109,17,0.35);
 }
 .btn-reject .btn-circle {
   background: #A32D2D;
   box-shadow: 0 4px 16px rgba(163,45,45,0.35);
-}
+} */
 
 .btn-ignore {
-  position: absolute; bottom: 16px; right: 20px;
+  position: absolute; top: 16px; right: 20px;
   padding: 4px 14px; border-radius: 12px;
   font-size: 12px; color: #888780;
   background: #F1EFE8; border: none; cursor: pointer;
@@ -132,41 +133,37 @@ body {
 <body>
 <div id="app">
   <div id="tip" class="tip tip-audio"></div>
-
-  <div class="avatar" id="avatar">
-    <div class="fallback" id="avatar-fallback"></div>
-  </div>
-
   <div class="call-type-row">
     <div class="call-type-icon" id="call-type-icon"></div>
     <div class="call-type-label" id="call-type-label"></div>
   </div>
+
+  <div class="avatar" id="avatar">
+    <div class="fallback" id="avatar-fallback"></div>
+  </div>
   <div class="name" id="caller-name"></div>
-  <div class="message" id="call-message"></div>
+
+  <!-- <div class="message" id="call-message"></div> -->
 
   <div class="actions">
-    <button class="btn btn-reject" id="btn-reject">
-      <div class="btn-circle">
-        <!-- Phone down icon -->
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <path d="M10.68 13.32a16.5 16.5 0 003.64 3.64l1.22-1.22a1.88 1.88 0 011.93-.47 12.84 12.84 0 007.27 7.27A2 2 0 0122 20.28V17a2 2 0 01-2-2.18" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M3 3l18 18" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
-        </svg>
-      </div>
-      <span id="btn-reject-label"></span>
-    </button>
     <button class="btn btn-accept" id="btn-accept">
       <div class="btn-circle">
         <!-- Phone icon -->
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <path d="M22 16.92v3a2 2 0 01-2.18 2 19.86 19.86 0 01-8.63-3.53 19.5 19.5 0 01-6-6A19.86 19.86 0 012.84 4.18 2 2 0 014.92 2.17a12.84 12.84 0 007.27 7.36A2 2 0 0122 9.72v2.36a2 2 0 01-1.45 1.95 12.84 12.84 0 00-7.27 7.27A2 2 0 0111.28 22H9a2 2 0 01-2-2.18z" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+        <svg t="1781228721809" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="4972" width="56" height="56"><path d="M512.418773 512.478598m-510.504382 0a510.504382 510.504382 0 1 0 1021.008764 0 510.504382 510.504382 0 1 0-1021.008764 0Z" fill="#52C41A" p-id="4973"></path><path d="M317.94851 255.950146l-28.386835 16.81075c-43.891412 25.993846-65.896943 77.532853-54.011763 126.499396 19.642454 80.893009 67.362648 159.243466 143.160585 235.041402l6.151976 6.082181c73.883544 72.278247 150.180019 117.964401 228.889426 137.078403 48.966543 11.88518 100.495579-10.120351 126.499396-54.011762l16.81075-28.386835 1.595326-2.78185c19.004323-34.120039 11.765531-61.599533-22.424304-81.999767-5.045219-3.011178-10.539124-5.982473-16.471743-8.923856-18.824849-9.312717-35.256709-16.641246-49.295579-21.985589-21.197897-8.076339-38.457332-3.978345-54.251061 12.51334l-24.209075 25.275949-1.854567 1.804713c-7.627653 6.959611-17.748004 10.569036-28.017916 9.920935-28.875404-1.834625-64.132113-23.142201-105.780098-63.912756l-4.187731-4.137877c-43.472639-43.472639-66.156183-80.125258-68.060604-109.957858-0.707926-11.1274 3.589484-22.075326 11.725648-29.872483l25.275949-24.209075c16.491685-15.793729 20.579708-33.053165 12.51334-54.251061-5.344343-14.03887-12.672872-30.47073-21.985589-49.295579-2.941383-5.94259-5.912678-11.436495-8.923856-16.481714-13.051762-21.86594-28.985083-32.714158-47.720195-32.714158-11.316845 0.009971-23.680623 3.988315-37.04148 11.895151z" fill="#FFFFFF" p-id="4974"></path></svg>
       </div>
-      <span id="btn-accept-label"></span>
+      <span id="btn-accept-label">接听</span>
     </button>
+    <button class="btn btn-reject" id="btn-reject">
+      <div class="btn-circle">
+        <!-- Phone down icon -->
+        <svg t="1781228813700" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1664" width="56" height="56"><path d="M512 512m-512 0a512 512 0 1 0 1024 0 512 512 0 1 0-1024 0Z" fill="#E83F2B" p-id="1665"></path><path d="M269.856 580.24l96.128 2.208a29.456 29.456 0 0 0 29.92-28.912l0.48-29.408c0.288-16.64 33.376-49.2 116.24-50.56s115.264 36.704 115.008 53.312l-0.48 29.408a29.456 29.456 0 0 0 28.896 29.92l96.128 2.208a29.44 29.44 0 0 0 29.92-28.912l0.48-29.408a100.32 100.32 0 0 0-21.728-62.544 186.848 186.848 0 0 0-58.304-48.992 401.28 401.28 0 0 0-187.936-45.984 401.6 401.6 0 0 0-189.328 39.632 204.592 204.592 0 0 0-47.552 33.44 145.808 145.808 0 0 0-12.4 13.536 100.32 100.32 0 0 0-23.872 61.776l-0.496 29.408a29.456 29.456 0 0 0 28.912 29.92z" fill="#FFFFFF" p-id="1666"></path></svg>
+      </div>
+      <span id="btn-reject-label">挂断</span>
+    </button>
+    
   </div>
 
-  <button class="btn-ignore" id="btn-ignore"></button>
+  <button class="btn-ignore" id="btn-ignore">忽略</button>
 
   <div class="timeout-bar">
     <div class="timeout-fill" id="timeout-fill" style="width:100%"></div>
@@ -178,29 +175,29 @@ body {
 <script>
 // ─── SVG icons for call types ─────────────────────────
 var ICONS = {
-  audio: '<svg viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 01-2.18 2A19.86 19.86 0 015.69 18.82a19.5 19.5 0 01-6-6A19.86 19.86 0 012.84 4.18 2 2 0 014.92 2.17a12.84 12.84 0 007.27 7.36A2 2 0 0122 9.72v2.36a2 2 0 01-1.45 1.95 12.84 12.84 0 00-7.27 7.27A2 2 0 0111.28 22H9a2 2 0 01-2-2.18z" fill="none" stroke="#888780" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  video: '<svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="14" height="18" rx="2" stroke="#888780" stroke-width="2"/><path d="M22 8l-6 4 6 4V8z" fill="#888780"/></svg>',
-  meeting: '<svg viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="#888780" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="#888780" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87" stroke="#888780" stroke-width="2" stroke-linecap="round"/><path d="M16 3.13a4 4 0 010 7.75" stroke="#888780" stroke-width="2" stroke-linecap="round"/></svg>',
+  audio: '<svg t="1781229283406" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2705" width="16" height="16"><path d="M196.224 148.928a96 96 0 0 1 140.16 4.608L410.24 238.08a96 96 0 0 1-4.352 131.136l-37.44 37.44a19.264 19.264 0 0 0-5.44 8.832 6.016 6.016 0 0 0 0.512 4.544c12.032 23.04 40.768 66.56 107.52 133.312 45.44 45.44 80 73.152 104.704 89.984a247.04 247.04 0 0 0 28.352 17.28l0.96 0.448a5.76 5.76 0 0 0 3.456 0 19.2 19.2 0 0 0 8.64-5.312l37.632-37.632a96 96 0 0 1 131.136-4.352l84.48 73.856a96 96 0 0 1 4.672 140.16l-38.848 38.848c-19.392 19.392-46.848 39.744-82.368 42.368-72.704 5.312-218.24-19.392-418.688-219.84C135.04 488.96 109.888 343.36 115.072 270.464c2.56-35.712 22.976-63.36 42.56-82.944l38.592-38.592z m91.968 46.784a32 32 0 0 0-46.72-1.536l-38.592 38.592c-15.104 15.104-23.04 28.992-23.936 42.176-3.52 49.792 10.752 178.112 201.536 368.896 190.976 190.976 319.168 204.864 368.704 201.216 13.056-0.896 26.816-8.768 41.792-23.808l38.848-38.784a31.872 31.872 0 0 0-1.6-46.72l-84.48-73.92a32 32 0 0 0-43.648 1.472l-37.632 37.632c-20.608 20.544-54.72 33.728-87.936 16.384-30.336-15.808-78.848-48.896-148.736-118.784-69.824-69.888-103.04-118.4-119.04-148.864a69.376 69.376 0 0 1-3.648-56.832c4.288-12.16 11.52-22.976 20.096-31.488l37.44-37.44a32 32 0 0 0 1.472-43.712l-73.92-84.48zM588.032 300.16a16 16 0 0 1 22.592 0l113.152 113.152a16 16 0 0 1 0 22.656l-22.592 22.592a16 16 0 0 1-22.656 0L565.376 345.408a15.872 15.872 0 0 1 0-22.592l22.656-22.656z m67.84-180.992l248.96 248.896a16 16 0 0 1 0 22.592l-22.656 22.656a16 16 0 0 1-22.656 0L610.624 164.48a16 16 0 0 1 0-22.656l22.656-22.592a16 16 0 0 1 22.592 0z" p-id="2706"></path></svg>',
+  video: '<svg t="1781229373725" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2910" width="16" height="16"><path d="M982.186667 158.933333a4.864 4.864 0 0 1 7.722666 3.925334V435.2a4.864 4.864 0 0 1-7.722666 3.925333l-99.2-73.557333v83.754667a9.685333 9.685333 0 0 1-9.685334 9.685333h-343.296a9.685333 9.685333 0 0 1-9.685333-9.685333V148.736c0-5.376 4.352-9.728 9.685333-9.728h343.296c5.333333 0 9.685333 4.352 9.685334 9.728v83.754667l99.2-73.557334zM633.045333 981.333333c-22.741333 0-45.653333-4.181333-67.584-12.8a976.554667 976.554667 0 0 1-333.525333-219.136A976.725333 976.725333 0 0 1 12.842667 415.872c-27.221333-69.034667-10.368-148.053333 42.922666-201.344l99.584-99.541333a63.573333 63.573333 0 0 1 96.682667 7.936l123.264 172.586666a63.36 63.36 0 0 1-6.826667 81.92l-77.184 77.226667a752.128 752.128 0 0 0 235.434667 235.392l77.226667-77.226667a63.402667 63.402667 0 0 1 81.877333-6.784l172.544 123.221334a63.658667 63.658667 0 0 1 7.978667 96.725333l-99.541334 99.541333A189.269333 189.269333 0 0 1 633.045333 981.333333zM197.546667 193.450667L116.138667 274.858667c-29.269333 29.269333-38.656 72.32-23.893334 109.653333A891.562667 891.562667 0 0 0 292.266667 689.066667a891.605333 891.605333 0 0 0 304.554666 200.106666c37.376 14.72 80.341333 5.333333 109.653334-23.893333l81.408-81.450667-136.661334-97.578666-76.245333 76.202666a63.402667 63.402667 0 0 1-77.610667 9.770667 837.76 837.76 0 0 1-288.213333-288.213333 63.488 63.488 0 0 1 9.770667-77.653334l76.202666-76.202666L197.546667 193.450667z" fill="#000000" p-id="2911"></path></svg>',
+  meeting: '<svg t="1781229417591" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="4169" width="16" height="16"><path d="M814.304 279.552c0-76.352-62.272-138.24-139.104-138.24H139.136C62.304 141.312 0 203.2 0 279.552v464.864c0 76.384 62.304 138.272 139.136 138.272H675.2c76.8 0 139.104-61.888 139.104-138.24a15.456 15.456 0 0 1 19.872-14.816l117.44 34.976A56.32 56.32 0 0 0 1024 710.656V311.136a56.32 56.32 0 0 0-72.384-53.952L832.096 292.8a13.824 13.824 0 0 1-17.792-13.248zM295.616 634.912v-241.152a56.32 56.32 0 0 1 86.432-47.552l190.4 120.544a56.32 56.32 0 0 1 0 95.136l-190.4 120.608a56.32 56.32 0 0 1-86.432-47.584z" p-id="4170"></path></svg>',
 };
 
 // ─── Text labels ──────────────────────────────────────
 var LABELS = {
-  audio: '\u8bed\u97f3\u901a\u8bdd',       // 语音通话
-  video: '\u89c6\u9891\u901a\u8bdd',       // 视频通话
-  accept: '\u63a5\u542c',                  // 接听
-  reject: '\u6302\u65ad',                  // 挂断
-  ignore: '\u5ffd\u7565',                  // 忽略
-  unknown: '\u672a\u77e5\u7528\u6237',      // 未知用户
-  inviting: '\u6b63\u5728\u9080\u8bf7\u4f60', // 正在邀请你
-  meeting: '\u591a\u4eba\u4f1a\u8bae',     // 多人会议
+  audio: '语音通话',       // 语音通话
+  video: '视频通话',       // 视频通话
+  accept: '接听',                  // 接听
+  reject: '挂断',                  // 挂断
+  ignore: '忽略',                  // 忽略
+  unknown: '未知用户',      // 未知用户
+  inviting: '正在邀请你', // 正在邀请你
+  meeting: '多人会议',     // 多人会议
 };
 
 document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('btn-reject-label').textContent = LABELS.reject;
   document.getElementById('btn-accept-label').textContent = LABELS.accept;
-  document.getElementById('btn-ignore').textContent = LABELS.ignore;
+  // document.getElementById('btn-ignore').textContent = LABELS.ignore;
   document.getElementById('caller-name').textContent = LABELS.unknown;
-  document.getElementById('call-message').textContent = LABELS.inviting;
+  // document.getElementById('call-message').textContent = LABELS.inviting;
   document.getElementById('call-type-label').textContent = LABELS.audio;
 
   if (!window.electronAPI) {
@@ -269,7 +266,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     document.getElementById('caller-name').textContent = name;
-    document.getElementById('call-message').textContent = data.message || LABELS.inviting;
+    // document.getElementById('call-message').textContent = data.message || LABELS.inviting;
   }
 
   function startRingtone(ringtonePath) {
