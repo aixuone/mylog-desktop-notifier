@@ -5,11 +5,12 @@ module.exports = {
   // WebSocket 服务端口（起始端口），用于与浏览器扩展通信
   wsPort: 18999,
 
-  // 图标配置
+  // 图标配置（.ico 格式，支持多状态切换 + 闪烁）
   icons: {
-    default: 'assets/icon.png',      // 默认托盘图标（用户未登录时使用）
-    incoming: 'assets/icon-call.png', // 来电中状态图标
-    unread: 'assets/icon-unread.png'  // 有未读消息状态图标
+    default: 'assets/icon.ico',          // 正常状态（已连接）
+    gray:    'assets/icon-gray.ico',     // 灰色状态（未连接/断开连接）
+    ringing: 'assets/icon.ico',          // 响铃中（与 gray 交替闪烁）
+    unread:  'assets/icon-unread.ico'    // 未读消息（与 default 交替闪烁）
   },
 
   // 铃声配置

@@ -7,15 +7,37 @@
     "dev": "scripts\\start.bat",
     "build": "node build.js",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dist": "electron-builder --win"
   },
   "build": {
     "appId": "com.mylog.desktop-notifier",
-    "productName": "MyLog 通知助手",
-    "directories": { "output": "dist-installer" },
-    "files": ["dist/**/*", "assets/**/*", "package.json"],
+    "productName": "MyLog通知助手",
+    "copyright": "Copyright © 2025 MyLog",
+    "asar": false,
+    "directories": {
+      "output": "dist-installer"
+    },
+    "files": [
+      "main.js",
+      "config.js",
+      "src/**/*",
+      "assets/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!node_modules/**/electron/dist/**",
+      "!node_modules/**/*.md",
+      "!node_modules/**/*.ts",
+      "!**/.git/**"
+    ],
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "assets/icon.ico",
       "requestedExecutionLevel": "asInvoker"
     },
@@ -23,10 +45,15 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "MyLog 通知助手"
+      "createStartMenuShortcut": true,
+      "shortcutName": "MyLog通知助手",
+      "runAfterFinish": false,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico"
     }
   },
   "dependencies": {
+    "jimp": "^0.22.12",
     "ws": "^8.18.0"
   },
   "devDependencies": {
