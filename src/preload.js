@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Receive call data (caller info + ringtone path) */
   onCallData: (callback) => ipcRenderer.on('call-data', (_, data) => callback(data)),
 
+  /** Receive stop ringtone command */
+  onStopRingtone: (callback) => ipcRenderer.on('stop-ringtone', () => callback()),
+
   // ─── Meeting window ───────────────────────────
   /** Send user action (accept/reject/timeout) for meeting invitations */
   sendMeetingAction: (action) => ipcRenderer.send('meeting-action', action),

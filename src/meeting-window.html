@@ -36,7 +36,6 @@ body {
   background: linear-gradient(90deg, #BA7517, #EF9F27);
 }
 
-/* Avatar */
 .avatar {
   width: 64px; height: 64px; border-radius: 50%;
   background: #FEF3E4;
@@ -55,7 +54,6 @@ body {
   color: #BA7517;
 }
 
-/* Meeting icon badge */
 .meeting-icon-row {
   display: flex; align-items: center; gap: 6px;
   margin-bottom: 20px;
@@ -64,7 +62,6 @@ body {
 .meeting-icon-svg svg { width: 100%; height: 100%; }
 .meeting-type-label { font-size: 13px; color: #BA7517; font-weight: 500; }
 
-/* Text */
 .name {
   font-size: 16px; font-weight: 600; color: #2C2C2A;
   margin-bottom: 20px; max-width: 280px;
@@ -81,7 +78,6 @@ body {
   margin-bottom: 20px;
 }
 
-/* Buttons */
 .actions {
   display: flex; gap: 16px; margin-top: auto;
 }
@@ -120,7 +116,6 @@ body {
 .btn-decline .btn-icon { width: 22px; height: 22px; flex-shrink: 0; }
 .btn-decline .btn-icon svg { width: 100%; height: 100%; }
 
-/* Timeout bar */
 .timeout-bar {
   position: absolute; bottom: 0; left: 0; right: 0;
   height: 3px; background: #FEF3E4;
@@ -147,7 +142,6 @@ body {
   <div id="tip" class="tip"></div>
   <div class="meeting-icon-row">
     <div class="meeting-icon-svg">
-      <!-- Users group icon -->
       <svg t="1781229417591" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="4169" width="16" height="16"><path d="M814.304 279.552c0-76.352-62.272-138.24-139.104-138.24H139.136C62.304 141.312 0 203.2 0 279.552v464.864c0 76.384 62.304 138.272 139.136 138.272H675.2c76.8 0 139.104-61.888 139.104-138.24a15.456 15.456 0 0 1 19.872-14.816l117.44 34.976A56.32 56.32 0 0 0 1024 710.656V311.136a56.32 56.32 0 0 0-72.384-53.952L832.096 292.8a13.824 13.824 0 0 1-17.792-13.248zM295.616 634.912v-241.152a56.32 56.32 0 0 1 86.432-47.552l190.4 120.544a56.32 56.32 0 0 1 0 95.136l-190.4 120.608a56.32 56.32 0 0 1-86.432-47.584z" p-id="4170"></path></svg>
     </div>
     <div class="meeting-type-label" id="room-label"></div>
@@ -163,15 +157,14 @@ body {
   <div class="actions">
     <button class="btn btn-decline" id="btn-decline">
       <div class="btn-icon">
-        <!-- X icon -->
         <svg t="1781228813700" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1664" width="56" height="56"><path d="M512 512m-512 0a512 512 0 1 0 1024 0 512 512 0 1 0-1024 0Z" fill="#E83F2B" p-id="1665"></path><path d="M269.856 580.24l96.128 2.208a29.456 29.456 0 0 0 29.92-28.912l0.48-29.408c0.288-16.64 33.376-49.2 116.24-50.56s115.264 36.704 115.008 53.312l-0.48 29.408a29.456 29.456 0 0 0 28.896 29.92l96.128 2.208a29.44 29.44 0 0 0 29.92-28.912l0.48-29.408a100.32 100.32 0 0 0-21.728-62.544 186.848 186.848 0 0 0-58.304-48.992 401.28 401.28 0 0 0-187.936-45.984 401.6 401.6 0 0 0-189.328 39.632 204.592 204.592 0 0 0-47.552 33.44 145.808 145.808 0 0 0-12.4 13.536 100.32 100.32 0 0 0-23.872 61.776l-0.496 29.408a29.456 29.456 0 0 0 28.912 29.92z" fill="#FFFFFF" p-id="1666"></path></svg>
       </div>
       <span id="btn-decline-label"></span>
     </button>
     <button class="btn btn-join" id="btn-join">
       <div class="btn-icon">
-        <!-- Door/enter icon -->
-        <svg t="1781231836256" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="6025" width="56" height="56"><path d="M91.903539 43.98543C178.637175-42.66288 225.907647 12.457561 304.791312 91.341227c94.540943 94.583606 118.176179 139.251641 47.270472 210.200011-107.766436 105.078674-65.700836 239.125444 34.130304 338.956584 99.873803 99.83114 233.87791 139.294304 338.999247 34.130305 68.345934-68.260609 115.616406-47.270471 210.242674 47.355797 73.550806 76.195904 131.401671 123.509039 44.668036 210.200011-157.682006 157.682006-520.316489 110.368871-759.441933-128.756573-239.125444-236.523009-286.438579-601.759927-128.756573-759.399269zM853.435953 85.325761c31.39988 0 56.869619 25.46974 56.86962 56.869619v227.563804C910.305573 401.159064 884.835833 426.628803 853.435953 426.628803h-284.433423A56.869619 56.869619 0 0 1 512.132911 369.759184V142.19538C512.132911 110.7955 537.60265 85.325761 569.00253 85.325761H853.435953z m168.219738 89.080094A28.456141 28.456141 0 0 1 1024.087475 186.010158v140.019574a28.456141 28.456141 0 0 1-39.975119 25.981694L938.761714 331.831883V180.122681l45.350642-20.13688c14.334728-6.399432 31.143903 0.085326 37.543335 14.420054z" p-id="6026" fill="#e6e6e6"></path></svg>      </div>
+        <svg t="1781231836256" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="6025" width="56" height="56"><path d="M91.903539 43.98543C178.637175-42.66288 225.907647 12.457561 304.791312 91.341227c94.540943 94.583606 118.176179 139.251641 47.270472 210.200011-107.766436 105.078674-65.700836 239.125444 34.130304 338.956584 99.873803 99.83114 233.87791 139.294304 338.999247 34.130305 68.345934-68.260609 115.616406-47.270471 210.242674 47.355797 73.550806 76.195904 131.401671 123.509039 44.668036 210.200011-157.682006 157.682006-520.316489 110.368871-759.441933-128.756573-239.125444-236.523009-286.438579-601.759927-128.756573-759.399269zM853.435953 85.325761c31.39988 0 56.869619 25.46974 56.86962 56.869619v227.563804C910.305573 401.159064 884.835833 426.628803 853.435953 426.628803h-284.433423A56.869619 56.869619 0 0 1 512.132911 369.759184V142.19538C512.132911 110.7955 537.60265 85.325761 569.00253 85.325761H853.435953z m168.219738 89.080094A28.456141 28.456141 0 0 1 1024.087475 186.010158v140.019574a28.456141 28.456141 0 0 1-39.975119 25.981694L938.761714 331.831883V180.122681l45.350642-20.13688c14.334728-6.399432 31.143903 0.085326 37.543335 14.420054z" p-id="6026" fill="#e6e6e6"></path></svg>
+      </div>
       <span id="btn-join-label"></span>
     </button>
   </div>
@@ -181,22 +174,18 @@ body {
   </div>
 </div>
 
-<audio id="ringtone" loop hidden></audio>
-
 <script>
-// ─── Text labels ──────────────────────────────────────
 var LABELS = {
-  meeting: '\u591a\u4eba\u4f1a\u8bae',          // 多人会议
-  join: '\u52a0\u5165\u4f1a\u8bae',             // 加入会议
-  decline: '\u62d2\u7edd',                       // 拒绝
-  unknown: '\u672a\u77e5\u7528\u6237',            // 未知用户
-  inviting: '\u9080\u8bf7\u4f60\u53c2\u52a0\u4f1a\u8bae', // 邀请你参加会议
+  meeting: '多人会议',
+  join: '加入会议',
+  decline: '拒绝',
+  unknown: '未知用户',
+  inviting: '邀请你参加会议',
 };
 
 document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('btn-join-label').textContent = LABELS.join;
   document.getElementById('btn-decline-label').textContent = LABELS.decline;
-  // document.getElementById('call-type-label').textContent = LABELS.meeting;
   document.getElementById('caller-name').textContent = LABELS.unknown;
   document.getElementById('call-message').textContent = LABELS.inviting;
 
@@ -209,18 +198,98 @@ document.addEventListener('DOMContentLoaded', function() {
   var timeoutTimer = null;
   var elapsed = 0;
   var TIMEOUT = 45;
+  var audioElement = null;
+  var ringtoneConfig = {};
 
   function getAPI() { return window.electronAPI; }
 
+  function createAudioElement() {
+    if (audioElement) {
+      audioElement.pause();
+      audioElement = null;
+    }
+    audioElement = document.createElement('audio');
+    audioElement.loop = ringtoneConfig.loop !== undefined ? ringtoneConfig.loop : true;
+    audioElement.volume = ringtoneConfig.volume !== undefined ? ringtoneConfig.volume : 0.7;
+    audioElement.preload = 'auto';
+    audioElement.crossOrigin = 'anonymous';
+    return audioElement;
+  }
+
+  function startRingtone(ringtonePath, config) {
+    ringtoneConfig = config || {};
+    
+    if (!ringtonePath) {
+      try {
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === 'suspended') ctx.resume();
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.3);
+        osc.frequency.setValueAtTime(880, ctx.currentTime + 0.6);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.0);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 1.0);
+      } catch(e) { console.warn('[Ringtone] Oscillator fallback failed:', e); }
+      return;
+    }
+
+    var audio = createAudioElement();
+    audio.src = ringtonePath;
+    
+    audio.addEventListener('canplaythrough', function() {
+      audio.currentTime = ringtoneConfig.startTime || 0;
+      audio.play().then(function() {
+        console.log('[Ringtone] Playing in meeting window from position:', audio.currentTime);
+      }).catch(function(err) {
+        console.warn('[Ringtone] Play rejected:', err.name, err.message);
+        setTimeout(function() {
+          audio.currentTime = ringtoneConfig.startTime || 0;
+          audio.play().catch(function(e) { console.warn('[Ringtone] Retry failed:', e); });
+        }, 100);
+      });
+    }, { once: true });
+
+    audio.load();
+    
+    setTimeout(function() {
+      if (audio.readyState >= 2) {
+        audio.currentTime = ringtoneConfig.startTime || 0;
+        audio.play().catch(function() {});
+      }
+    }, 100);
+  }
+
+  function stopRingtone() {
+    if (audioElement) {
+      try {
+        audioElement.pause();
+        audioElement.currentTime = 0;
+      } catch(e) { console.warn('[Ringtone] Stop error:', e); }
+      audioElement = null;
+    }
+    console.log('[Ringtone] Stopped');
+  }
+
   window.electronAPI.onMeetingData(function(data) {
     callData = data;
+    ringtoneConfig = data.ringtoneConfig || {};
+    TIMEOUT = Math.floor((data.ringtoneConfig?.timeout || 45000) / 1000);
     render(data);
     startTimeout();
-    startRingtone(data.ringtonePath);
+    startRingtone(data.ringtonePath, data.ringtoneConfig);
+  });
+
+  window.electronAPI.onStopRingtone(function() {
+    stopRingtone();
   });
 
   function render(data) {
-    // Avatar
     var avatarEl = document.getElementById('avatar');
     var fallbackEl = document.getElementById('avatar-fallback');
     var prevImg = avatarEl.querySelector('img');
@@ -244,60 +313,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('caller-name').textContent = name;
 
-    // Room name (shown as subtitle)
     var roomMsg = data.message || '';
     document.getElementById('room-label').textContent = roomMsg;
 
     document.getElementById('call-message').textContent = LABELS.inviting;
   }
 
-  function startRingtone(ringtonePath) {
-    var audio = document.getElementById('ringtone');
-    if (!ringtonePath) {
-      // Fallback: looping beep pattern
-      try {
-        var ctx = new (window.AudioContext || window.webkitAudioContext)();
-        if (ctx.state === 'suspended') ctx.resume();
-        var osc = ctx.createOscillator();
-        var gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.3);
-        osc.frequency.setValueAtTime(880, ctx.currentTime + 0.6);
-        gain.gain.setValueAtTime(0.3, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.0);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 1.0);
-      } catch(e) { console.warn('[Ringtone] Oscillator fallback failed:', e); }
-      return;
-    }
-    audio.src = ringtonePath;
-    audio.load();
-    audio.play().then(function() {
-      console.log('[Ringtone] Playing in meeting window');
-    }).catch(function(err) {
-      console.warn('[Ringtone] Play rejected in meeting window:', err.name, err.message);
-      // Retry after delay
-      setTimeout(function() {
-        audio.play().catch(function(e2) {
-          console.warn('[Ringtone] Retry also failed:', e2.name);
-        });
-      }, 300);
-    });
-  }
-
-  function stopRingtone() {
-    var audio = document.getElementById('ringtone');
-    try { audio.pause(); } catch(e) {}
-    audio.src = '';
-  }
-
   function startTimeout() {
     if (timeoutTimer) clearInterval(timeoutTimer);
     elapsed = 0;
     var fill = document.getElementById('timeout-fill');
+    fill.style.width = '100%';
     timeoutTimer = setInterval(function() {
       elapsed++;
       var pct = 100 - (elapsed / TIMEOUT) * 100;
@@ -317,6 +343,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var api = getAPI();
     if (api) api.sendMeetingAction(action);
   }
+
   document.getElementById('btn-ignore').addEventListener('click', function() { doAction('ignore'); });
   document.getElementById('btn-join').addEventListener('click', function() { doAction('accept'); });
   document.getElementById('btn-decline').addEventListener('click', function() { doAction('reject'); });

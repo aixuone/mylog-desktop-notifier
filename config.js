@@ -2,11 +2,23 @@
 // 所有配置项均支持修改，修改后需重启应用生效
 
 module.exports = {
-  // WebSocket 服务端口，用于与浏览器扩展通信
+  // WebSocket 服务端口（起始端口），用于与浏览器扩展通信
   wsPort: 18999,
 
-  // MyLog 本地服务地址，点击托盘图标时打开
-  localUrl: 'http://localhost:5173',
+  // 图标配置
+  icons: {
+    default: 'assets/icon.png',      // 默认托盘图标（用户未登录时使用）
+    incoming: 'assets/icon-call.png', // 来电中状态图标
+    unread: 'assets/icon-unread.png'  // 有未读消息状态图标
+  },
+
+  // 铃声配置
+  ringtone: {
+    path: 'assets/ringtone.m4a',     // 铃声文件路径
+    loop: true,                      // 是否循环播放
+    volume: 0.7,                     // 音量（0-1）
+    startTime: 0                     // 开始播放位置（秒，0表示从头开始）
+  },
 
   // 通话窗口配置（屏幕居中显示）
   callWindow: {
@@ -37,5 +49,10 @@ module.exports = {
   deduplication: {
     callWindowMs: 5000,   // 通话/会议通知去重窗口（5秒内相同ID只显示一次）
     toastWindowMs: 3000   // 消息通知去重窗口（3秒内相同内容只显示一次）
+  },
+
+  // HTTP 握手服务配置
+  handshake: {
+    maxAttempts: 50        // 端口冲突时最大重试次数
   }
 }

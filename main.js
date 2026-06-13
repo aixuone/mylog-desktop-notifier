@@ -1,9 +1,12 @@
-// main.js - Electron main process: tray + WS server + notification windows
+// main.js - Electron main process: tray + WS server + HTTP server + notification windows
 process.env.ELECTRON_NO_ATTACH_CONSOLE = '1'
 
 const { app, Tray, Menu, BrowserWindow, ipcMain, shell } = require('electron')
 const path = require('path')
 const { WebSocketServer } = require('ws')
+const http = require('http')
+const fs = require('fs')
+const net = require('net')
 
 // ─── Load config ──────────────────────────────────────────
 const config = require('./config.js')
@@ -12,20 +15,32 @@ console.log('[Config] Loaded from config.js')
 // ─── Global state ──────────────────────────────────────────
 let tray = null
 let wsServer = null
+let httpServer = null
 let callWindow = null        // incoming audio/video call popup (screen center)
 let meetingWindow = null     // incoming meeting invitation popup
-let toastWindow = null        // message toast (bottom right)
+let toastWindow = null       // message toast (bottom right)
 let isQuitting = false
+let currentWsPort = config.wsPort
+let currentHttpPort = 0
+let trayIconState = 'default' // default, incoming, unread
+let unreadCount = 0
 
-const WS_PORT = config.wsPort
+// User info from browser
+let currentUser = {
+  userId: '',
+  userName: '',
+  userIcon: '',
+  browserType: ''
+}
+
 const PRELOAD_PATH = path.join(__dirname, 'src', 'preload.js')
 const CALL_W = config.callWindow.width
 const CALL_H = config.callWindow.height
 const MEETING_W = config.meetingWindow.width
 const MEETING_H = config.meetingWindow.height
 
-// Ringtone file (M4A - played via HTML5 Audio in renderer, not PowerShell)
-const RINGTONE_FILE = path.join(__dirname, 'assets', 'ringtone.m4a')
+// Ringtone configuration from config
+const RINGTONE_FILE = path.join(__dirname, config.ringtone.path)
 function getRingtonePath() {
   if (fs.existsSync(RINGTONE_FILE)) {
     return 'file:///' + RINGTONE_FILE.replace(/\\/g, '/')
@@ -50,7 +65,6 @@ function makeWebPrefs() {
     preload: PRELOAD_PATH,
     contextIsolation: true,
     nodeIntegration: false,
-    // Allow Audio.play() without user gesture — critical for ringtone reliability
     autoplayPolicy: 'no-user-gesture-required',
   }
 }
@@ -62,9 +76,6 @@ function makePopupWindowOpts(w, h) {
     height: h,
     show: false,
     frame: false,
-    // Use acrylic material instead of transparent:true to keep ClearType font rendering
-    // transparent:true creates WS_EX_LAYERED which disables subpixel anti-aliasing on Windows,
-    // causing CJK characters to appear broken/garbled (Electron issue #40515)
     ...(supportsAcrylic()
       ? { backgroundMaterial: 'acrylic' }
       : { backgroundColor: '#FFFFFF', transparent: false }),
@@ -81,14 +92,241 @@ function makePopupWindowOpts(w, h) {
   }
 }
 
+// ─── Port finder ──────────────────────────────────────────
+function findAvailablePort(startPort, maxAttempts, callback) {
+  let attempts = 0
+  let currentPort = startPort
+
+  function tryNextPort() {
+    if (attempts >= maxAttempts) {
+      callback(null, null)
+      return
+    }
+
+    const server = net.createServer()
+    server.unref()
+
+    server.on('error', () => {
+      attempts++
+      currentPort++
+      console.log('[Port] Port', currentPort - 1, 'is in use, trying port', currentPort)
+      tryNextPort()
+    })
+
+    server.on('listening', () => {
+      server.close(() => {
+        callback(null, currentPort)
+      })
+    })
+
+    server.listen(currentPort, '127.0.0.1')
+  }
+
+  tryNextPort()
+}
+
+// ─── Tray icon management ──────────────────────────────────
+function getIconPath(state) {
+  if (state === 'default' && currentUser.userIcon) {
+    return currentUser.userIcon
+  }
+  
+  const iconConfig = config.icons[state] || config.icons.default
+  const fullPath = path.join(__dirname, iconConfig)
+  if (fs.existsSync(fullPath)) {
+    return fullPath
+  }
+  return path.join(__dirname, config.icons.default)
+}
+
+function setTrayIcon(state) {
+  if (!tray || trayIconState === state) return
+  
+  const iconPath = getIconPath(state)
+  tray.setImage(iconPath)
+  trayIconState = state
+  console.log('[Tray] Icon state changed to:', state)
+}
+
+function updateUnreadCount(count) {
+  unreadCount = Math.max(0, count)
+  const tooltip = currentUser.userName 
+    ? `${currentUser.userName} - ${unreadCount} unread messages`
+    : `MyLog Notification Assistant${unreadCount > 0 ? ` - ${unreadCount} unread messages` : ''}`
+  
+  if (unreadCount > 0 && trayIconState !== 'incoming') {
+    setTrayIcon('unread')
+    tray.setToolTip(tooltip)
+  } else if (trayIconState === 'unread' && unreadCount === 0) {
+    setTrayIcon('default')
+    tray.setToolTip(currentUser.userName || 'MyLog Notification Assistant / MyLog 通知助手')
+  }
+}
+
+function updateTrayMenu() {
+  if (!tray) return
+
+  const menuItems = []
+  
+  if (currentUser.userName) {
+    menuItems.push({
+      label: currentUser.userName,
+      enabled: false,
+      icon: currentUser.userIcon ? path.basename(currentUser.userIcon) : undefined
+    })
+    menuItems.push({ type: 'separator' })
+  }
+  
+  menuItems.push({
+    label: 'Launch at startup / 开机自启',
+    type: 'checkbox',
+    checked: app.getLoginItemSettings().openAtLogin,
+    click: (item) => {
+      app.setLoginItemSettings({ openAtLogin: item.checked })
+    },
+  })
+  menuItems.push({ type: 'separator' })
+  menuItems.push({
+    label: 'Exit / 退出',
+    click: () => {
+      isQuitting = true
+      if (tray) {
+        tray.destroy()
+        tray = null
+      }
+      if (wsServer) {
+        wsServer.close()
+        wsServer = null
+      }
+      if (httpServer) {
+        httpServer.close()
+        httpServer = null
+      }
+      app.quit()
+    },
+  })
+
+  const contextMenu = Menu.buildFromTemplate(menuItems)
+  tray.setContextMenu(contextMenu)
+  
+  tray.setToolTip(currentUser.userName || 'MyLog Notification Assistant / MyLog 通知助手')
+}
+
+function setUserInfo(userData) {
+  currentUser = {
+    userId: userData.userId || '',
+    userName: userData.userName || '',
+    userIcon: userData.userIcon || '',
+    browserType: userData.browserType || ''
+  }
+  
+  console.log('[User] Updated:', currentUser.userName, currentUser.browserType)
+  updateTrayMenu()
+  if (trayIconState === 'default') {
+    setTrayIcon('default')
+  }
+}
+
+// ─── HTTP server for handshake ────────────────────────────
+const HTTP_DEFAULT_PORT = 8080
+
+function startHttpServer(callback) {
+  const server = http.createServer((req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    res.setHeader('Content-Type', 'application/json')
+
+    if (req.method === 'OPTIONS') {
+      res.statusCode = 200
+      res.end()
+      return
+    }
+
+    if (req.url === '/api/handshake' && req.method === 'POST') {
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body)
+          console.log('[HTTP] Handshake request:', data)
+          
+          setUserInfo({
+            userId: data.userId,
+            userName: data.userName,
+            userIcon: data.userIcon,
+            browserType: data.browserType
+          })
+
+          res.writeHead(200)
+          res.end(JSON.stringify({
+            success: true,
+            wsPort: currentWsPort,
+            version: '1.0.0',
+            message: 'Handshake successful'
+          }))
+        } catch (error) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ success: false, error: 'Invalid request body' }))
+        }
+      })
+    } else if (req.url === '/api/port' && req.method === 'GET') {
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        success: true,
+        wsPort: currentWsPort,
+        version: '1.0.0'
+      }))
+    } else {
+      res.writeHead(404)
+      res.end(JSON.stringify({ success: false, error: 'Not found' }))
+    }
+  })
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      currentHttpPort++
+      console.log('[HTTP] Port', currentHttpPort - 1, 'in use, trying port', currentHttpPort)
+      server.listen(currentHttpPort, '127.0.0.1')
+    } else {
+      console.error('[HTTP] Server error:', err)
+      callback(err)
+    }
+  })
+
+  server.on('listening', () => {
+    currentHttpPort = server.address().port
+    httpServer = server
+    console.log('[HTTP] Server listening on http://127.0.0.1:', currentHttpPort)
+    callback(null)
+  })
+
+  currentHttpPort = HTTP_DEFAULT_PORT
+  server.listen(currentHttpPort, '127.0.0.1')
+}
+
 // ─── App lifecycle ────────────────────────────────────────
 app.whenReady().then(() => {
-  createTray()
-  startWSServer()
-  registerProtocol()
-  preCreateCallWindow()
-  preCreateMeetingWindow()
-  console.log('[MyLog Notifier] Ready | WS port:', WS_PORT)
+  findAvailablePort(config.wsPort, config.handshake.maxAttempts, (err, wsPort) => {
+    if (err || !wsPort) {
+      console.error('[Port] No available ports found, exiting')
+      app.quit()
+      return
+    }
+
+    currentWsPort = wsPort
+    createTray()
+    startHttpServer((err) => {
+      if (err) {
+        console.error('[HTTP] Failed to start HTTP server:', err)
+      }
+      startWSServer()
+      registerProtocol()
+      preCreateCallWindow()
+      preCreateMeetingWindow()
+      console.log('[MyLog Notifier] Ready | WS port:', currentWsPort, '| HTTP port:', currentHttpPort)
+    })
+  })
 })
 
 app.on('window-all-closed', (e) => {
@@ -99,52 +337,13 @@ app.on('before-quit', () => { isQuitting = true })
 
 // ─── System tray ──────────────────────────────────────────
 function createTray() {
-  let iconPath = path.join(__dirname, 'assets', 'icon.png')
-  if (!fs.existsSync(iconPath)) {
-    iconPath = path.join(__dirname, 'assets', 'tray.png')
-  }
+  const iconPath = getIconPath('default')
 
   tray = new Tray(iconPath)
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'MyLog Notification Assistant / MyLog 通知助手',
-      enabled: false,
-    },
-    { type: 'separator' },
-    {
-      label: 'Open MyLog / 打开 MyLog',
-      click: () => shell.openExternal(config.localUrl),
-    },
-    {
-      label: 'Launch at startup / 开机自启',
-      type: 'checkbox',
-      checked: app.getLoginItemSettings().openAtLogin,
-      click: (item) => {
-        app.setLoginItemSettings({ openAtLogin: item.checked })
-      },
-    },
-    { type: 'separator' },
-    {
-      label: 'Exit / 退出',
-      click: () => {
-        isQuitting = true
-        if (tray) {
-          tray.destroy()
-          tray = null
-        }
-        if (wsServer) {
-          wsServer.close()
-          wsServer = null
-        }
-        app.quit()
-      },
-    },
-  ])
-  tray.setToolTip('MyLog Notification Assistant / MyLog 通知助手')
-  tray.setContextMenu(contextMenu)
+  updateTrayMenu()
 
   tray.on('click', () => {
-    shell.openExternal(config.localUrl)
+    updateUnreadCount(0)
   })
 }
 
@@ -156,11 +355,11 @@ function registerProtocol() {
 
 // ─── WebSocket server ──────────────────────────────────
 function startWSServer() {
-  wsServer = new WebSocketServer({ port: WS_PORT, host: '127.0.0.1' })
+  wsServer = new WebSocketServer({ port: currentWsPort, host: '127.0.0.1' })
 
   wsServer.on('connection', (ws) => {
     console.log('[WS] Browser connected')
-    ws.send(JSON.stringify({ type: 'CONNECTED', payload: { version: '1.0.0' } }))
+    ws.send(JSON.stringify({ type: 'CONNECTED', payload: { version: '1.0.0', port: currentWsPort } }))
 
     ws.on('message', (raw) => {
       try {
@@ -177,14 +376,10 @@ function startWSServer() {
   })
 
   wsServer.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.warn('[WS] Port', WS_PORT, 'in use (another instance running?)')
-    } else {
-      console.error('[WS] Server error:', err)
-    }
+    console.error('[WS] Server error:', err)
   })
 
-  console.log('[WS] Server listening on ws://127.0.0.1:', WS_PORT)
+  console.log('[WS] Server listening on ws://127.0.0.1:', currentWsPort)
 }
 
 // ─── Handle browser messages ──────────────────────────
@@ -193,7 +388,12 @@ function handleBrowserMessage(ws, msg) {
 
   switch (msg.type) {
     case 'REGISTER':
-      console.log('[WS] Browser register:', msg.payload?.userName)
+      setUserInfo({
+        userId: msg.payload?.userId,
+        userName: msg.payload?.userName,
+        userIcon: msg.payload?.userIcon,
+        browserType: msg.payload?.browserType
+      })
       break
 
     case 'SHOW_CALL_NOTIFICATION':
@@ -201,6 +401,7 @@ function handleBrowserMessage(ws, msg) {
         console.log('[Dedup] Skip duplicate call:', msg.payload?.callId)
         return
       }
+      setTrayIcon('incoming')
       if (msg.payload?.callType === 'meeting') {
         showMeetingWindow(msg.payload, ws)
       } else {
@@ -216,8 +417,13 @@ function handleBrowserMessage(ws, msg) {
       showToast(msg.payload)
       break
 
+    case 'UPDATE_UNREAD_COUNT':
+      updateUnreadCount(msg.payload?.count || 0)
+      break
+
     case 'CALL_CONNECTED':
     case 'CALL_ENDED':
+      setTrayIcon(unreadCount > 0 ? 'unread' : 'default')
       closeCallWindow()
       closeMeetingWindow()
       break
@@ -300,6 +506,7 @@ function showCallWindow(payload, ws) {
     callWindow.webContents.send('call-data', {
       ...payload,
       ringtonePath: getRingtonePath(),
+      ringtoneConfig: config.ringtone,
     })
   }
   if (callWindow.webContents.isLoading()) {
@@ -311,7 +518,8 @@ function showCallWindow(payload, ws) {
 
   const timer = setTimeout(() => {
     if (callWindow && !callWindow.isDestroyed() && callWindow.isVisible()) {
-      callWindow.hide()
+      closeCallWindow()
+      setTrayIcon(unreadCount > 0 ? 'unread' : 'default')
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({
           type: 'USER_ACTION',
@@ -326,6 +534,7 @@ function showCallWindow(payload, ws) {
 function closeCallWindow() {
   if (callWindow && !callWindow.isDestroyed()) {
     callWindow.hide()
+    callWindow.webContents.send('stop-ringtone')
     if (callWindow._timer) {
       clearTimeout(callWindow._timer)
       callWindow._timer = null
@@ -368,6 +577,7 @@ function showMeetingWindow(payload, ws) {
     meetingWindow.webContents.send('meeting-data', {
       ...payload,
       ringtonePath: getRingtonePath(),
+      ringtoneConfig: config.ringtone,
     })
   }
   if (meetingWindow.webContents.isLoading()) {
@@ -380,7 +590,8 @@ function showMeetingWindow(payload, ws) {
 
   const timer = setTimeout(() => {
     if (meetingWindow && !meetingWindow.isDestroyed() && meetingWindow.isVisible()) {
-      meetingWindow.hide()
+      closeMeetingWindow()
+      setTrayIcon(unreadCount > 0 ? 'unread' : 'default')
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({
           type: 'USER_ACTION',
@@ -395,6 +606,7 @@ function showMeetingWindow(payload, ws) {
 function closeMeetingWindow() {
   if (meetingWindow && !meetingWindow.isDestroyed()) {
     meetingWindow.hide()
+    meetingWindow.webContents.send('stop-ringtone')
     if (meetingWindow._timer) {
       clearTimeout(meetingWindow._timer)
       meetingWindow._timer = null
@@ -465,6 +677,7 @@ ipcMain.on('call-action', (event, action) => {
       }
     })
   }
+  setTrayIcon(unreadCount > 0 ? 'unread' : 'default')
   closeCallWindow()
 })
 
@@ -482,6 +695,7 @@ ipcMain.on('meeting-action', (event, action) => {
       }
     })
   }
+  setTrayIcon(unreadCount > 0 ? 'unread' : 'default')
   closeMeetingWindow()
 })
 
@@ -495,15 +709,3 @@ ipcMain.on('close-toast', () => {
     toastWindow = null
   }
 })
-
-// ─── Single-instance lock ──────────────────────────
-const net = require('net')
-const probe = net.createServer()
-probe.once('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.log('[Notifier] Another instance already running, exiting.')
-    app.quit()
-  }
-})
-probe.once('listening', () => { probe.close() })
-probe.listen(WS_PORT + 1, '127.0.0.1')
