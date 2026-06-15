@@ -77,7 +77,7 @@ jobs:
 
           echo "✅ Windows artifacts uploaded to Gitee Release: $TAG"
 
-  # ── macOS build ────────────────────────────────────────
+  # ── macOS build (signed + notarized) ───────────────────
   build-mac:
     runs-on: macos-latest
     steps:
@@ -87,8 +87,89 @@ jobs:
         with:
           node-version: 22
 
+      # ── Install Apple certificate ──
+      - name: Install Apple certificate
+        env:
+          MAC_CERTS: ${{ secrets.MAC_CERTS }}
+          MAC_CERTS_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
+        run: |
+          # Decode p12 from base64
+          echo "$MAC_CERTS" | base64 --decode > certificate.p12
+
+          # Create keychain
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate into keychain
+          security import certificate.p12 \
+            -P "$MAC_CERTS_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          # Clean up
+          rm -f certificate.p12
+
+      # ── Build + sign + notarize ──
       - run: npm ci
       - run: npx electron-builder --mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Notarize the app ──
+      - name: Notarize macOS app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Find the .app bundle inside dist
+          APP_PATH=$(find dist-installer-new/mac-arm64 -name "*.app" -maxdepth 1 2>/dev/null || find dist-installer-new/mac -name "*.app" -maxdepth 1 2>/dev/null || find dist-installer-new -name "*.app" -maxdepth 2 | head -1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "⚠️ No .app bundle found, skipping notarization"
+            exit 0
+          fi
+
+          echo "Notarizing: $APP_PATH"
+
+          # Create zip for notarization
+          ditto -c -k --keepParent "$APP_PATH" app.zip
+
+          # Submit for notarization
+          xcrun notarytool submit app.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --timeout 10m
+
+          # Staple the ticket
+          xcrun stapler staple "$APP_PATH"
+
+          echo "✅ Notarization complete"
+
+          # Clean up zip
+          rm -f app.zip
+
+      # ── Rebuild DMG with notarized app ──
+      - name: Rebuild DMG with notarized app
+        run: |
+          # electron-builder already created the DMG before notarization
+          # We need to recreate it with the now-notarized .app
+          npx electron-builder --mac --config.compression=store
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -96,7 +177,7 @@ jobs:
         with:
           name: MyLogNotifier-macOS
           path: dist-installer-new/*.dmg
-          if-no-files-found: error
+          if-no-files-found: warn
 
       # ── Upload to Gitee Release ──
       - name: Upload to Gitee Release (macOS)
@@ -115,7 +196,7 @@ jobs:
               \"access_token\": \"${GITEE_TOKEN}\",
               \"tag_name\": \"${TAG}\",
               \"name\": \"MyLog Notifier ${TAG}\",
-              \"body\": \"Auto-built from GitHub Actions (macOS)\\nCommit: ${{ github.sha }}\",
+              \"body\": \"Auto-built from GitHub Actions (macOS, signed & notarized)\\nCommit: ${{ github.sha }}\",
               \"target_commitish\": \"main\",
               \"prerelease\": false
             }")

@@ -10,3 +10,9 @@ mac/
 .DS_Store
 Thumbs.db
 *.log
+
+# Certificates (NEVER commit)
+p12/
+*.p12
+*.cer
+*.certSigningRequest
