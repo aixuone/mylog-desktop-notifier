@@ -7,6 +7,10 @@ on:
     branches: [main, master]
   workflow_dispatch:   # Allow manual trigger from Actions page
 
+env:
+  GITEE_OWNER: aixuone
+  GITEE_REPO: mylog-desktop-notifier
+
 jobs:
   # ── Windows build ──────────────────────────────────────
   build-windows:
@@ -29,6 +33,50 @@ jobs:
           path: dist-installer-new/*.exe
           if-no-files-found: error
 
+      # ── Upload to Gitee Release ──
+      - name: Upload to Gitee Release (Windows)
+        shell: bash
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          TAG="v$(date +%Y%m%d-%H%M%S)-win"
+          echo "Creating Gitee release: $TAG"
+
+          # Create release
+          RELEASE_RESP=$(curl -s -X POST \
+            "https://gitee.com/api/v5/repos/${{ env.GITEE_OWNER }}/${{ env.GITEE_REPO }}/releases" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"access_token\": \"${GITEE_TOKEN}\",
+              \"tag_name\": \"${TAG}\",
+              \"name\": \"MyLog Notifier ${TAG}\",
+              \"body\": \"Auto-built from GitHub Actions (Windows)\\nCommit: ${{ github.sha }}\",
+              \"target_commitish\": \"main\",
+              \"prerelease\": false
+            }")
+
+          RELEASE_ID=$(echo "$RELEASE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+          if [ -z "$RELEASE_ID" ]; then
+            echo "ERROR: Failed to create release"
+            echo "$RELEASE_RESP"
+            exit 1
+          fi
+          echo "Release ID: $RELEASE_ID"
+
+          # Upload each .exe file
+          for file in dist-installer-new/*.exe; do
+            if [ -f "$file" ]; then
+              echo "Uploading: $(basename $file)"
+              curl -s -X POST \
+                "https://gitee.com/api/v5/repos/${{ env.GITEE_OWNER }}/${{ env.GITEE_REPO }}/releases/${RELEASE_ID}/attach_files" \
+                -H "Content-Type: multipart/form-data" \
+                -F "access_token=${GITEE_TOKEN}" \
+                -F "file=@${file}" | python3 -c "import sys,json; d=json.load(sys.stdin); print('  OK:', d.get('name','?'))" 2>/dev/null || echo "  Upload may have failed"
+            fi
+          done
+
+          echo "✅ Windows artifacts uploaded to Gitee Release: $TAG"
+
   # ── macOS build ────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
@@ -49,3 +97,47 @@ jobs:
           name: MyLogNotifier-macOS
           path: dist-installer-new/*.dmg
           if-no-files-found: error
+
+      # ── Upload to Gitee Release ──
+      - name: Upload to Gitee Release (macOS)
+        shell: bash
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          TAG="v$(date +%Y%m%d-%H%M%S)-mac"
+          echo "Creating Gitee release: $TAG"
+
+          # Create release
+          RELEASE_RESP=$(curl -s -X POST \
+            "https://gitee.com/api/v5/repos/${{ env.GITEE_OWNER }}/${{ env.GITEE_REPO }}/releases" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"access_token\": \"${GITEE_TOKEN}\",
+              \"tag_name\": \"${TAG}\",
+              \"name\": \"MyLog Notifier ${TAG}\",
+              \"body\": \"Auto-built from GitHub Actions (macOS)\\nCommit: ${{ github.sha }}\",
+              \"target_commitish\": \"main\",
+              \"prerelease\": false
+            }")
+
+          RELEASE_ID=$(echo "$RELEASE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+          if [ -z "$RELEASE_ID" ]; then
+            echo "ERROR: Failed to create release"
+            echo "$RELEASE_RESP"
+            exit 1
+          fi
+          echo "Release ID: $RELEASE_ID"
+
+          # Upload each .dmg file
+          for file in dist-installer-new/*.dmg; do
+            if [ -f "$file" ]; then
+              echo "Uploading: $(basename $file)"
+              curl -s -X POST \
+                "https://gitee.com/api/v5/repos/${{ env.GITEE_OWNER }}/${{ env.GITEE_REPO }}/releases/${RELEASE_ID}/attach_files" \
+                -H "Content-Type: multipart/form-data" \
+                -F "access_token=${GITEE_TOKEN}" \
+                -F "file=@${file}" | python3 -c "import sys,json; d=json.load(sys.stdin); print('  OK:', d.get('name','?'))" 2>/dev/null || echo "  Upload may have failed"
+            fi
+          done
+
+          echo "✅ macOS artifacts uploaded to Gitee Release: $TAG"
