@@ -1,0 +1,47 @@
+name: Build Cross-Platform
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:   # Allow manual trigger from Actions page
+
+jobs:
+  # ── Windows build ──────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+      - run: npx electron-builder --win
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MyLogNotifier-Windows
+          path: dist-installer-new/*.exe
+          if-no-files-found: error
+
+  # ── macOS build ────────────────────────────────────────
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+      - run: npx electron-builder --mac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MyLogNotifier-macOS
+          path: dist-installer-new/*.dmg
+          if-no-files-found: error

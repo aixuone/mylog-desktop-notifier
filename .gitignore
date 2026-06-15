@@ -1,3 +1,12 @@
 node_modules/
-dist/
+dist-installer-new/
+dist-installer-v4/
+*.exe
+*.dmg
+*.blockmap
+builder-debug.yml
+win-unpacked/
+mac/
+.DS_Store
+Thumbs.db
 *.log

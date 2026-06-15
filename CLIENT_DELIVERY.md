@@ -59,6 +59,6 @@ scripts\build-all.bat
 ## 给团队的话
 
 - **配置改完记得改版本号**:`package.json` 里的 `version` 字段
-- **图标修改后请覆盖 4 个状态**:`icon.ico` / `icon-gray.ico` / `icon-unread.ico` / `icon.ico` 闪烁态
+- **图标修改后请覆盖 4 个状态**:`icon.png` / `icon-gray.png` / `icon-unread.png` / `icon.png` 闪烁态
 - **不要手动改 `dist-*` 目录**,这是构建产物,改了下次打包就被冲掉
 - **真正的代码改动在**:`main.js` / `src/*.html` / `config.js`,改完跑 `scripts\build-all.bat`

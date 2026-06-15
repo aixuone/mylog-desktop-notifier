@@ -90,34 +90,34 @@ function setTrayState(state) {
 
   switch (state) {
     case 'default':
-      tray.setImage(iconCache.default || iconCache.ringing || iconCache.unread)
+      tray.setImage(trayIcon(iconCache.default || iconCache.ringing || iconCache.unread))
       break
 
     case 'gray':
-      tray.setImage(iconCache.gray || iconCache.default)
+      tray.setImage(trayIcon(iconCache.gray || iconCache.default))
       break
 
     case 'ringing':
       // Alternate: default (color) ↔ gray
-      tray.setImage(iconCache.default)
+      tray.setImage(trayIcon(iconCache.default))
       blinkInterval = setInterval(() => {
         blinkPhase = !blinkPhase
-        tray.setImage(blinkPhase ? (iconCache.gray || iconCache.default) : iconCache.default)
+        tray.setImage(trayIcon(blinkPhase ? (iconCache.gray || iconCache.default) : iconCache.default))
       }, 500)
       break
 
     case 'unread':
       // Alternate: unread (red dot) ↔ default
-      tray.setImage(iconCache.unread || iconCache.default)
+      tray.setImage(trayIcon(iconCache.unread || iconCache.default))
       blinkInterval = setInterval(() => {
         blinkPhase = !blinkPhase
-        tray.setImage(blinkPhase ? iconCache.default : (iconCache.unread || iconCache.default))
+        tray.setImage(trayIcon(blinkPhase ? iconCache.default : (iconCache.unread || iconCache.default)))
       }, 500)
       break
 
     default:
       console.warn('[Tray] Unknown state:', state)
-      tray.setImage(iconCache.default)
+      tray.setImage(trayIcon(iconCache.default))
   }
 
   if (prevState !== state) {
@@ -134,6 +134,16 @@ function deriveTrayState() {
 }
 
 let unreadCount = 0
+
+// ─── Cross-platform tray icon helper ─────────────────────
+// macOS menu bar icons should be 16×16 (template image); Windows uses native size
+function trayIcon(img) {
+  if (!img) return img
+  if (process.platform === 'darwin') {
+    return img.resize({ width: 16, height: 16 })
+  }
+  return img
+}
 
 // User info from browser - supports multiple users (keyed by ws client id)
 // connectedClients: Map<ws, { clientId, userId, userName, userIcon, browserType, connected, localIconPath, lastSeenAt }>
@@ -717,6 +727,11 @@ function startHttpServer(callback) {
 }
 
 // ─── App lifecycle ────────────────────────────────────────
+// ─── macOS: hide from Dock (pure tray app) ────────────────
+if (process.platform === 'darwin') {
+  app.dock && app.dock.hide()
+}
+
 app.whenReady().then(() => {
   findAvailablePort(config.wsPort, config.handshake.maxAttempts, (err, wsPort) => {
     if (err || !wsPort) {
@@ -755,7 +770,7 @@ function createTray() {
   loadIconCache()
 
   // Start with gray icon (no WS connections yet)
-  const startIcon = iconCache.gray || iconCache.default
+  const startIcon = trayIcon(iconCache.gray || iconCache.default)
   tray = new Tray(startIcon)
   setTrayState('gray')
   updateTrayMenu()

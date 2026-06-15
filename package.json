@@ -5,9 +5,12 @@
   "main": "main.js",
   "scripts": {
     "dev": "scripts\\start.bat",
+    "dev:mac": "bash scripts/start.sh",
     "build": "node build.js",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:all": "electron-builder --win --mac"
   },
   "build": {
     "appId": "com.mylog.desktop-notifier",
@@ -43,6 +46,29 @@
       ],
       "icon": "assets/icon.ico",
       "requestedExecutionLevel": "asInvoker"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.utilities",
+      "extendInfo": {
+        "LSUIElement": true,
+        "NSHighResolutionCapable": true
+      }
+    },
+    "dmg": {
+      "title": "MyLog Notifier",
+      "icon": "assets/icon.png",
+      "iconSize": 80,
+      "window": {
+        "width": 540,
+        "height": 380
+      }
     },
     "nsis": {
       "oneClick": false,
