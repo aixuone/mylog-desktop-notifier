@@ -9,8 +9,8 @@ module.exports = {
   icons: {
     default: 'assets/icon.png',          // 正常状态（已连接）
     gray:    'assets/icon-gray.png',     // 灰色状态（未连接/断开连接）
-    ringing: 'assets/icon.png',          // 响铃中（与 gray 交替闪烁）
-    unread:  'assets/icon-unread.png'    // 未读消息（与 default 交替闪烁）
+    ringing: 'assets/icon-unread.png',          // 响铃中（与 gray 交替闪烁）
+    unread:  'assets/icon.png'    // 未读消息（与 default 交替闪烁）
   },
 
   // 铃声配置
@@ -42,8 +42,8 @@ module.exports = {
 
   // 超时配置（单位：毫秒）
   timeout: {
-    call: 45000,  // 通话/会议邀请超时自动关闭（45秒）
-    toast: 8000   // 消息 Toast 自动关闭（8秒）
+    call: 59000,  // 通话/会议邀请超时自动关闭（45秒）
+    toast: 4000   // 消息 Toast 自动关闭（4秒）
   },
 
   // 去重配置（防止重复通知，单位：毫秒）
