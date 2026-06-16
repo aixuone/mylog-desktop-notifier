@@ -8,8 +8,8 @@ module.exports = {
   // 图标配置（.ico 格式，支持多状态切换 + 闪烁）
   icons: {
     default: 'assets/icon.png',          // 正常状态（已连接）
-    gray:    'assets/icon-gray.png',     // 灰色状态（未连接/断开连接）
-    ringing: 'assets/icon-unread.png',          // 响铃中（与 gray 交替闪烁）
+    gray:    'assets/icon.png',     // 灰色状态（未连接/断开连接）
+    ringing: 'assets/icon.png',          // 响铃中（与 gray 交替闪烁）
     unread:  'assets/icon.png'    // 未读消息（与 default 交替闪烁）
   },
 
