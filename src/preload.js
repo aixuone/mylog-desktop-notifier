@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Receive stop ringtone command */
   onStopRingtone: (callback) => ipcRenderer.on('stop-ringtone', () => callback()),
 
+  /** Receive ringtone preload (sent on page load, before any call arrives) */
+  onPreloadRingtone: (callback) => ipcRenderer.on('preload-ringtone', (_, data) => callback(data)),
+
   // ─── Meeting window ───────────────────────────
   /** Send user action (accept/reject/timeout) for meeting invitations */
   sendMeetingAction: (action) => ipcRenderer.send('meeting-action', action),

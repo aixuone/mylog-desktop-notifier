@@ -990,6 +990,13 @@ function preCreateCallWindow() {
   callWindow.setAlwaysOnTop(true, 'screen-saver')
   callWindow.setVisibleOnAllWorkspaces(true)
   callWindow.loadFile(path.join(__dirname, 'src', 'call-window.html'))
+  // Preload ringtone as soon as page is ready — eliminates ~5s audio decode delay on call arrival
+  callWindow.webContents.once('did-finish-load', () => {
+    callWindow.webContents.send('preload-ringtone', {
+      ringtonePath: getRingtonePath(),
+      ringtoneConfig: config.ringtone,
+    })
+  })
 }
 
 function showCallWindow(payload, ws) {
@@ -1005,6 +1012,7 @@ function showCallWindow(payload, ws) {
   const { screen } = require('electron')
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
   callWindow.setPosition(Math.round((sw - CALL_W) / 2), Math.round((sh - CALL_H) / 2))
+  callWindow.webContents.setAudioMuted(false)   // Unmute in case previously muted
   callWindow.show()
   callWindow.focus()
 
@@ -1039,6 +1047,10 @@ function showCallWindow(payload, ws) {
 
 function closeCallWindow() {
   if (callWindow && !callWindow.isDestroyed()) {
+    // 1. Synchronous audio mute — kills ALL sound instantly (no async, no race condition)
+    try { callWindow.webContents.setAudioMuted(true) } catch(e) {}
+    // 2. Async JS cleanup as backup (release audio resources)
+    try { callWindow.webContents.executeJavaScript('try{if(window.__stopRingtone)window.__stopRingtone()}catch(e){}') } catch(e) {}
     callWindow.hide()
     callWindow.webContents.send('stop-ringtone')
     if (callWindow._timer) {
@@ -1061,6 +1073,13 @@ function preCreateMeetingWindow() {
   meetingWindow.setAlwaysOnTop(true, 'screen-saver')
   meetingWindow.setVisibleOnAllWorkspaces(true)
   meetingWindow.loadFile(path.join(__dirname, 'src', 'meeting-window.html'))
+  // Preload ringtone as soon as page is ready — eliminates ~5s audio decode delay on call arrival
+  meetingWindow.webContents.once('did-finish-load', () => {
+    meetingWindow.webContents.send('preload-ringtone', {
+      ringtonePath: getRingtonePath(),
+      ringtoneConfig: config.ringtone,
+    })
+  })
 }
 
 function showMeetingWindow(payload, ws) {
@@ -1076,6 +1095,7 @@ function showMeetingWindow(payload, ws) {
   const { screen } = require('electron')
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
   meetingWindow.setPosition(Math.round((sw - MEETING_W) / 2), Math.round((sh - MEETING_H) / 2))
+  meetingWindow.webContents.setAudioMuted(false)   // Unmute in case previously muted
   meetingWindow.show()
   meetingWindow.focus()
 
@@ -1111,6 +1131,10 @@ function showMeetingWindow(payload, ws) {
 
 function closeMeetingWindow() {
   if (meetingWindow && !meetingWindow.isDestroyed()) {
+    // 1. Synchronous audio mute — kills ALL sound instantly (no async, no race condition)
+    try { meetingWindow.webContents.setAudioMuted(true) } catch(e) {}
+    // 2. Async JS cleanup as backup (release audio resources)
+    try { meetingWindow.webContents.executeJavaScript('try{if(window.__stopRingtone)window.__stopRingtone()}catch(e){}') } catch(e) {}
     meetingWindow.hide()
     meetingWindow.webContents.send('stop-ringtone')
     if (meetingWindow._timer) {

@@ -174,6 +174,9 @@ body {
   </div>
 </div>
 
+<!-- Hidden audio element for ringtone -->
+<audio id="ringtone-audio" style="display:none;"></audio>
+
 <script>
 var LABELS = {
   meeting: '多人会议',
@@ -198,27 +201,53 @@ document.addEventListener('DOMContentLoaded', function() {
   var timeoutTimer = null;
   var elapsed = 0;
   var TIMEOUT = 45;
-  var audioElement = null;
   var ringtoneConfig = {};
+  var ringtoneReady = false;      // true once canplaythrough has fired
+
+  // Fixed audio element from HTML
+  var audioElement = document.getElementById('ringtone-audio');
 
   function getAPI() { return window.electronAPI; }
 
-  function createAudioElement() {
-    if (audioElement) {
-      audioElement.pause();
-      audioElement = null;
-    }
-    audioElement = document.createElement('audio');
+  // ── Preload: called on page load, NOT on call arrival ──
+  window.electronAPI.onPreloadRingtone(function(data) {
+    if (!data || !data.ringtonePath) return;
+    ringtoneConfig = data.ringtoneConfig || {};
+    console.log('[Ringtone] Preloading:', data.ringtonePath);
+
+    // Configure audio element
     audioElement.loop = ringtoneConfig.loop !== undefined ? ringtoneConfig.loop : true;
     audioElement.volume = ringtoneConfig.volume !== undefined ? ringtoneConfig.volume : 0.7;
+    audioElement.src = data.ringtonePath;
     audioElement.preload = 'auto';
     audioElement.crossOrigin = 'anonymous';
-    return audioElement;
-  }
+
+    audioElement.addEventListener('canplaythrough', function() {
+      ringtoneReady = true;
+      console.log('[Ringtone] Preload complete, ready to play instantly');
+    }, { once: true });
+    audioElement.load();
+  });
 
   function startRingtone(ringtonePath, config) {
     ringtoneConfig = config || {};
-    
+
+    // Fast path: ringtone already preloaded and decoded — just hit play()
+    if (ringtoneReady && ringtonePath === audioElement.src) {
+      console.log('[Ringtone] Playing preloaded ringtone (instant)');
+      audioElement.currentTime = ringtoneConfig.startTime || 0;
+      audioElement.play().then(function() {
+        console.log('[Ringtone] Preloaded playback started');
+      }).catch(function(err) {
+        console.warn('[Ringtone] Preloaded play failed, fallback:', err.name);
+        // Fallback: reload and play
+        ringtoneReady = false;
+        startRingtone(ringtonePath, config);
+      });
+      return;
+    }
+
+    // Slow path: no preload or different ringtone
     if (!ringtonePath) {
       try {
         var ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -239,42 +268,49 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
 
-    var audio = createAudioElement();
-    audio.src = ringtonePath;
-    
-    audio.addEventListener('canplaythrough', function() {
-      audio.currentTime = ringtoneConfig.startTime || 0;
-      audio.play().then(function() {
-        console.log('[Ringtone] Playing in meeting window from position:', audio.currentTime);
+    // Configure and load audio
+    audioElement.loop = ringtoneConfig.loop !== undefined ? ringtoneConfig.loop : true;
+    audioElement.volume = ringtoneConfig.volume !== undefined ? ringtoneConfig.volume : 0.7;
+    audioElement.src = ringtonePath;
+    audioElement.preload = 'auto';
+    audioElement.crossOrigin = 'anonymous';
+
+    audioElement.addEventListener('canplaythrough', function() {
+      audioElement.currentTime = ringtoneConfig.startTime || 0;
+      audioElement.play().then(function() {
+        console.log('[Ringtone] Playing from position:', audioElement.currentTime);
       }).catch(function(err) {
         console.warn('[Ringtone] Play rejected:', err.name, err.message);
         setTimeout(function() {
-          audio.currentTime = ringtoneConfig.startTime || 0;
-          audio.play().catch(function(e) { console.warn('[Ringtone] Retry failed:', e); });
+          audioElement.currentTime = ringtoneConfig.startTime || 0;
+          audioElement.play().catch(function(e) { console.warn('[Ringtone] Retry failed:', e); });
         }, 100);
       });
     }, { once: true });
 
-    audio.load();
-    
+    audioElement.load();
+
     setTimeout(function() {
-      if (audio.readyState >= 2) {
-        audio.currentTime = ringtoneConfig.startTime || 0;
-        audio.play().catch(function() {});
+      if (audioElement.readyState >= 2) {
+        audioElement.currentTime = ringtoneConfig.startTime || 0;
+        audioElement.play().catch(function() {});
       }
     }, 100);
   }
 
   function stopRingtone() {
-    if (audioElement) {
-      try {
-        audioElement.pause();
-        audioElement.currentTime = 0;
-      } catch(e) { console.warn('[Ringtone] Stop error:', e); }
-      audioElement = null;
-    }
+    try {
+      audioElement.pause();
+      audioElement.currentTime = 0;
+      audioElement.src = '';        // Release the audio resource
+      audioElement.load();          // Fully reset the audio element
+    } catch(e) { console.warn('[Ringtone] Stop error:', e); }
+    // Reset preload state so next preload-ringtone can re-decode
+    ringtoneReady = false;
     console.log('[Ringtone] Stopped');
   }
+  // Expose globally so main process can call via executeJavaScript
+  window.__stopRingtone = stopRingtone;
 
   window.electronAPI.onMeetingData(function(data) {
     callData = data;
@@ -287,6 +323,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
   window.electronAPI.onStopRingtone(function() {
     stopRingtone();
+  });
+
+  // Safety net: stop ringtone when page is hidden, unloaded, or navigated away
+  window.addEventListener('beforeunload', stopRingtone);
+  window.addEventListener('pagehide', stopRingtone);
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) stopRingtone();
   });
 
   function render(data) {
