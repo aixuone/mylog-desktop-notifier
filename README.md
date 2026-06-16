@@ -1,3 +1,7 @@
+# git push 命令
+
+cd /c/ixuworkspace/mylog-pc/desktop-notifier && git config http.proxy http://127.0.0.1:1080 && git config https.proxy http://127.0.0.1:1080 && git push origin main 2>&1
+
 # MyLog 桌面通知代理 (方案A 轻量版)
 
 基于 Electron 的系统级通知代理，解决 Web 端通知三大痛点。

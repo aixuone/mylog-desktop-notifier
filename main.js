@@ -441,19 +441,30 @@ function updateTrayMenu() {
       isQuitting = true
       stopStaleCleanup()
       if (blinkInterval) { clearInterval(blinkInterval); blinkInterval = null }
-      if (tray) {
-        tray.destroy()
-        tray = null
-      }
+
+      // Force-close all WebSocket connections immediately
       if (wsServer) {
+        wsServer.clients.forEach(client => client.close())
         wsServer.close()
         wsServer = null
       }
+      // Force-close HTTP server immediately
       if (httpServer) {
         httpServer.close()
         httpServer = null
       }
+
+      // Destroy all BrowserWindow instances (hidden windows still hold process)
+      if (callWindow && !callWindow.isDestroyed()) { callWindow.destroy(); callWindow = null }
+      if (meetingWindow && !meetingWindow.isDestroyed()) { meetingWindow.destroy(); meetingWindow = null }
+      if (toastWindow && !toastWindow.isDestroyed()) { toastWindow.destroy(); toastWindow = null }
+
+      // Destroy tray
+      if (tray) { tray.destroy(); tray = null }
+
+      // Hard quit: app.quit() requests exit, process.exit(0) guarantees it
       app.quit()
+      process.exit(0)
     },
   })
 
@@ -755,14 +766,29 @@ app.whenReady().then(() => {
   })
 })
 
-app.on('window-all-closed', (e) => {
-  if (!isQuitting) e.preventDefault()
+app.on('window-all-closed', () => {
+  // Tray-only app: closing all windows should NOT quit
+  // Quit only happens via tray menu "退出"
 })
 
 app.on('before-quit', () => {
   isQuitting = true
   stopStaleCleanup()
   if (blinkInterval) { clearInterval(blinkInterval); blinkInterval = null }
+  // Force-close all WebSocket connections
+  if (wsServer) {
+    wsServer.clients.forEach(client => client.close())
+    wsServer.close()
+    wsServer = null
+  }
+  if (httpServer) {
+    httpServer.close()
+    httpServer = null
+  }
+  // Destroy all windows
+  if (callWindow && !callWindow.isDestroyed()) { callWindow.destroy(); callWindow = null }
+  if (meetingWindow && !meetingWindow.isDestroyed()) { meetingWindow.destroy(); meetingWindow = null }
+  if (toastWindow && !toastWindow.isDestroyed()) { toastWindow.destroy(); toastWindow = null }
 })
 
 // ─── System tray ──────────────────────────────────────────
