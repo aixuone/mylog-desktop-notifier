@@ -2,6 +2,7 @@
 // 所有配置项均支持修改，修改后需重启应用生效
 
 module.exports = {
+  version: '1.5.0',
   // WebSocket 服务端口（起始端口），用于与浏览器扩展通信
   wsPort: 18999,
 

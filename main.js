@@ -38,6 +38,7 @@ let toastWindow = null       // message toast (bottom right)
 let isQuitting = false
 let currentWsPort = config.wsPort
 let currentHttpPort = 0
+const version = config.version
 // ─── Tray icon state management ───────────────────────────
 // States: 'default' (connected, normal) | 'gray' (disconnected) | 'ringing' (incoming call) | 'unread' (unread messages)
 let trayIconState = 'gray'    // Start gray (no connections yet)
@@ -435,6 +436,8 @@ function updateTrayMenu() {
     },
   })
   menuItems.push({ type: 'separator' })
+  menuItems.push({ label: `当前版本：${version}`, enabled: false })
+  menuItems.push({ type: 'separator' })
   menuItems.push({
     label: '退出',
     click: () => {
@@ -670,7 +673,7 @@ function createHttpHandler() {
           res.end(JSON.stringify({
             success: true,
             wsPort: currentWsPort,
-            version: '1.0.0',
+            version: version,
             message: 'Handshake successful'
           }))
         } catch (error) {
@@ -683,7 +686,7 @@ function createHttpHandler() {
       res.end(JSON.stringify({
         success: true,
         wsPort: currentWsPort,
-        version: '1.0.0'
+        version: version
       }))
     } else {
       res.writeHead(404)
@@ -837,7 +840,7 @@ function startWSServer() {
       lastSeenAt: now,
     })
 
-    ws.send(JSON.stringify({ type: 'CONNECTED', payload: { version: '1.0.0', port: currentWsPort } }))
+    ws.send(JSON.stringify({ type: 'CONNECTED', payload: { version: version, port: currentWsPort } }))
 
     // New WS connection → switch from gray to default if needed
     if (trayIconState === 'gray') {
