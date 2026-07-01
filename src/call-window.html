@@ -299,7 +299,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.electronAPI.onCallData(function(data) {
     callData = data;
     ringtoneConfig = data.ringtoneConfig || {};
-    TIMEOUT = Math.floor((data.ringtoneConfig?.timeout || 45000) / 1000);
+    TIMEOUT = Math.floor((data.ringtoneConfig?.timeout || 60000) / 1000);
     render(data);
     startTimeout();
     startRingtone(data.ringtonePath, data.ringtoneConfig);
