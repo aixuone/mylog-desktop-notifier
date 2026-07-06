@@ -7,7 +7,11 @@ const path = require('path');
 
 const ROOT = __dirname;
 const OUT_DIR = path.join(ROOT, 'dist-portable');
-const NAME = 'MyLog通知助手-便携版-1.0.0';
+
+// ─── Load config ──────────────────────────────────────────
+const config = require('./config.js')
+
+const NAME = 'MyLog通知助手-便携版-' + config.version;
 
 console.log('▶ 开始打包便携版...');
 

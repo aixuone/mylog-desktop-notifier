@@ -2,7 +2,7 @@
 // 所有配置项均支持修改，修改后需重启应用生效
 
 module.exports = {
-  version: '1.5.1',
+  version: '1.6.1', 
   // WebSocket 服务端口（起始端口），用于与浏览器扩展通信
   wsPort: 18999,
 
@@ -19,7 +19,8 @@ module.exports = {
     path: 'assets/ringtone.m4a',     // 铃声文件路径
     loop: true,                      // 是否循环播放
     volume: 0.7,                     // 音量（0-1）
-    startTime: 0                     // 开始播放位置（秒，0表示从头开始）
+    startTime: 3,                    // 开始播放位置（秒，0表示从头开始）
+    timeout: 62000                   // 呼叫超时时间（毫秒），必须与 timeout.call 一致
   },
 
   // 通话窗口配置（屏幕居中显示）
@@ -43,13 +44,13 @@ module.exports = {
 
   // 超时配置（单位：毫秒）
   timeout: {
-    call: 59000,  // 通话/会议邀请超时自动关闭（45秒）
+    call: 62000,  // 通话/会议邀请超时自动关闭（60秒）
     toast: 4000   // 消息 Toast 自动关闭（4秒）
   },
 
   // 去重配置（防止重复通知，单位：毫秒）
   deduplication: {
-    callWindowMs: 5000,   // 通话/会议通知去重窗口（5秒内相同ID只显示一次）
+    callWindowMs: 3000,   // 通话/会议通知去重窗口（5秒内相同ID只显示一次）
     toastWindowMs: 3000   // 消息通知去重窗口（3秒内相同内容只显示一次）
   },
 

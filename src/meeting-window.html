@@ -200,7 +200,7 @@ document.addEventListener('DOMContentLoaded', function() {
   var callData = {};
   var timeoutTimer = null;
   var elapsed = 0;
-  var TIMEOUT = 59;
+  var TIMEOUT = 60;
   var ringtoneConfig = {};
   var ringtoneReady = false;      // true once canplaythrough has fired
 
@@ -325,6 +325,16 @@ document.addEventListener('DOMContentLoaded', function() {
     stopRingtone();
   });
 
+  window.electronAPI.onMeetingClosed(function() {
+    if (timeoutTimer) {
+      clearInterval(timeoutTimer);
+      timeoutTimer = null;
+    }
+    elapsed = 0;
+    var fill = document.getElementById('timeout-fill');
+    fill.style.width = '100%';
+  });
+
   // Safety net: stop ringtone when page is hidden, unloaded, or navigated away
   window.addEventListener('beforeunload', stopRingtone);
   window.addEventListener('pagehide', stopRingtone);
@@ -373,6 +383,7 @@ document.addEventListener('DOMContentLoaded', function() {
       fill.style.width = Math.max(0, pct) + '%';
       if (elapsed >= TIMEOUT) {
         clearInterval(timeoutTimer);
+        timeoutTimer = null;
         stopRingtone();
         var api = getAPI();
         if (api) api.sendMeetingAction('timeout');

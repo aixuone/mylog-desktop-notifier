@@ -386,7 +386,7 @@ function startStaleCleanup() {
   if (cleanupTimer) return   // already running
   cleanupTimer = setInterval(() => {
     try { cleanupStaleEntries() } catch (_) {}
-  }, 60_000)
+  }, 60000)
 }
 
 function stopStaleCleanup() {
@@ -893,7 +893,7 @@ function startWSServer() {
 
 // ─── Handle browser messages ──────────────────────────
 function handleBrowserMessage(ws, msg) {
-  console.log('[WS] Message:', msg.type)
+  console.log('[WS] Message:', msg.type, msg.payload)
 
   switch (msg.type) {
     case 'REGISTER':
@@ -906,12 +906,20 @@ function handleBrowserMessage(ws, msg) {
       break
 
     case 'SHOW_CALL_NOTIFICATION':
-      if (isDuplicateCall(msg.payload?.callId)) {
-        console.log('[Dedup] Skip duplicate call:', msg.payload?.callId)
+      if (!msg.payload || !msg.payload.callId) {
+        console.warn('[Validation] Skip call notification: missing callId')
+        return
+      }
+      if (!msg.payload.callerName) {
+        console.warn('[Validation] Skip call notification: missing callerName')
+        return
+      }
+      if (isDuplicateCall(msg.payload.callId)) {
+        console.log('[Dedup] Skip duplicate call:', msg.payload.callId)
         return
       }
       setTrayState('ringing')
-      if (msg.payload?.callType === 'meeting') {
+      if (msg.payload.callType === 'meeting') {
         showMeetingWindow(msg.payload, ws)
       } else {
         showCallWindow(msg.payload, ws)
@@ -1056,6 +1064,7 @@ function closeCallWindow() {
     try { callWindow.webContents.executeJavaScript('try{if(window.__stopRingtone)window.__stopRingtone()}catch(e){}') } catch(e) {}
     callWindow.hide()
     callWindow.webContents.send('stop-ringtone')
+    callWindow.webContents.send('call-closed')
     if (callWindow._timer) {
       clearTimeout(callWindow._timer)
       callWindow._timer = null
@@ -1140,6 +1149,7 @@ function closeMeetingWindow() {
     try { meetingWindow.webContents.executeJavaScript('try{if(window.__stopRingtone)window.__stopRingtone()}catch(e){}') } catch(e) {}
     meetingWindow.hide()
     meetingWindow.webContents.send('stop-ringtone')
+    meetingWindow.webContents.send('meeting-closed')
     if (meetingWindow._timer) {
       clearTimeout(meetingWindow._timer)
       meetingWindow._timer = null

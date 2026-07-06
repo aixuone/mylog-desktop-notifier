@@ -19,12 +19,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Receive ringtone preload (sent on page load, before any call arrives) */
   onPreloadRingtone: (callback) => ipcRenderer.on('preload-ringtone', (_, data) => callback(data)),
 
+  /** Receive call closed command (reset timer state) */
+  onCallClosed: (callback) => ipcRenderer.on('call-closed', () => callback()),
+
   // ─── Meeting window ───────────────────────────
   /** Send user action (accept/reject/timeout) for meeting invitations */
   sendMeetingAction: (action) => ipcRenderer.send('meeting-action', action),
 
   /** Receive meeting invite data */
   onMeetingData: (callback) => ipcRenderer.on('meeting-data', (_, data) => callback(data)),
+
+  /** Receive meeting closed command (reset timer state) */
+  onMeetingClosed: (callback) => ipcRenderer.on('meeting-closed', () => callback()),
 
   // ─── Toast window ─────────────────────────────
   /** Close message toast */
