@@ -1,6 +1,7 @@
 {
   "name": "mylog-desktop-notifier",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "author": "ixu",
   "description": "MyLog 桌面通知代理 - 系统级来电/消息提醒",
   "main": "main.js",
   "scripts": {
@@ -8,14 +9,15 @@
     "dev:mac": "bash scripts/start.sh",
     "build": "node build.js",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --win",
+    "dist": "electron-builder --win && rm -rf dist-installer-new/win-unpacked",
     "dist:mac": "electron-builder --mac",
     "dist:all": "electron-builder --win --mac"
   },
   "build": {
-    "appId": "com.mylog.desktop-notifier",
-    "productName": "MyLogNotifier",
-    "copyright": "Copyright (c) 2025 MyLog",
+    "appId": "com.tianyuan.mylog.desktop-notifier",
+    "productName": "我的日志_桌面通知",
+    "artifactName": "${productName} 安装包 ${version}.exe",
+    "copyright": "Copyright (c) 2025 tianyuan",
     "asar": true,
     "asarUnpack": [
       "assets/**/*"
@@ -29,10 +31,6 @@
       "src/**/*",
       "assets/**/*",
       "package.json",
-      "node_modules/**/*",
-      "!node_modules/**/electron/dist/**",
-      "!node_modules/**/*.md",
-      "!node_modules/**/*.ts",
       "!**/.git/**"
     ],
     "win": {
@@ -66,7 +64,7 @@
       }
     },
     "dmg": {
-      "title": "MyLog Notifier",
+      "title": "我的日志",
       "icon": "assets/icon.png",
       "iconSize": 80,
       "window": {
@@ -76,21 +74,22 @@
     },
     "nsis": {
       "oneClick": false,
+      "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "MyLog Notifier",
-      "runAfterFinish": false,
+      "shortcutName": "我的日志_桌面通知",
+      "runAfterFinish": true,
       "installerIcon": "assets/icon.ico",
       "uninstallerIcon": "assets/icon.ico"
     }
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "8.18.0"
   },
   "devDependencies": {
-    "electron": "^32.3.3",
-    "electron-builder": "^25.1.8",
-    "jimp": "^0.22.12"
+    "electron": "32.3.3",
+    "electron-builder": "26.15.3",
+    "jimp": "0.22.12"
   }
 }

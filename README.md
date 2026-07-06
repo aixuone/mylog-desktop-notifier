@@ -1,6 +1,9 @@
 # git push 命令
-
+- github端打包(本地翻墙代理 )
 cd /c/ixuworkspace/mylog-pc/desktop-notifier && git config http.proxy http://127.0.0.1:10808 && git config https.proxy http://127.0.0.1:10808 && git push origin main 2>&1
+
+- 本地打包
+cd /c/ixuworkspace/mylog-pc/desktop-notifier && npx --no-install electron-builder --win
 
 # MyLog 桌面通知代理 (方案A 轻量版)
 
