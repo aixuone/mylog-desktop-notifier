@@ -220,7 +220,6 @@ document.addEventListener('DOMContentLoaded', function() {
     audioElement.volume = ringtoneConfig.volume !== undefined ? ringtoneConfig.volume : 0.7;
     audioElement.src = data.ringtonePath;
     audioElement.preload = 'auto';
-    audioElement.crossOrigin = 'anonymous';
 
     audioElement.addEventListener('canplaythrough', function() {
       ringtoneReady = true;
@@ -273,7 +272,6 @@ document.addEventListener('DOMContentLoaded', function() {
     audioElement.volume = ringtoneConfig.volume !== undefined ? ringtoneConfig.volume : 0.7;
     audioElement.src = ringtonePath;
     audioElement.preload = 'auto';
-    audioElement.crossOrigin = 'anonymous';
 
     audioElement.addEventListener('canplaythrough', function() {
       audioElement.currentTime = ringtoneConfig.startTime || 0;

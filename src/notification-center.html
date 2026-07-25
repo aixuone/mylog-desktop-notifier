@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>通知中心</title>
+<style>
+@font-face {
+  font-family: 'System UI';
+  src: local('Microsoft YaHei UI'), local('Microsoft YaHei'),
+       local('PingFang SC'), local('PingFang HK'),
+       local('Noto Sans CJK SC'), local('SimHei'),
+       local(system-ui), local(sans-serif);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'System UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  background: #F5F6F8;
+  width: 360px; overflow: hidden; user-select: none;
+  -webkit-font-smoothing: antialiased;
+  color: #2C2C2A;
+}
+#app {
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  background: #F5F6F8;
+}
+
+/* Header (NOT draggable - fixed position) */
+.header {
+  height: 48px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 14px;
+  background: #ffffff;
+  border-bottom: 1px solid #ECECEC;
+}
+.header .header-icon {
+  width: 20px; height: 20px; border-radius: 4px; flex-shrink: 0;
+}
+.header .title { font-size: 15px; font-weight: 600; }
+.header .badge {
+  font-size: 11px; color: #fff; background: #E8453C;
+  border-radius: 10px; padding: 1px 7px; min-width: 18px; text-align: center;
+}
+.header .spacer { flex: 1; }
+.header .btn {
+  font-size: 12px; color: #5F5E5A; background: #F1EFE8;
+  border: none; border-radius: 10px; padding: 4px 10px;
+  cursor: pointer; -webkit-app-region: no-drag; font-family: inherit;
+  transition: background 0.15s;
+}
+.header .btn:hover { background: #E0DDD6; }
+.header .btn.close { background: transparent; font-size: 16px; padding: 2px 8px; }
+
+/* List */
+.list {
+  flex: 1; overflow-y: auto; padding: 10px 10px 0;
+  max-height: 380px; min-height: 60px;
+}
+.section-title {
+  font-size: 11px; color: #9A9893; margin: 6px 4px 6px;
+  font-weight: 600; letter-spacing: 0.5px;
+}
+.list::-webkit-scrollbar { width: 6px; }
+.list::-webkit-scrollbar-thumb { background: #D8D5CF; border-radius: 3px; }
+
+/* Conversation card */
+.conv {
+  display: flex; align-items: center; gap: 10px;
+  background: #fff; border-radius: 10px; padding: 10px 12px;
+  margin-bottom: 8px; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.conv:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.08); }
+.avatar {
+  width: 42px; height: 42px; border-radius: 50%; background: #E6F1FB;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 600; color: #185FA5; flex-shrink: 0;
+  overflow: hidden; position: relative;
+}
+.avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; position: absolute; top:0; left:0; }
+.conv .body { flex: 1; min-width: 0; }
+.conv .row1 { display: flex; align-items: baseline; gap: 6px; }
+.conv .name { font-size: 13px; font-weight: 600; color: #2C2C2A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv .time { font-size: 11px; color: #B0AEA8; margin-left: auto; flex-shrink: 0; }
+.conv .last { font-size: 12px; color: #5F5E5A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+.conv .count {
+  background: #E8453C; color: #fff; font-size: 11px; font-weight: 600;
+  border-radius: 10px; min-width: 18px; height: 18px; padding: 0 5px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+/* 仅数量模式：隐藏文字 */
+body.nc-hide-content .conv .last { display: none; }
+
+/* System alert card */
+.sys {
+  border-radius: 10px; padding: 11px 12px; margin-bottom: 8px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.sys.kick { background: #FDECEA; border: 1px solid #F3B5AE; }
+.sys.offline { background: #FEF6E7; border: 1px solid #F2D98A; }
+.sys .sys-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.sys.kick .sys-title { color: #C0392B; }
+.sys.offline .sys-title { color: #B8860B; }
+.sys .sys-body { font-size: 12px; color: #6B6A66; line-height: 1.5; }
+.sys .sys-actions { display: flex; gap: 8px; margin-top: 2px; }
+.sys .sys-btn {
+  font-size: 12px; border: none; border-radius: 8px; padding: 5px 12px;
+  cursor: pointer; font-family: inherit; transition: background 0.15s;
+}
+.sys .sys-btn.primary { background: #185FA5; color: #fff; }
+.sys .sys-btn.primary:hover { background: #15508C; }
+.sys .sys-btn.ghost { background: rgba(0,0,0,0.05); color: #5F5E5A; }
+.sys .sys-btn.ghost:hover { background: rgba(0,0,0,0.1); }
+.sys .sys-pin { font-size: 11px; color: #9A9893; line-height: 1.4; margin-top: 2px; }
+
+/* Empty */
+.empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: #B0AEA8; gap: 8px; font-size: 13px;
+}
+.empty svg { opacity: 0.5; }
+
+/* More unread footer */
+.more-footer {
+  flex-shrink: 0;
+  text-align: center; padding: 8px 0 10px;
+  font-size: 12px; color: #185FA5; cursor: pointer;
+  border-top: 1px solid #ECECEC; margin-top: 4px;
+}
+.more-footer:hover { background: #EDEBE6; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="header">
+    <img src="../assets/icon.png" class="header-icon" onerror="this.style.display='none'" />
+    <span class="title">消息通知</span>
+    <span class="badge" id="badge" style="display:none;">0</span>
+    <span class="spacer"></span>
+    <button class="btn" id="btn-readall">全部已读</button>
+    <button class="btn close" id="btn-close">✕</button>
+  </div>
+  <div class="list" id="list"></div>
+</div>
+<audio id="nc-audio" style="display:none;"></audio>
+
+<script>
+var api = window.electronAPI
+if (!api) {
+  document.body.innerHTML = '<div style="color:red;padding:20px;">Error: electronAPI not available</div>'
+} else {
+  var settings = {}
+  var unreadList = []
+  var sysAlerts = {}
+  var audioEl = document.getElementById('nc-audio')
+
+  function fmtTime(ts) {
+    var d = new Date(ts)
+    var h = ('0' + d.getHours()).slice(-2)
+    var m = ('0' + d.getMinutes()).slice(-2)
+    return h + ':' + m
+  }
+
+  function applyDisplayMode() {
+    var mode = (settings.messageNotify && settings.messageNotify.display) || 'content'
+    if (mode === 'count') document.body.classList.add('nc-hide-content')
+    else document.body.classList.remove('nc-hide-content')
+  }
+
+  function avatarHtml(item) {
+    var fb = (item.name || '?').charAt(0)
+    if (item.avatar) {
+      return '<div class="avatar"><img src="' + item.avatar + '" onerror="this.style.display=\'none\'">' + fb + '</div>'
+    }
+    return '<div class="avatar">' + fb + '</div>'
+  }
+
+  function renderUnread() {
+    var list = document.getElementById('list')
+    // badge
+    var total = unreadList.reduce(function (s, it) { return s + (it.count || 0) }, 0)
+    var badge = document.getElementById('badge')
+    if (total > 0) { badge.style.display = ''; badge.textContent = total > 99 ? '99+' : total }
+    else badge.style.display = 'none'
+
+    // Build: system alerts first, then conversations (max 4 visible)
+    var html = ''
+    var sysp = Object.keys(sysAlerts)
+    if (sysp.length > 0) {
+      html += '<div class="section-title">系统通知</div>'
+      sysp.forEach(function (id) { html += sysCardHtml(sysAlerts[id]) })
+    }
+
+    var MAX_VISIBLE = 4
+    var convShown = 0
+    var hiddenCount = 0
+
+    // 只显示有未读数(count>0)的会话
+    var activeUnread = unreadList.filter(function (it) { return (it.count || 0) > 0 })
+
+    if (activeUnread.length > 0) {
+      html += '<div class="section-title">会话</div>'
+      activeUnread.forEach(function (it, idx) {
+        if (convShown < MAX_VISIBLE) {
+          html += convHtml(it)
+          convShown++
+        } else {
+          hiddenCount += (it.count || 1)
+        }
+      })
+    }
+
+    // 还有更多未读
+    if (hiddenCount > 0) {
+      html += '<div class="more-footer" id="more-footer">还有 ' + hiddenCount + ' 条未读消息</div>'
+    }
+
+    if (sysp.length === 0 && activeUnread.length === 0) {
+      html = '<div class="empty"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#B0AEA8" stroke-width="1.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><div>暂无新通知</div></div>'
+    }
+    list.innerHTML = html
+
+    // 动态调整窗口高度
+    requestAnimationFrame(resizeWindow)
+
+    // "还有更多" 点击 → 标记全部已读（简化：直接清空）
+    var moreBtn = document.getElementById('more-footer')
+    if (moreBtn) {
+      moreBtn.addEventListener('click', function () { api.markRead('all') })
+    }
+  }
+
+  function resizeWindow() {
+    try {
+      var list = document.getElementById('list')
+      var header = document.querySelector('.header')
+      var listH = list ? list.scrollHeight : 0
+      var headerH = header ? header.offsetHeight : 48
+      // 最小高度要能放下 header + 一条空状态或一条消息
+      var newH = Math.max(160, Math.min(520, headerH + Math.max(listH, 80)))
+      api.resizeNc(newH)
+    } catch(e) {}
+  }
+
+  function convHtml(it) {
+    var last = it.last || ''
+    if (last.length > 40) last = last.slice(0, 40) + '...'
+    var count = it.count > 0 ? '<span class="count">' + (it.count > 99 ? '99+' : it.count) + '</span>' : ''
+    return '<div class="conv" data-id="' + encodeURIComponent(it.conversationId) + '" data-url="' + encodeURIComponent(it.url || '') + '">' +
+      avatarHtml(it) +
+      '<div class="body"><div class="row1"><span class="name">' + escapeHtml(it.name || '未知用户') + '</span>' +
+      '<span class="time">' + fmtTime(it.time) + '</span></div>' +
+      '<div class="last">' + escapeHtml(last) + '</div></div>' + count + '</div>'
+  }
+
+  function sysCardHtml(a) {
+    if (a.type === 'kick') {
+      var d = a.data || {}
+      var body = '您的账号于 ' + fmtTime(d.time || Date.now()) + ' 在 ' + escapeHtml(d.device || '其他设备') + ' 登录，当前会话已结束。'
+      return '<div class="sys kick" data-id="' + a.id + '">' +
+        '<div class="sys-title">⚠ 您已在其他设备登录</div>' +
+        '<div class="sys-body">' + body + '</div>' +
+        '<div class="sys-pin">🔒 常驻提醒：重连上线或点「知道了」后才会消失</div>' +
+        '<div class="sys-actions">' +
+          '<button class="sys-btn primary" data-act="reconnect">重新登录</button>' +
+          '<button class="sys-btn ghost" data-act="dismiss">知道了</button>' +
+        '</div></div>'
+    }
+    if (a.type === 'offline') {
+      return '<div class="sys offline" data-id="' + a.id + '">' +
+        '<div class="sys-title">⚡ 网络已断开</div>' +
+        '<div class="sys-body">消息可能无法实时接收，正在尝试重连…</div>' +
+        '<div class="sys-pin">🔒 常驻提醒：恢复连接或点「关闭」后才会消失</div>' +
+        '<div class="sys-actions"><button class="sys-btn ghost" data-act="dismiss">关闭</button></div>' +
+        '</div>'
+    }
+    return ''
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    })
+  }
+
+  // ── Events ──
+  api.onNcInit(function (data) {
+    settings = data.settings || {}
+    unreadList = data.unread || []
+    sysAlerts = {}
+    ;(data.sysAlerts || []).forEach(function (a) { sysAlerts[a.id] = a })
+    applyDisplayMode()
+    renderUnread()
+  })
+
+  api.onNcUnread(function (data) {
+    unreadList = data.unread || []
+    renderUnread()
+  })
+
+  api.onNcSysAlert(function (a) { sysAlerts[a.id] = a; renderUnread() })
+  api.onNcSysAlertDismiss(function (d) { delete sysAlerts[d.id]; renderUnread() })
+
+  api.onNcSettingsChanged(function (data) {
+    settings = data.settings || settings
+    applyDisplayMode()
+    renderUnread()
+  })
+
+  api.onNcPlay(function (data) {
+    var p = data && data.path
+    if (!p) return
+    try {
+      audioEl.src = p
+      audioEl.loop = false
+      audioEl.volume = 0.7
+      audioEl.play().catch(function (e) { console.warn('[NC] play failed', e && e.name) })
+    } catch (e) { console.warn('[NC] audio error', e) }
+  })
+
+  // Delegated clicks
+  document.getElementById('list').addEventListener('click', function (e) {
+    var sysBtn = e.target.closest('.sys-btn')
+    if (sysBtn) {
+      var card = sysBtn.closest('.sys')
+      var id = card && card.getAttribute('data-id')
+      var act = sysBtn.getAttribute('data-act')
+      if (act === 'reconnect') {
+        api.reconnect()
+        if (id) api.dismissSysAlert(id) // 用户点击重新登录即视为已处理，隐藏该常驻通知
+      }
+      else if (act === 'dismiss' && id) api.dismissSysAlert(id)
+      return
+    }
+    var conv = e.target.closest('.conv')
+    if (conv) {
+      var cid = decodeURIComponent(conv.getAttribute('data-id'))
+      var url = decodeURIComponent(conv.getAttribute('data-url') || '')
+      api.openConversation(cid, url)
+    }
+  })
+
+  document.getElementById('btn-readall').addEventListener('click', function () { api.markRead('all') })
+  document.getElementById('btn-close').addEventListener('click', function () {
+    // 存在常驻系统通知（离线/被踢）时，✕ 不收起窗口，防止误关该提醒
+    if (Object.keys(sysAlerts).length > 0) return
+    api.closeNc()
+  })
+}
+</script>
+</body>
+</html>

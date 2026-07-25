@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>消息通知中心 · 设计稿 v2（仅中心样式）</title>
+<style>
+:root{
+  --c-primary:#185FA5; --c-primary-600:#378ADD; --c-primary-50:#E6F1FB;
+  --c-success:#52C41A; --c-danger:#E83F2B;
+  --c-text:#2C2C2A; --c-text-2:#5F5E5A; --c-text-3:#888780;
+  --c-line:#ECEAE4; --c-card:#FFFFFF;
+  --radius:12px; --shadow:0 10px 34px rgba(0,0,0,.16);
+  --font:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC',system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font);background:#dfe3e8;min-height:100vh;overflow:hidden}
+/* fake desktop */
+.desktop{position:fixed;inset:0;background:linear-gradient(135deg,#c9d3df,#aeb9c7);}
+.taskbar{position:fixed;bottom:0;left:0;right:0;height:40px;background:rgba(30,32,38,.82);backdrop-filter:blur(8px);display:flex;align-items:center;padding:0 14px;gap:14px}
+.tray{margin-left:auto;width:30px;height:30px;border-radius:7px;background:#fff;display:flex;align-items:center;justify-content:center;position:relative}
+.tray .badge{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;border-radius:8px;background:var(--c-danger);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;padding:0 4px;font-weight:700}
+
+/* notification center (唯一样式) */
+.nc{position:fixed;right:18px;bottom:56px;width:368px;max-height:72vh;background:var(--c-card);border-radius:14px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;animation:slideUp .28s cubic-bezier(.16,1,.3,1)}
+@keyframes slideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.nc-head{display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--c-line)}
+.nc-head .title{font-size:15px;font-weight:700;color:var(--c-text);flex:1}
+.nc-head .title .cnt{color:var(--c-primary)}
+.nc-head .act{font-size:12px;color:var(--c-text-3);cursor:pointer;padding:5px 8px;border-radius:7px}
+.nc-head .act:hover{background:#F1EFE8;color:var(--c-primary)}
+.nc-list{overflow-y:auto;padding:8px}
+.card{display:flex;align-items:center;gap:12px;padding:11px 10px;border-radius:10px;cursor:pointer;transition:background .15s}
+.card:hover{background:var(--c-primary-50)}
+.card .av{width:44px;height:44px;border-radius:50%;background:var(--c-primary-50);display:flex;align-items:center;justify-content:center;font-weight:600;color:var(--c-primary);font-size:17px;flex-shrink:0;position:relative}
+.card .av .unread{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;border-radius:9px;background:var(--c-danger);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 5px;border:2px solid #fff}
+.card .meta{flex:1;min-width:0}
+.card .meta .nm{font-size:14px;font-weight:600;color:var(--c-text);display:flex;justify-content:space-between}
+.card .meta .nm .time{font-size:11px;font-weight:400;color:var(--c-text-3)}
+.card .meta .last{font-size:12px;color:var(--c-text-2);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nc-foot{text-align:center;font-size:11px;color:var(--c-text-3);padding:9px;border-top:1px solid var(--c-line)}
+/* 仅数量模式：隐藏消息文字与时间 */
+.nc.hideContent .card .meta .last,
+.nc.hideContent .card .meta .nm .time{display:none}
+
+/* 系统通知卡片（被踢下线 / 网络离线） */
+.sys-title{font-size:11px;color:var(--c-text-3);padding:10px 10px 4px;font-weight:600;letter-spacing:.5px}
+.card.sys{align-items:flex-start;cursor:default}
+.card.sys:hover{background:transparent}
+.card.sys .ic{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;margin-top:2px}
+.card.sys .body{flex:1;min-width:0}
+.card.sys .body .nm{font-size:14px;font-weight:600;display:flex;justify-content:space-between}
+.card.sys .body .msg{font-size:12px;color:var(--c-text-2);margin-top:3px;line-height:1.5}
+.card.sys .actions{display:flex;gap:8px;margin-top:10px}
+.btn-sm{font-size:12px;padding:6px 13px;border-radius:7px;border:none;cursor:pointer;font-family:var(--font);font-weight:500;transition:background .15s}
+.btn-sm.primary{background:var(--c-primary);color:#fff}
+.btn-sm.primary:hover{background:var(--c-primary-600)}
+.btn-sm.ghost{background:#fff;border:1px solid var(--c-line);color:var(--c-text-2)}
+.btn-sm.ghost:hover{border-color:var(--c-primary);color:var(--c-primary)}
+.card.kick{background:#FEF3F2;border:1px solid #F8CFC9}
+.card.kick:hover{background:#FEF3F2}
+.card.kick .ic{background:var(--c-danger);color:#fff}
+.card.kick .body .nm{color:#B42318}
+.card.offline{background:#FFFAEB;border:1px solid #FCE4A6}
+.card.offline:hover{background:#FFFAEB}
+.card.offline .ic{background:#F59E0B;color:#fff}
+.card.offline .body .nm{color:#B54708}
+.card.offline.recovered{background:#ECFDF3;border-color:#A6F4C5}
+.card.offline.recovered:hover{background:#ECFDF3}
+.card.offline.recovered .ic{background:var(--c-success)}
+.card.offline.recovered .body .nm{color:#027A48}
+
+/* demo control */
+.switch{position:fixed;left:18px;top:18px;background:#fff;border-radius:12px;padding:14px 16px;box-shadow:var(--shadow);width:280px}
+.switch h3{font-size:13px;color:var(--c-text);margin-bottom:4px}
+.switch p{font-size:11px;color:var(--c-text-3);line-height:1.6;margin-bottom:10px}
+.seg{display:flex;background:#F1EFE8;border-radius:9px;padding:3px}
+.seg button{flex:1;border:none;background:none;padding:8px;border-radius:7px;font-size:12px;color:var(--c-text-2);cursor:pointer;font-family:var(--font)}
+.seg button.on{background:#fff;color:var(--c-primary);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.legend{position:fixed;left:18px;bottom:18px;background:#fff;border-radius:12px;padding:12px 14px;box-shadow:var(--shadow);width:280px;font-size:11px;color:var(--c-text-3);line-height:1.7}
+.legend b{color:var(--c-text-2)}
+</style>
+</head>
+<body>
+<div class="desktop"></div>
+
+<div class="switch">
+  <h3>消息显示方式（演示新设置）</h3>
+  <p>对应设置面板「消息 → 显示消息内容」。通知中心这一种样式不变。</p>
+  <div class="seg">
+    <button id="bContent" class="on" onclick="setMode(true)">显示内容</button>
+    <button id="bCount" onclick="setMode(false)">仅数量</button>
+  </div>
+  <hr style="border:none;border-top:1px solid var(--c-line);margin:13px 0">
+  <h3>系统通知（演示）</h3>
+  <p>复用通知中心卡片样式，与普通会话视觉区分，不累加红点。</p>
+  <div class="seg" style="margin-bottom:8px">
+    <button id="bKick" onclick="toggleCard('kickCard','bKick')">被踢下线</button>
+    <button id="bOffline" onclick="showOffline()">网络离线</button>
+  </div>
+  <p style="font-size:10px;line-height:1.6">被踢卡片不自动消失；离线卡片点「恢复网络」转绿后 3 秒自动消失。</p>
+</div>
+
+<div class="legend">
+  <b>设计要点</b><br>
+  • 单窗口常驻预加载，永不重建 → 无白框<br>
+  • 按会话聚合，未读数累加 → 装得下多条<br>
+  • 空闲按「提醒时长」自动收起，托盘红点保留<br>
+  • 卡片可「右键 → 免打扰」静默该会话<br>
+  • 系统通知置顶：被踢(红)强制 · 离线(黄)恢复自消隐<br>
+  • 系统通知不计入未读、不累加托盘红点
+</div>
+
+<!-- 通知中心（唯一样式） -->
+<div class="nc" id="nc">
+  <div class="nc-head">
+    <div class="title">消息 <span class="cnt" id="cnt">18</span></div>
+    <div class="act" onclick="tip('全部已读')">全部已读</div>
+    <div class="act" onclick="tip('收起')">收起</div>
+  </div>
+  <div class="nc-list">
+    <div class="sys-title">系统通知</div>
+    <div class="card sys kick" id="kickCard" style="display:none">
+      <div class="ic">⚠</div>
+      <div class="body">
+        <div class="nm">您已在其他设备登录</div>
+        <div class="msg">您的账号于 13:58 在 iPhone 13 登录，当前会话已结束。</div>
+        <div class="actions">
+          <button class="btn-sm primary" onclick="tip('重新登录')">重新登录</button>
+          <button class="btn-sm ghost" onclick="hideCard('kickCard','bKick')">知道了</button>
+        </div>
+      </div>
+    </div>
+    <div class="card sys offline" id="offlineCard" style="display:none">
+      <div class="ic">📡</div>
+      <div class="body">
+        <div class="nm" id="offlineTitle">网络已断开</div>
+        <div class="msg" id="offlineMsg">消息可能无法实时接收，正在尝试重连…</div>
+        <div class="actions">
+          <button class="btn-sm primary" onclick="simRecover()">恢复网络</button>
+          <button class="btn-sm ghost" onclick="hideCard('offlineCard','bOffline')">关闭</button>
+        </div>
+      </div>
+    </div>
+    <div class="card" onclick="tip('打开：张总')" oncontextmenu="return false">
+      <div class="av">张<span class="unread">5</span></div>
+      <div class="meta"><div class="nm">张总<span class="time">刚刚</span></div><div class="last">好的，方案我看下，下午同步给你</div></div>
+    </div>
+    <div class="card" onclick="tip('打开：产品群')" oncontextmenu="return false">
+      <div class="av">群<span class="unread">12</span></div>
+      <div class="meta"><div class="nm">产品评审群<span class="time">2分钟前</span></div><div class="last">[图片] [文件] 明天上午十点评审…</div></div>
+    </div>
+    <div class="card" onclick="tip('打开：李工')" oncontextmenu="return false">
+      <div class="av">李<span class="unread">1</span></div>
+      <div class="meta"><div class="nm">李工<span class="time">5分钟前</span></div><div class="last">代码已提交，麻烦 review 一下 PR</div></div>
+    </div>
+  </div>
+  <div class="nc-foot">点击卡片打开会话 · 空闲 8 秒自动收起</div>
+</div>
+
+<div class="taskbar">
+  <div class="tray">🔔<span class="badge">18</span></div>
+</div>
+
+<div class="toast-tip" id="tt" style="position:fixed;bottom:64px;left:50%;transform:translateX(-50%);background:#323232;color:#fff;font-size:12px;padding:8px 16px;border-radius:20px;opacity:0;transition:opacity .25s;pointer-events:none"></div>
+
+<script>
+function setMode(show){
+  document.getElementById('bContent').classList.toggle('on',show);
+  document.getElementById('bCount').classList.toggle('on',!show);
+  document.getElementById('nc').classList.toggle('hideContent',!show);
+}
+function tip(msg){
+  const t=document.getElementById('tt');t.textContent=msg;t.style.opacity=1;
+  clearTimeout(t._t);t._t=setTimeout(()=>t.style.opacity=0,1400);
+}
+function toggleCard(id,btn){
+  const el=document.getElementById(id);
+  const show=el.style.display==='none'||!el.style.display;
+  el.style.display=show?'flex':'none';
+  document.getElementById(btn).classList.toggle('on',show);
+}
+function hideCard(id,btn){
+  document.getElementById(id).style.display='none';
+  if(btn)document.getElementById(btn).classList.remove('on');
+}
+function showOffline(){
+  const c=document.getElementById('offlineCard');
+  c.style.display='flex';
+  c.classList.remove('recovered');
+  document.getElementById('offlineTitle').textContent='网络已断开';
+  document.getElementById('offlineMsg').textContent='消息可能无法实时接收，正在尝试重连…';
+  document.getElementById('bOffline').classList.add('on');
+}
+function simRecover(){
+  const c=document.getElementById('offlineCard');
+  c.classList.add('recovered');
+  document.getElementById('offlineTitle').textContent='网络已恢复';
+  document.getElementById('offlineMsg').textContent='连接已恢复，消息正常接收。';
+  setTimeout(()=>hideCard('offlineCard','bOffline'),3000);
+}
+</script>
+</body>
+</html>

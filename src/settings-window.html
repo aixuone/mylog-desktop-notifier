@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>设置 · 我的日志通知助手</title>
+<style>
+@font-face {
+  font-family: 'System UI';
+  src: local('Microsoft YaHei UI'), local('Microsoft YaHei'),
+       local('PingFang SC'), local('PingFang HK'),
+       local('Noto Sans CJK SC'), local('SimHei'),
+       local(system-ui), local(sans-serif);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'System UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  background: #fff; color: #2C2C2A; height: 100vh; overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+.app { display: flex; height: 100vh; }
+
+/* Nav */
+.nav {
+  width: 168px; flex-shrink: 0; background: #F5F6F8;
+  padding: 18px 12px; display: flex; flex-direction: column; gap: 4px;
+  border-right: 1px solid #ECECEC;
+}
+.nav-logo { font-size: 13px; font-weight: 700; color: #185FA5; padding: 4px 10px 14px; }
+.nav-item {
+  text-align: left; border: none; background: transparent; cursor: pointer;
+  font-family: inherit; font-size: 13px; color: #5F5E5A;
+  padding: 9px 12px; border-radius: 8px; transition: background 0.15s, color 0.15s;
+}
+.nav-item:hover { background: #ECEEF1; }
+.nav-item.active { background: #E2EFFB; color: #185FA5; font-weight: 600; }
+
+/* Content */
+.content { flex: 1; overflow-y: auto; padding: 22px 26px; }
+.content::-webkit-scrollbar { width: 8px; }
+.content::-webkit-scrollbar-thumb { background: #D8D5CF; border-radius: 4px; }
+section[hidden] { display: none; }
+.panel-hint { color: #9A9893; font-size: 12px; margin-bottom: 16px; }
+
+/* Rows */
+.row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 0; border-bottom: 1px solid #F0F0F0;
+}
+.row:last-child { border-bottom: none; }
+.row .label { font-size: 14px; font-weight: 500; }
+.row .desc { font-size: 12px; color: #9A9893; margin-top: 2px; }
+.row .grow { flex: 1; min-width: 0; }
+
+/* Switch */
+.switch {
+  position: relative; width: 46px; height: 26px; flex-shrink: 0;
+  border: none; border-radius: 13px; background: #D5D3CE; cursor: pointer;
+  transition: background 0.2s;
+}
+.switch.on { background: #185FA5; }
+.switch::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 20px; height: 20px; border-radius: 50%; background: #fff;
+  transition: transform 0.2s;
+}
+.switch.on::after { transform: translateX(20px); }
+
+/* 铃声总开关：直观表示静音 / 响铃 */
+.switch.sound { width: 56px; height: 30px; border-radius: 16px; background: #D9D7D2; }
+.switch.sound.on { background: #16A34A; }
+.switch.sound::after {
+  content: '🔇';
+  position: absolute; top: 3px; left: 3px;
+  width: 24px; height: 24px; border-radius: 50%; background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; line-height: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.25s;
+}
+.switch.sound.on::after { content: '🔊'; transform: translateX(26px); }
+
+/* 总开关被「通用」模式强制禁用时的视觉：灰化、禁用指针、强制 🔇 灰底 */
+.switch.disabled { opacity: 0.4; cursor: not-allowed; }
+.switch.disabled::after { box-shadow: none; }
+.switch.sound.disabled { background: #D9D7D2 !important; }
+.switch.sound.disabled::after { content: '🔇' !important; transform: none !important; }
+
+/* Mode cards (radio) */
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
+.mode {
+  border: 1.5px solid #E6E4DF; border-radius: 10px; padding: 12px 14px; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.mode:hover { border-color: #B9D4F0; }
+.mode.active { border-color: #185FA5; background: #F0F7FE; }
+.mode .mt { font-size: 13px; font-weight: 600; }
+.mode .md { font-size: 11px; color: #9A9893; margin-top: 4px; line-height: 1.5; }
+
+/* Segmented */
+.seg { display: inline-flex; border: 1px solid #E0DED9; border-radius: 8px; overflow: hidden; }
+.seg button {
+  border: none; background: #fff; cursor: pointer; font-family: inherit;
+  font-size: 13px; color: #5F5E5A; padding: 7px 16px; transition: background 0.15s, color 0.15s;
+}
+.seg button.active { background: #185FA5; color: #fff; font-weight: 600; }
+
+/* Slider */
+input[type=range] { width: 220px; accent-color: #185FA5; }
+.slider-val { font-size: 13px; color: #185FA5; font-weight: 600; min-width: 48px; }
+
+/* Scene ringtone row */
+.scene-icon { font-size: 18px; width: 24px; text-align: center; }
+.picker-wrap { width: 200px; flex-shrink: 0; position: relative; overflow: visible; }
+
+/* Picker component */
+.picker-trigger {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  border: 1px solid #E0DED9; border-radius: 8px; background: #fff; cursor: pointer;
+  font-family: inherit; font-size: 13px; color: #2C2C2A; padding: 8px 10px;
+  transition: border-color 0.15s;
+}
+.picker-trigger:hover { border-color: #B9D4F0; }
+.picker-chev { color: #9A9893; font-size: 11px; }
+.picker-panel {
+  position: fixed; z-index: 9999; width: 240px;
+  background: #fff; border: 1px solid #E0DED9; border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15); padding: 6px; max-height: 280px; overflow-y: auto;
+}
+.picker-group { font-size: 11px; color: #9A9893; padding: 6px 8px 4px; }
+.picker-row {
+  display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px;
+  cursor: pointer; font-size: 13px;
+}
+.picker-row:hover { background: #F2F6FB; }
+.picker-row.sel { background: #E2EFFB; }
+.picker-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-prev {
+  border: none; background: #F1EFE8; border-radius: 6px; cursor: pointer;
+  font-size: 11px; padding: 2px 7px; color: #5F5E5A; flex-shrink: 0;
+}
+.picker-prev:hover { background: #E0DDD6; }
+.picker-check { color: #185FA5; font-weight: 700; flex-shrink: 0; }
+.picker-upload {
+  width: 100%; margin-top: 6px; border: none; border-radius: 8px; cursor: pointer;
+  background: #185FA5; color: #fff; font-family: inherit; font-size: 13px; padding: 9px;
+  transition: background 0.15s;
+}
+.picker-upload:hover { background: #15508C; }
+
+/* 候选铃声时长 */
+.picker-dur {
+  font-size: 11px; color: #9A9893; flex-shrink: 0; min-width: 32px; text-align: right;
+}
+/* 试听中：均衡器动画（替代 ▶） */
+.picker-prev.playing {
+  background: #185FA5; color: #fff; padding: 3px 6px;
+}
+.picker-prev .eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.picker-prev .eq i {
+  width: 3px; height: 12px; background: #fff; border-radius: 1px;
+  transform-origin: bottom; animation: eq 0.9s ease-in-out infinite;
+}
+.picker-prev .eq i:nth-child(1) { height: 5px; animation-delay: 0s; }
+.picker-prev .eq i:nth-child(2) { height: 12px; animation-delay: 0.15s; }
+.picker-prev .eq i:nth-child(3) { height: 8px; animation-delay: 0.3s; }
+@keyframes eq { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+
+/* Contact card */
+.contact {
+  border: 1px solid #EDEBE6; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+}
+.contact .c-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.contact .c-avatar {
+  width: 34px; height: 34px; border-radius: 50%; background: #E6F1FB; color: #185FA5;
+  display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px;
+  overflow: hidden; position: relative;
+}
+.contact .c-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; position: absolute; }
+.contact .c-name { font-size: 14px; font-weight: 600; }
+.contact .c-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.contact .c-col .c-col-label { font-size: 12px; color: #9A9893; margin-bottom: 6px; }
+
+.empty-hint {
+  color: #9A9893; font-size: 13px; text-align: center; padding: 40px 20px; line-height: 1.7;
+}
+
+/* 添加联系人按钮 */
+.btn-add-contact {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1.5px dashed #B9D4F0; border-radius: 10px;
+  background: #F8FBFE; cursor: pointer;
+  font-family: inherit; font-size: 13px; color: #185FA5;
+  padding: 10px 18px; transition: background 0.15s, border-color 0.15s;
+}
+.btn-add-contact:hover { background: #E2EFFB; border-color: #185FA5; }
+
+/* 联系人选择浮层 */
+.contact-picker-overlay {
+  position: fixed; inset: 0; z-index: 9998;
+  background: rgba(0,0,0,0.2);
+}
+.contact-picker {
+  position: fixed; z-index: 9999;
+  background: #fff; border: 1px solid #E0DED9; border-radius: 12px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.18);
+  width: 280px; max-height: 340px;
+  display: flex; flex-direction: column;
+  padding: 8px;
+}
+.contact-picker .cp-title {
+  font-size: 12px; color: #9A9893; padding: 2px 4px 6px; font-weight: 600; flex-shrink: 0;
+}
+.contact-picker .cp-search {
+  flex-shrink: 0; width: 100%; box-sizing: border-box;
+  border: 1px solid #E0DED9; border-radius: 8px;
+  font-family: inherit; font-size: 13px; color: #2C2C2A;
+  padding: 8px 10px; margin-bottom: 6px; outline: none; background: #FAFAF8;
+}
+.contact-picker .cp-search:focus { border-color: #185FA5; background: #fff; }
+.contact-picker .cp-list { flex: 1; overflow-y: auto; min-height: 0; }
+.contact-picker .cp-count { font-size: 11px; color: #B0AEA8; padding: 0 4px 4px; flex-shrink: 0; }
+.contact-picker .cp-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.contact-picker .cp-item:hover { background: #F2F6FB; }
+.contact-picker .cp-avatar {
+  width: 28px; height: 28px; border-radius: 50%; background: #E6F1FB;
+  color: #185FA5; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; flex-shrink: 0; overflow: hidden; position: relative;
+}
+.contact-picker .cp-avatar img { width:100%;height:100%;border-radius:50%;object-fit:cover;position:absolute;top:0;left:0; }
+.contact-picker .cp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-picker .cp-empty { color: #9A9893; font-size: 12px; text-align: center; padding: 24px 12px; }
+
+.about-line { font-size: 13px; color: #5F5E5A; padding: 8px 0; border-bottom: 1px solid #F0F0F0; }
+.about-line b { color: #2C2C2A; font-weight: 600; }
+
+/* ── 联动横幅（实时生效状态，纯文本） ── */
+.link-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 14px; border-radius: 10px; margin-bottom: 14px;
+  font-size: 13px; font-weight: 700;
+}
+.link-banner.on { color: #15803D; background: #E7F6EC; border: 1px solid #BCE3C8; }
+.link-banner.off { color: #B45309; background: #FEF3E2; border: 1px solid #FBDCA0; }
+.link-banner .lb-ico { font-size: 16px; }
+.link-banner .lb-reason { font-weight: 500; font-size: 12px; opacity: 0.9; }
+
+.hint-line { font-size: 12px; color: #9A9893; margin-top: 8px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="nav">
+    <div class="nav-logo">🔔 通知助手</div>
+    <button class="nav-item active" data-tab="general">通用</button>
+    <button class="nav-item" data-tab="ringtone">铃声</button>
+    <button class="nav-item" data-tab="message">消息</button>
+    <button class="nav-item" data-tab="contacts">联系人专属设置</button>
+    <button class="nav-item" data-tab="about">关于</button>
+  </aside>
+  <main class="content" id="content">
+    <!-- 通用 -->
+    <section data-panel="general">
+      <div class="panel-hint">基础通知行为与系统级设置</div>
+      <div class="row">
+        <div class="grow"><div class="label">开机启动</div><div class="desc">登录系统后自动运行通知助手</div></div>
+        <button class="switch" id="sw-autostart"></button>
+      </div>
+      <div class="row" style="flex-direction:column; align-items:stretch;">
+        <div class="label" style="margin-bottom:6px;">通知模式</div>
+        <div class="modes" id="modes"></div>
+        <div class="hint-line">提示：通知模式优先级最高，会覆盖「铃声」面板的总开关。最终生效设置以铃声面板顶部的状态为准。</div>
+      </div>
+    </section>
+
+    <!-- 铃声 -->
+    <section data-panel="ringtone" hidden>
+      <div class="panel-hint">控制所有通知声音的总开关</div>
+      <div class="link-banner" id="sound-banner"></div>
+      <div class="row" id="row-master">
+        <div class="grow"><div class="label">铃声总开关</div><div class="desc">关闭后所有声音静音（视觉提示保留）</div></div>
+        <button class="switch sound" id="sw-ringtone"></button>
+      </div>
+      <div id="scenes"></div>
+    </section>
+
+    <!-- 消息 -->
+    <section data-panel="message" hidden>
+      <div class="panel-hint">消息通知的展示方式与停留时长</div>
+      <div class="row">
+        <div class="grow"><div class="label">显示方式</div><div class="desc">选择通知中心卡片展示内容或仅显示数量</div></div>
+        <div class="seg" id="seg-display">
+          <button data-v="content">显示内容</button>
+          <button data-v="count">仅显示数量</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="grow"><div class="label">消息提醒持续时长</div><div class="desc">空闲后自动收起（未读仍保留在托盘）</div></div>
+        <input type="range" id="rng-duration" min="3" max="30" step="1">
+        <span class="slider-val" id="duration-val"></span>
+      </div>
+    </section>
+
+    <!-- 联系人专属设置 -->
+    <section data-panel="contacts" hidden>
+      <div class="panel-hint">为指定联系人设置专属铃声（点击添加按钮从已同步的联系人中选择）</div>
+      <button class="btn-add-contact" id="btn-add-contact">＋ 添加联系人</button>
+      <div id="contacts"></div>
+    </section>
+
+    <!-- 关于 -->
+    <section data-panel="about" hidden>
+      <div class="panel-hint">版本与存储信息</div>
+      <div class="about-line">应用版本：<b id="about-version"></b></div>
+      <div class="about-line">铃声存储目录：<b id="about-ringtone-dir"></b></div>
+      <div class="about-line">设置文件：<b id="about-settings-path"></b></div>
+    </section>
+  </main>
+</div>
+
+<script src="ringtone-picker.js"></script>
+<script>
+var api = window.electronAPI
+var S = {}
+var C = { names: {}, localRingtones: [], urls: {}, presets: {} }
+var contacts = []
+var pickers = []
+
+var MODES = [
+  { key: 'normal', t: '正常通知', d: '所有通知与提示音正常' },
+  { key: 'silent', t: '静音模式', d: '仅视觉提示，关闭所有声音' },
+  { key: 'blockChat', t: '屏蔽聊天消息', d: '聊天消息不弹不响；通话/会议正常' },
+  { key: 'dnd', t: '勿扰模式', d: '全部屏蔽（含通话/会议）' },
+]
+
+// 各场景「个性化铃声」选择器（仅选择 file；是否发声由通用模式 + 总开关统一控制）
+var SCENES = [
+  { key: 'call_audio', label: '语音通话', icon: '📞' },
+  { key: 'call_video', label: '视频通话', icon: '🎥' },
+  { key: 'meeting', label: '视频会议', icon: '📹' },
+  { key: 'message', label: '消息通知', icon: '💬' },
+]
+
+function deepMergeLocal(base, over) {
+  if (!over || typeof over !== 'object') return over === undefined ? base : over
+  var out = Array.isArray(base) ? base.slice() : Object.assign({}, base)
+  for (var k in over) {
+    if (over[k] === undefined) continue
+    if (over[k] && typeof over[k] === 'object' && !Array.isArray(over[k]) && out[k] && typeof out[k] === 'object' && !Array.isArray(out[k])) {
+      out[k] = deepMergeLocal(out[k], over[k])
+    } else out[k] = over[k]
+  }
+  return out
+}
+
+function save(partial) {
+  api.settingsSave(partial)
+  S = deepMergeLocal(S, partial)
+}
+
+function getCandidates() { return C }
+function toFile(rel) {
+  if (!rel || !C.urls) return null
+  if (rel === 'default') rel = (C.presets && C.presets.default) || 'assets/ringtone.m4a'
+  return C.urls[rel] || null
+}
+function onUpload() {
+  return api.pickRingtone().then(function (res) {
+    if (!res) return null
+    return api.settingsLoad().then(function (d) {
+      C = { names: d.names || {}, localRingtones: d.localRingtones || [], urls: d.urls || {}, presets: d.presets || {}, builtin: d.builtin || [] }
+      return res
+    })
+  })
+}
+
+function refreshPickers() { pickers.forEach(function (p) { try { p.refresh() } catch (e) {} }) }
+
+// ── 联动：实时计算“最终生效设置” ──
+// 优先级（高→低）：勿扰(dnd) > 总开关(ringtoneEnabled) > 静音(silent) > 屏蔽聊天(blockChat) > 正常
+// 联系人专属铃声仅改变“响哪段铃声”，不高于本优先级（受通用模式与总开关控制）。
+function effectiveSoundState() {
+  var st = S
+  if (st.notifyMode === 'dnd') return { on: false, bannerText: '勿扰模式（全部屏蔽）' }
+  if (!st.ringtoneEnabled) return { on: false, bannerText: '铃声总开关已关闭' }
+  if (st.notifyMode === 'silent') return { on: false, bannerText: '静音模式' }
+  if (st.notifyMode === 'blockChat') return { on: true, bannerText: '屏蔽聊天消息（通话/会议仍响）' }
+  return { on: true, bannerText: '正常通知（全部开启）' }
+}
+
+// 统一刷新联动视觉：仅更新顶部状态横幅（纯文本，说明当前生效的设置）
+function refreshLinkage() {
+  var st = effectiveSoundState()
+  var banner = document.getElementById('sound-banner')
+  if (banner) {
+    banner.className = 'link-banner ' + (st.on ? 'on' : 'off')
+    banner.innerHTML = '<span>生效设置：' + st.bannerText + '</span>'
+  }
+}
+
+// 总开关与「通用」模式联动：
+// 静音(silent) / 勿扰(dnd) 模式下声音必然关闭，强制总开关为关且 disabled（不可改）；
+// 其余模式（正常 / 屏蔽聊天）总开关可自由切换。场景个性化铃声始终可改（在 renderRingtone 中独立渲染）。
+function syncMasterSwitch() {
+  var sw = document.getElementById('sw-ringtone')
+  if (!sw) return
+  var forcedOff = (S.notifyMode === 'silent' || S.notifyMode === 'dnd')
+  if (forcedOff) {
+    sw.disabled = true
+    sw.classList.add('disabled')
+    sw.classList.remove('on')
+  } else {
+    sw.disabled = false
+    sw.classList.remove('disabled')
+    sw.classList.toggle('on', !!S.ringtoneEnabled)
+  }
+}
+
+function loadAll() {
+  return api.settingsLoad().then(function (d) {
+    S = d.settings || {}
+    C = { names: d.names || {}, localRingtones: d.localRingtones || [], urls: d.urls || {}, presets: d.presets || {}, builtin: d.builtin || [] }
+    contacts = d.contacts || []
+    try { renderGeneral(); renderRingtone(); renderMessage(); renderContacts(); renderAbout(d) } catch (e) { console.error('[Settings] render error:', e) }
+  }).catch(function (err) {
+    console.error('[Settings] loadAll failed:', err && err.message)
+  })
+}
+
+// ── Nav ──
+document.querySelectorAll('.nav-item').forEach(function (b) {
+  b.addEventListener('click', function () {
+    document.querySelectorAll('.nav-item').forEach(function (x) { x.classList.remove('active') })
+    b.classList.add('active')
+    var tab = b.getAttribute('data-tab')
+    document.querySelectorAll('section[data-panel]').forEach(function (sec) {
+      sec.hidden = sec.getAttribute('data-panel') !== tab
+    })
+  })
+})
+
+// ── General ──
+function renderGeneral() {
+  var sw = document.getElementById('sw-autostart')
+  sw.classList.toggle('on', !!S.autoStart)
+  sw.onclick = function () {
+    var v = !S.autoStart
+    api.setAutoStart(v)
+    S.autoStart = v
+    sw.classList.toggle('on', v)
+  }
+  var modes = document.getElementById('modes')
+  modes.innerHTML = MODES.map(function (m) {
+    return '<div class="mode' + (S.notifyMode === m.key ? ' active' : '') + '" data-mode="' + m.key + '">' +
+      '<div class="mt">' + m.t + '</div><div class="md">' + m.d + '</div></div>'
+  }).join('')
+  modes.querySelectorAll('.mode').forEach(function (el) {
+    el.onclick = function () {
+      save({ notifyMode: el.getAttribute('data-mode') })
+      modes.querySelectorAll('.mode').forEach(function (x) { x.classList.remove('active') })
+      el.classList.add('active')
+      refreshLinkage()
+      syncMasterSwitch()
+    }
+  })
+  refreshLinkage()
+}
+
+// ── Ringtone ──
+function renderRingtone() {
+  var sw = document.getElementById('sw-ringtone')
+  sw.classList.toggle('on', !!S.ringtoneEnabled)
+  sw.onclick = function () {
+    var v = !S.ringtoneEnabled
+    save({ ringtoneEnabled: v })
+    sw.classList.toggle('on', v)
+    refreshLinkage()
+  }
+
+  // 各场景保留「个性化铃声」选择器（选择 file）；
+  // 场景独立开关（enabled）已在上一轮移除，是否发声由通用模式 + 总开关统一控制。
+  var box = document.getElementById('scenes')
+  if (box) {
+    box.innerHTML = ''
+    // 仅清掉上一轮遗留的场景选择器，保留联系人选择器
+    pickers = pickers.filter(function (p) { return !p._scene })
+    // 小标题
+    var cap = document.createElement('div')
+    cap.style.cssText = 'font-size:12px;color:#9A9893;margin:16px 0 4px;'
+    cap.textContent = '各场景个性化铃声'
+    box.appendChild(cap)
+
+    SCENES.forEach(function (sc) {
+      var rowEl = document.createElement('div')
+      rowEl.className = 'row'
+      var left = document.createElement('div')
+      left.className = 'grow'
+      left.style.cssText = 'display:flex;align-items:center;gap:10px;'
+      left.innerHTML = '<span class="scene-icon">' + sc.icon + '</span><span class="label">' + sc.label + '</span>'
+      var pickMount = document.createElement('div')
+      pickMount.className = 'picker-wrap'
+      rowEl.appendChild(left)
+      rowEl.appendChild(pickMount)
+      box.appendChild(rowEl)
+
+      var p = window.RingtonePicker.create({
+        mount: pickMount, _scene: true,
+        getValue: function () {
+          var sc2 = (S.ringtones && S.ringtones[sc.key]) || {}
+          return sc2.file || (sc.key === 'message' ? 'assets/ringtones/default.mp3' : 'default')
+        },
+        getCandidates: getCandidates, toFile: toFile, onUpload: onUpload,
+        onChange: function (rel) {
+          // 选择器仅设置 file；enabled 一并置 true（已无独立开关，交互即表示该场景启用声音）
+          save({ ringtones: { [sc.key]: { file: rel, enabled: true } } })
+          refreshPickers()
+        },
+      })
+      pickers.push(p)
+    })
+  }
+  refreshLinkage()
+  syncMasterSwitch()
+}
+
+// ── Message ──
+function renderMessage() {
+  var mn = (S.messageNotify && S.messageNotify.display) || 'content'
+  var dur = (S.messageNotify && S.messageNotify.duration) || 8
+  document.querySelectorAll('#seg-display button').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-v') === mn)
+    b.onclick = function () {
+      save({ messageNotify: { display: b.getAttribute('data-v') } })
+      document.querySelectorAll('#seg-display button').forEach(function (x) { x.classList.remove('active') })
+      b.classList.add('active')
+    }
+  })
+  var rng = document.getElementById('rng-duration')
+  var val = document.getElementById('duration-val')
+  rng.value = dur
+  val.textContent = dur + ' 秒'
+  rng.oninput = function () {
+    val.textContent = rng.value + ' 秒'
+    save({ messageNotify: { duration: parseInt(rng.value, 10) } })
+  }
+}
+
+// ── Contacts (add mode) ──
+var contactPickerOpen = false
+
+function renderContacts() {
+  var box = document.getElementById('contacts')
+  box.innerHTML = ''
+  pickers = pickers.filter(function (p) { return !p._contact })
+
+  // 只展示已在 contactRingtones 中的联系人
+  var addedIds = Object.keys(S.contactRingtones || {})
+  if (addedIds.length === 0) {
+    box.innerHTML = '<div class="empty-hint">暂无联系人专属设置<br>点击上方「添加联系人」按钮开始设置</div>'
+    return
+  }
+
+  // 构建联系人查找映射
+  var ctMap = {}
+  ;(contacts || []).forEach(function (c) { ctMap[c.id || c.imUserId] = c })
+
+  addedIds.forEach(function (cid) {
+    var ct = ctMap[cid]
+    if (!ct) { /* 联系人可能已从网页端消失，但仍保留设置 */ ct = { id: cid, name: cid, avatar: '' } }
+    var link = S.contactRingtones[cid] || {}
+    var card = document.createElement('div')
+    card.className = 'contact'
+    var fb = (ct.name || '?').charAt(0)
+    var avatar = ct.avatar
+      ? '<div class="c-avatar"><img src="' + ct.avatar + '" onerror="this.style.display=\'none\'">' + fb + '</div>'
+      : '<div class="c-avatar">' + fb + '</div>'
+    // 删除按钮
+    card.innerHTML =
+      '<div class="c-head">' + avatar + '<div class="c-name">' + escapeHtml(ct.name || ct.id) + '</div>' +
+      '<button style="margin-left:auto;border:none;background:none;cursor:pointer;font-size:16px;color:#B0AEA8;padding:2px 6px;border-radius:4px;" title="移除">×</button></div>' +
+      '<div class="c-grid">' +
+        '<div class="c-col"><div class="c-col-label">消息提醒</div><div class="picker-wrap msg"></div></div>' +
+        '<div class="c-col"><div class="c-col-label">语音提醒类</div><div class="picker-wrap voice"></div></div>' +
+      '</div>' +
+      '<div class="hint-line">专属铃声仅替换声音；是否发声仍由「通用」模式与铃声总开关决定。</div>'
+    box.appendChild(card)
+
+    // 删除按钮：移除该联系人的专属设置
+    card.querySelector('.c-head button:last-child').onclick = function () {
+      if (S.contactRingtones && S.contactRingtones[cid]) {
+        delete S.contactRingtones[cid]
+        // 通过专用接口真正删除该联系人（settingsStore 用 deepMerge，普通 settingsSave 无法删除 key）
+        api.removeContactRingtone(cid)
+      }
+      renderContacts()
+    }
+
+    var msgMount = card.querySelector('.picker-wrap.msg')
+    var voiceMount = card.querySelector('.picker-wrap.voice')
+    var p1 = window.RingtonePicker.create({
+      mount: msgMount, _contact: true,
+      getValue: function () { return (S.contactRingtones[cid] || {}).message || 'default' },
+      getCandidates: getCandidates, toFile: toFile, onUpload: onUpload,
+      onChange: function (rel) {
+        save({ contactRingtones: { [cid]: { message: rel } } })
+        refreshPickers()
+      },
+    })
+    var p2 = window.RingtonePicker.create({
+      mount: voiceMount, _contact: true,
+      getValue: function () { return (S.contactRingtones[cid] || {}).voice || 'default' },
+      getCandidates: getCandidates, toFile: toFile, onUpload: onUpload,
+      onChange: function (rel) {
+        save({ contactRingtones: { [cid]: { voice: rel } } })
+        refreshPickers()
+      },
+    })
+    pickers.push(p1, p2)
+  })
+}
+
+// 添加联系人选择器
+document.getElementById('btn-add-contact').addEventListener('click', function (e) {
+  if (contactPickerOpen) { closeContactPicker(); return }
+  openContactPicker(e)
+})
+
+function openContactPicker(triggerEvent) {
+  var addedIds = Object.keys(S.contactRingtones || {})
+  // 可选：在已同步但未添加的联系人中
+  var available = (contacts || []).filter(function (c) {
+    var kid = c.id || c.imUserId
+    return kid && addedIds.indexOf(kid) < 0
+  })
+
+  // 如果没有可添加的联系人，不弹出选择器
+  if (available.length === 0) {
+    // 可以用一个轻提示，这里用 console + return 静默处理
+    console.log('[Settings] No available contacts to add')
+    return
+  }
+
+  // overlay
+  var overlay = document.createElement('div')
+  overlay.className = 'contact-picker-overlay'
+  overlay.onclick = closeContactPicker
+
+  // panel
+  var panel = document.createElement('div')
+  panel.className = 'contact-picker'
+
+  var rect = triggerEvent.target.getBoundingClientRect()
+  panel.style.left = Math.max(4, rect.left) + 'px'
+  panel.style.top = (rect.bottom + 4) + 'px'
+
+  // 标题 + 搜索框 + 可滚动列表
+  var title = document.createElement('div')
+  title.className = 'cp-title'
+  title.textContent = '选择联系人'
+
+  var search = document.createElement('input')
+  search.className = 'cp-search'
+  search.type = 'text'
+  search.placeholder = '搜索姓名'
+  search.setAttribute('autocomplete', 'off')
+
+  var listEl = document.createElement('div')
+  listEl.className = 'cp-list'
+
+  panel.appendChild(title)
+  panel.appendChild(search)
+  panel.appendChild(listEl)
+
+  // 根据关键字过滤并渲染候选列表（仅按中文名称模糊匹配）
+  function renderList(q) {
+    q = (q || '').trim().toLowerCase()
+    var matched = available.filter(function (c) {
+      if (!q) return true
+      return (c.name || '').toLowerCase().indexOf(q) >= 0
+    })
+    if (matched.length === 0) {
+      listEl.innerHTML = '<div class="cp-empty">未找到匹配的联系人</div>'
+      return
+    }
+    var html = ''
+    matched.forEach(function (c) {
+      var kid = c.id || c.imUserId
+      var fb = (c.name || '?').charAt(0)
+      var av = c.avatar
+        ? '<div class="cp-avatar"><img src="' + c.avatar + '" onerror="this.style.display=\'none\'">' + fb + '</div>'
+        : '<div class="cp-avatar">' + fb + '</div>'
+      html += '<div class="cp-item" data-cid="' + escapeHtml(kid) + '">' + av +
+        '<span class="cp-name">' + escapeHtml(c.name || kid) + '</span></div>'
+    })
+    listEl.innerHTML = html
+
+    listEl.querySelectorAll('.cp-item').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var cid = el.getAttribute('data-cid')
+        // 初始化默认值
+        if (!S.contactRingtones) S.contactRingtones = {}
+        if (!S.contactRingtones[cid]) {
+          S.contactRingtones[cid] = { message: 'default', voice: 'default' }
+          save({ contactRingtones: { [cid]: { message: 'default', voice: 'default' } } })
+        }
+        closeContactPicker()
+        renderContacts()
+      })
+    })
+  }
+
+  search.addEventListener('input', function () { renderList(search.value) })
+  renderList('')
+
+  document.body.appendChild(overlay)
+  document.body.appendChild(panel)
+  contactPickerOpen = true
+  search.focus()
+
+  setTimeout(function () {
+    document.addEventListener('click', onDocClickForContactPicker, true)
+  }, 0)
+}
+
+function closeContactPicker() {
+  var overlay = document.querySelector('.contact-picker-overlay')
+  var panel = document.querySelector('.contact-picker')
+  if (overlay) overlay.remove()
+  if (panel) panel.remove()
+  contactPickerOpen = false
+  document.removeEventListener('click', onDocClickForContactPicker, true)
+}
+
+function onDocClickForContactPicker(e) {
+  var panel = document.querySelector('.contact-picker')
+  var btn = document.getElementById('btn-add-contact')
+  if (panel && !panel.contains(e.target) && e.target !== btn && !btn.contains(e.target)) {
+    closeContactPicker()
+  }
+}
+
+// ── About ──
+function renderAbout(d) {
+  document.getElementById('about-version').textContent = d.version || ''
+  document.getElementById('about-ringtone-dir').textContent = d.ringtoneDir || ''
+  document.getElementById('about-settings-path').textContent = (d.ringtoneDir ? d.ringtoneDir.replace(/ringtones$/, 'settings.json') : '')
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  })
+}
+
+if (!api) {
+  document.body.innerHTML = '<div style="color:red;padding:24px;">Error: electronAPI not available</div>'
+} else {
+  loadAll()
+}
+</script>
+</body>
+</html>

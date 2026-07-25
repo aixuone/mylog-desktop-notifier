@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>设置面板 · 设计稿 v3</title>
+<style>
+:root{
+  --c-primary:#185FA5; --c-primary-600:#378ADD; --c-primary-50:#E6F1FB;
+  --c-success:#52C41A; --c-warning:#BA7517; --c-danger:#E83F2B;
+  --c-text:#2C2C2A; --c-text-2:#5F5E5A; --c-text-3:#888780;
+  --c-line:#ECEAE4; --c-bg:#F5F4F0; --c-card:#FFFFFF;
+  --radius:12px; --shadow:0 8px 30px rgba(0,0,0,.12);
+  --font:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC',system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font);background:#e9e8e3;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+.win{width:800px;height:600px;background:var(--c-card);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+.titlebar{height:46px;background:linear-gradient(90deg,#185FA5,#378ADD);display:flex;align-items:center;padding:0 16px;color:#fff;flex-shrink:0}
+.titlebar .t{font-size:14px;font-weight:600;flex:1}
+.titlebar .close{width:26px;height:26px;border-radius:50%;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px}
+.titlebar .close:hover{background:rgba(255,255,255,.32)}
+.body{display:flex;flex:1;min-height:0}
+.side{width:184px;background:var(--c-bg);border-right:1px solid var(--c-line);padding:14px 10px;flex-shrink:0}
+.side .nav{display:flex;flex-direction:column;gap:4px}
+.nav-item{padding:10px 12px;border-radius:8px;font-size:13px;color:var(--c-text-2);cursor:pointer;display:flex;align-items:center;gap:8px}
+.nav-item:hover{background:#ecebe6}
+.nav-item.active{background:var(--c-primary-50);color:var(--c-primary);font-weight:600}
+.nav-item .dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.5}
+.content{flex:1;padding:22px 24px;overflow-y:auto}
+.panel{display:none}
+.panel.active{display:block}
+.panel h2{font-size:16px;color:var(--c-text);margin-bottom:4px;display:flex;align-items:center;gap:10px}
+.panel .sub{font-size:12px;color:var(--c-text-3);margin-bottom:18px}
+.row{display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--c-line)}
+.row.col{flex-direction:column;align-items:stretch;gap:10px}
+.row .lab{font-size:13px;color:var(--c-text)}
+.row .lab small{display:block;color:var(--c-text-3);font-size:11px;margin-top:2px;line-height:1.5}
+/* toggle */
+.toggle{width:42px;height:24px;border-radius:12px;background:#cfcec8;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0}
+.toggle.on{background:var(--c-success)}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.toggle.on::after{left:20px}
+/* 静音 / 响铃 双态切换 */
+.switch2{display:inline-flex;background:#F1EFE8;border-radius:8px;padding:3px;gap:2px;flex-shrink:0}
+.switch2 button{border:none;background:transparent;padding:5px 12px;border-radius:6px;font-size:12px;color:var(--c-text-3);cursor:pointer;font-family:var(--font);transition:.15s;display:inline-flex;align-items:center;gap:4px}
+.switch2 button:hover{color:var(--c-text-2)}
+.switch2 button.on{background:#fff;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.switch2 button.on.ring{color:var(--c-success)}
+.switch2 button.on.mute{color:var(--c-danger)}
+/* slider */
+input[type=range]{width:200px;accent-color:var(--c-primary)}
+/* segmented control（消息显示方式等） */
+.seg{display:inline-flex;background:#F1EFE8;border-radius:9px;padding:3px;gap:3px}
+.seg button{border:none;background:transparent;padding:8px 18px;border-radius:7px;font-size:12px;color:var(--c-text-2);cursor:pointer;font-family:var(--font);transition:.15s}
+.seg button:hover{color:var(--c-text)}
+.seg button.on{background:#fff;color:var(--c-primary);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+/* modes (4-state) */
+.modes{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.mode{display:flex;align-items:flex-start;gap:12px;padding:13px 14px;border:1px solid var(--c-line);border-radius:10px;cursor:pointer;transition:.15s}
+.mode:hover{border-color:#cfd8e3}
+.mode.sel{background:var(--c-primary-50);border-color:var(--c-primary)}
+.mode .radio{width:18px;height:18px;border-radius:50%;border:2px solid #c4c2bc;margin-top:2px;flex-shrink:0;position:relative}
+.mode.sel .radio{border-color:var(--c-primary)}
+.mode.sel .radio::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--c-primary)}
+.mode .mn{font-size:14px;font-weight:600;color:var(--c-text)}
+.mode .md{font-size:11px;color:var(--c-text-3);margin-top:2px;line-height:1.4}
+/* ringtone scene */
+.scene{display:block;padding:14px;border:1px solid var(--c-line);border-radius:var(--radius);margin-bottom:11px;background:#fff}
+.scene-head{display:flex;align-items:center;gap:12px}
+.scene .ico{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.scene .ico svg{width:19px;height:19px}
+.ico.audio{background:#E6F1FB}.ico.audio svg path{fill:#185FA5}
+.ico.video{background:#EAF3E2}.ico.video svg path{fill:#3B6D11}
+.ico.meeting{background:#FBF0DB}.ico.meeting svg path{fill:#BA7517}
+.ico.msg{background:#F0EAFB}.ico.msg svg path{fill:#6B4FBF}
+.scene-meta{flex:1;min-width:0}
+.scene-name{font-size:14px;color:var(--c-text);font-weight:600}
+.scene-cur{font-size:12px;color:var(--c-text-3);margin-top:2px}
+.section-title{font-size:12px;font-weight:600;color:var(--c-text-3);margin:20px 0 10px;letter-spacing:.4px}
+.btn{border:none;border-radius:8px;padding:7px 11px;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:5px}
+.btn.ghost{background:#F1EFE8;color:var(--c-text-2)}
+.btn.ghost:hover{background:#E4E1DA}
+.btn.primary{background:var(--c-primary);color:#fff}
+.btn.primary:hover{background:var(--c-primary-600)}
+/* 铃声选择器（铃声页 & 联系人页共用） */
+.picker{margin-top:12px}
+.scene .picker{margin-top:12px;border-top:1px dashed var(--c-line);padding-top:12px}
+.picker-trigger{display:flex;align-items:center;gap:10px;width:100%;background:#FAFAF8;border:1px solid var(--c-line);border-radius:9px;padding:10px 12px;cursor:pointer;transition:border-color .15s,background .15s}
+.picker-trigger:hover{border-color:var(--c-primary);background:var(--c-primary-50)}
+.picker.open .picker-trigger{border-color:var(--c-primary);background:var(--c-primary-50)}
+.picker-label{font-size:12px;color:var(--c-text-3)}
+.picker-val{font-size:13px;color:var(--c-text);font-weight:600;flex:1;text-align:left}
+.picker-chev{transition:transform .2s;color:var(--c-text-3);font-size:15px;flex-shrink:0}
+.picker.open .picker-chev{transform:rotate(180deg);color:var(--c-primary)}
+.picker-body{display:none;margin-top:8px;background:#fff;border:1px solid var(--c-line);border-radius:10px;overflow:hidden}
+.picker.open .picker-body{display:block;animation:slideD .2s ease}
+.rt-group{font-size:11px;color:var(--c-text-3);padding:10px 12px 4px;background:#FAFAF8}
+.rt-opt{display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer;font-size:13px;color:var(--c-text);transition:background .12s}
+.rt-opt:hover{background:var(--c-primary-50)}
+.rt-opt.sel{background:var(--c-primary-50);color:var(--c-primary);font-weight:600}
+.rt-opt .rt-name{flex:1}
+.rt-opt .rt-check{width:16px;color:var(--c-primary);opacity:0;font-weight:700;font-size:14px;flex-shrink:0}
+.rt-opt.sel .rt-check{opacity:1}
+.rt-play{width:30px;height:30px;border-radius:50%;border:1px solid var(--c-line);background:#fff;color:var(--c-text-2);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;transition:.15s}
+.rt-play:hover{border-color:var(--c-primary);color:var(--c-primary);background:var(--c-primary-50)}
+.rt-play.playing{background:var(--c-primary);color:#fff;border-color:var(--c-primary)}
+.rt-upload{display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;margin-top:6px;border-top:1px solid var(--c-line);color:var(--c-primary);font-size:13px;font-weight:600;cursor:pointer;background:var(--c-primary-50);transition:background .15s}
+.rt-upload:hover{background:#d6e8fa}
+.rt-upload input{display:none}
+/* contact */
+.contact{display:block;padding:14px;border:1px solid var(--c-line);border-radius:var(--radius);margin-bottom:10px;background:#fff;transition:border-color .15s}
+.contact .top{display:flex;align-items:center;gap:12px}
+.avatar{width:40px;height:40px;border-radius:50%;background:var(--c-primary-50);display:flex;align-items:center;justify-content:center;font-weight:600;color:var(--c-primary);font-size:16px;flex-shrink:0}
+.contact .meta{flex:1;min-width:0}
+.contact .meta .nm{font-size:14px;color:var(--c-text);font-weight:600}
+.contact .meta .rt{font-size:12px;color:var(--c-text-3);margin-top:3px}
+.badge2{display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;margin-right:5px}
+.badge2.msg{background:#F0EAFB;color:#6B4FBF}
+.badge2.voice{background:#E6F1FB;color:#185FA5}
+/* contact inline ringtone grid（常驻可见，无折叠） */
+.contact .cgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;padding-top:12px;border-top:1px dashed var(--c-line)}
+.contact .gc .gl{font-size:12px;color:var(--c-text-3);margin-bottom:6px}
+@keyframes slideD{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.addinline{display:none;gap:8px;padding:12px;border:1px dashed var(--c-primary);border-radius:10px;background:var(--c-primary-50);margin-bottom:12px;align-items:center;flex-wrap:wrap}
+.addinline input[type=text]{padding:8px 11px;border:1px solid var(--c-line);border-radius:8px;font-size:13px;font-family:var(--font);flex:1;min-width:140px}
+.addinline input[type=text]:focus{outline:none;border-color:var(--c-primary);box-shadow:0 0 0 3px rgba(24,95,165,.1)}
+.hint{font-size:11px;color:var(--c-text-3);margin-top:10px;line-height:1.6}
+/* modal */
+.mask{position:fixed;inset:0;background:rgba(0,0,0,.32);display:none;align-items:center;justify-content:center;z-index:60}
+.mask.show{display:flex}
+.modal{width:420px;background:#fff;border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden;animation:pop .2s ease}
+@keyframes pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+.modal .mh{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--c-line)}
+.modal .mh .mt{font-size:15px;font-weight:700;color:var(--c-text);flex:1}
+.modal .mh .x{width:26px;height:26px;border-radius:50%;background:#F1EFE8;color:var(--c-text-3);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px}
+.modal .mh .x:hover{background:#E4E1DA}
+.modal .mb{padding:16px 18px}
+.modal .mf{padding:12px 18px;border-top:1px solid var(--c-line);display:flex;justify-content:flex-end;gap:8px}
+.field{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--c-line);border-radius:10px;margin-bottom:10px}
+.field .fl{flex:1;min-width:0}
+.field .fl .fn{font-size:13px;font-weight:600;color:var(--c-text)}
+.field .fl .fc{font-size:12px;color:var(--c-text-3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.modal input[type=text]{width:100%;padding:9px 11px;border:1px solid var(--c-line);border-radius:8px;font-size:13px;font-family:var(--font);margin-bottom:10px}
+.modal input[type=text]:focus{outline:none;border-color:var(--c-primary);box-shadow:0 0 0 3px rgba(24,95,165,.1)}
+.toast-tip{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#323232;color:#fff;font-size:12px;padding:8px 16px;border-radius:20px;opacity:0;transition:opacity .25s;pointer-events:none}
+.toast-tip.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="titlebar"><div class="t">设置</div><div class="close">✕</div></div>
+  <div class="body">
+    <div class="side">
+      <div class="nav">
+        <div class="nav-item" data-tab="general"><span class="dot"></span>通用</div>
+        <div class="nav-item active" data-tab="ringtone"><span class="dot"></span>铃声</div>
+        <div class="nav-item" data-tab="message"><span class="dot"></span>消息</div>
+        <div class="nav-item" data-tab="contact"><span class="dot"></span>联系人专属设置</div>
+        <div class="nav-item" data-tab="about"><span class="dot"></span>关于</div>
+      </div>
+    </div>
+    <div class="content">
+      <!-- 通用 -->
+      <div class="panel" id="general">
+        <div class="row">
+          <div class="lab">开机启动<small>登录系统后自动运行通知助手</small></div>
+          <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="row col" style="border-bottom:none">
+          <div class="lab">通知模式<small>控制通知与声音的全局策略（替代原「勿扰」）</small></div>
+          <div class="modes">
+            <div class="mode sel" data-mode="normal" onclick="selMode(this)"><span class="radio"></span><div><div class="mn">正常通知</div><div class="md">所有通知与提示音正常</div></div></div>
+            <div class="mode" data-mode="silent" onclick="selMode(this)"><span class="radio"></span><div><div class="mn">静音模式</div><div class="md">仅视觉提示，关闭所有声音（通话/会议窗口仍弹，但无声）</div></div></div>
+            <div class="mode" data-mode="blockChat" onclick="selMode(this)"><span class="radio"></span><div><div class="mn">屏蔽聊天消息</div><div class="md">聊天消息通知不弹、不响；通话 / 视频 / 视频会议类提示正常</div></div></div>
+            <div class="mode" data-mode="dnd" onclick="selMode(this)"><span class="radio"></span><div><div class="mn">勿扰模式</div><div class="md">全部屏蔽：不弹通知、无声音（含通话/会议）</div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 铃声 -->
+      <div class="panel active" id="ringtone">
+        <div class="row">
+          <div class="lab">铃声总开关<small>设为「静音」后所有场景与联系人铃声均不播放（仍保留视觉提示）</small></div>
+          <div class="switch2"><button class="ring on" onclick="sw2(this,'ring')">🔔 响铃</button><button class="mute" onclick="sw2(this,'mute')">🔕 静音</button></div>
+        </div>
+
+        <div class="section-title">按场景设置</div>
+
+        <div class="scene">
+          <div class="scene-head">
+            <div class="ico audio"><svg viewBox="0 0 1024 1024"><path d="M196 149a96 96 0 0 1 140 5l74 65a96 96 0 0 1-4 131l-37 37a19 19 0 0 0-5 9 6 6 0 0 0 0 5c12 23 41 67 108 133 45 45 80 73 105 90a247 247 0 0 0 28 17l1 0a6 6 0 0 0 3 0 19 19 0 0 0 9-5l38-38a96 96 0 0 1 131-4l84 74a96 96 0 0 1 5 140l-39 39c-19 19-47 40-82 42-73 5-218-19-419-220C135 489 110 343 115 270c3-36 23-63 43-83l38-38z"/></svg></div>
+            <div class="scene-meta">
+              <div class="scene-name">语音通话</div>
+              <div class="scene-cur" id="cur-call_audio">当前：系统默认</div>
+            </div>
+            <div class="switch2"><button class="ring on" onclick="sw2(this,'ring')">🔔 响铃</button><button class="mute" onclick="sw2(this,'mute')">🔕 静音</button></div>
+          </div>
+          <div class="picker" data-cur="default" data-key="call_audio">
+            <div class="picker-trigger" onclick="togglePicker(this)">
+              <span class="picker-label">提示音</span>
+              <span class="picker-val">系统默认</span>
+              <span class="picker-chev">⌄</span>
+            </div>
+            <div class="picker-body"></div>
+          </div>
+        </div>
+
+        <div class="scene">
+          <div class="scene-head">
+            <div class="ico video"><svg viewBox="0 0 1024 1024"><path d="M982 159a5 5 0 0 1 8 4v273a5 5 0 0 1-8 4l-99-74v84a10 10 0 0 1-10 10H539a10 10 0 0 1-10-10V149a10 10 0 0 1 10-10h343a10 10 0 0 1 10 10v84l99-74zM633 981c-23 0-46-4-68-13a977 977 0 0 1-334-219 977 977 0 0 1-219-334c-27-69-10-148 43-201l100-100a64 64 0 0 1 97 8l123 173a63 63 0 0 1-7 82l-77 77a752 752 0 0 0 235 235l77-77a63 63 0 0 1 82-7l173 123a64 64 0 0 1 8 97l-100 100A189 189 0 0 1 633 981z"/></svg></div>
+            <div class="scene-meta">
+              <div class="scene-name">视频通话</div>
+              <div class="scene-cur" id="cur-call_video">当前：系统默认</div>
+            </div>
+            <div class="switch2"><button class="ring on" onclick="sw2(this,'ring')">🔔 响铃</button><button class="mute" onclick="sw2(this,'mute')">🔕 静音</button></div>
+          </div>
+          <div class="picker" data-cur="default" data-key="call_video">
+            <div class="picker-trigger" onclick="togglePicker(this)">
+              <span class="picker-label">提示音</span>
+              <span class="picker-val">系统默认</span>
+              <span class="picker-chev">⌄</span>
+            </div>
+            <div class="picker-body"></div>
+          </div>
+        </div>
+
+        <div class="scene">
+          <div class="scene-head">
+            <div class="ico meeting"><svg viewBox="0 0 1024 1024"><path d="M814 280c0-76-62-138-139-138H139C62 142 0 204 0 280v465c0 76 62 138 139 138h536c77 0 139-62 139-138a15 15 0 0 1 20-15l117 35A56 56 0 0 0 1024 711V311a56 56 0 0 0-72-54L832 293a14 14 0 0 1-18-13zM296 635v-241a56 56 0 0 1 86-48l190 121a56 56 0 0 1 0 95l-190 121a56 56 0 0 1-86-48z"/></svg></div>
+            <div class="scene-meta">
+              <div class="scene-name">视频会议</div>
+              <div class="scene-cur" id="cur-meeting">当前：会议铃音</div>
+            </div>
+            <div class="switch2"><button class="ring on" onclick="sw2(this,'ring')">🔔 响铃</button><button class="mute" onclick="sw2(this,'mute')">🔕 静音</button></div>
+          </div>
+          <div class="picker" data-cur="ringtone3.m4a" data-key="meeting">
+            <div class="picker-trigger" onclick="togglePicker(this)">
+              <span class="picker-label">提示音</span>
+              <span class="picker-val">会议铃音</span>
+              <span class="picker-chev">⌄</span>
+            </div>
+            <div class="picker-body"></div>
+          </div>
+        </div>
+
+        <div class="scene">
+          <div class="scene-head">
+            <div class="ico msg"><svg viewBox="0 0 1024 1024"><path d="M512 64C265 64 64 234 64 448c0 140 77 264 199 336 14 8 22 24 19 41l-10 58c-3 17 14 30 30 23 33-14 64-30 91-48 13-7 28-7 41-1 44 21 93 32 145 32 247 0 448-170 448-384S759 64 512 64z"/></svg></div>
+            <div class="scene-meta">
+              <div class="scene-name">消息通知</div>
+              <div class="scene-cur" id="cur-message">当前：消息提示音</div>
+            </div>
+            <div class="switch2"><button class="ring on" onclick="sw2(this,'ring')">🔔 响铃</button><button class="mute" onclick="sw2(this,'mute')">🔕 静音</button></div>
+          </div>
+          <div class="picker" data-cur="ringtone2.m4a" data-key="message">
+            <div class="picker-trigger" onclick="togglePicker(this)">
+              <span class="picker-label">提示音</span>
+              <span class="picker-val">消息提示音</span>
+              <span class="picker-chev">⌄</span>
+            </div>
+            <div class="picker-body"></div>
+          </div>
+        </div>
+        <div class="hint">每类场景内置 1~2 个默认铃声；上传的个性化铃声存于用户数据目录，并自动出现在「我的铃声（本地）」分组中，可重复选用。</div>
+      </div>
+
+      <!-- 消息 -->
+      <div class="panel" id="message">
+        <div class="row col">
+          <div class="lab">显示方式<small>选择通知中心卡片展示「消息文字」还是「仅未读数量」</small></div>
+          <div class="seg">
+            <button id="bContent" class="on" onclick="setDisplay(true)">显示内容</button>
+            <button id="bCount" onclick="setDisplay(false)">仅显示数量</button>
+          </div>
+          <div id="dispDesc" style="font-size:11px;color:var(--c-text-3)">卡片显示头像 + 名称 + 最新一条消息 + 未读数</div>
+        </div>
+        <div class="row col" style="border-bottom:none">
+          <div class="lab">消息提醒持续时长<small>通知中心空闲多久后自动收起（未读仍保留在托盘红点）</small></div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <input type="range" min="3" max="30" value="8" oninput="document.getElementById('durv').textContent=this.value+' 秒'">
+            <span id="durv" style="font-size:12px;color:var(--c-text-2);min-width:46px">8 秒</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 联系人专属设置（无弹窗 · 面板内联） -->
+      <div class="panel" id="contact">
+        <button class="btn primary" style="margin-bottom:12px" onclick="toggleAdd()">+ 添加联系人</button>
+        <div class="addinline" id="addInline">
+          <input type="text" id="addId" placeholder="用户 ID（如 u_2001）">
+          <input type="text" id="addName" placeholder="备注名称（可选）">
+          <button class="btn primary" onclick="doAdd()">添加</button>
+          <button class="btn ghost" onclick="toggleAdd()">取消</button>
+        </div>
+
+        <!-- 张总 -->
+        <div class="contact" data-name="张总">
+          <div class="top">
+            <div class="avatar">张</div>
+            <div class="meta">
+              <div class="nm">张总 <span class="badge2 msg" data-b="msg">消息·消息提示音</span><span class="badge2 voice" data-b="voice">语音·系统默认</span></div>
+              <div class="rt">为以下两类设置专属铃声（覆盖场景默认）</div>
+            </div>
+          </div>
+          <div class="cgrid">
+            <div class="gc">
+              <div class="gl">消息提醒</div>
+              <div class="picker" data-cur="ringtone2.m4a" data-type="msg" data-name="张总">
+                <div class="picker-trigger" onclick="togglePicker(this)">
+                  <span class="picker-label">提示音</span><span class="picker-val">消息提示音</span><span class="picker-chev">⌄</span>
+                </div><div class="picker-body"></div>
+              </div>
+            </div>
+            <div class="gc">
+              <div class="gl">语音提醒类</div>
+              <div class="picker" data-cur="default" data-type="voice" data-name="张总">
+                <div class="picker-trigger" onclick="togglePicker(this)">
+                  <span class="picker-label">提示音</span><span class="picker-val">系统默认</span><span class="picker-chev">⌄</span>
+                </div><div class="picker-body"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 李工 -->
+        <div class="contact" data-name="李工">
+          <div class="top">
+            <div class="avatar">李</div>
+            <div class="meta">
+              <div class="nm">李工 <span class="badge2 msg" data-b="msg">消息·系统默认</span><span class="badge2 voice" data-b="voice">语音·清脆叮咚</span></div>
+              <div class="rt">为以下两类设置专属铃声（覆盖场景默认）</div>
+            </div>
+          </div>
+          <div class="cgrid">
+            <div class="gc">
+              <div class="gl">消息提醒</div>
+              <div class="picker" data-cur="default" data-type="msg" data-name="李工">
+                <div class="picker-trigger" onclick="togglePicker(this)">
+                  <span class="picker-label">提示音</span><span class="picker-val">系统默认</span><span class="picker-chev">⌄</span>
+                </div><div class="picker-body"></div>
+              </div>
+            </div>
+            <div class="gc">
+              <div class="gl">语音提醒类</div>
+              <div class="picker" data-cur="ringtone4.m4a" data-type="voice" data-name="李工">
+                <div class="picker-trigger" onclick="togglePicker(this)">
+                  <span class="picker-label">提示音</span><span class="picker-val">清脆叮咚</span><span class="picker-chev">⌄</span>
+                </div><div class="picker-body"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="hint">专属铃声区分两类：<b>消息提醒</b>（聊天消息）与 <b>语音提醒类</b>（语音 / 视频 / 视频会议共用一种）。点击「提示音」展开列表选择，可逐条试听；上传的个性化铃声自动加入「我的铃声（本地）」候选。</div>
+      </div>
+
+      <!-- 关于 -->
+      <div class="panel" id="about">
+        <div class="row"><div class="lab">当前版本</div><div style="font-size:13px;color:var(--c-text-2)">v1.1.0</div></div>
+        <div class="row"><div class="lab">铃声存储</div><div style="font-size:12px;color:var(--c-text-3)">用户数据目录 / ringtones</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-tip" id="tt"></div>
+
+<script>
+// 铃声库（铃声页 & 联系人页共用）
+const LIB=[
+  {id:'default',name:'系统默认'},
+  {id:'ringtone.m4a',name:'经典铃声'},
+  {id:'ringtone2.m4a',name:'消息提示音'},
+  {id:'ringtone3.m4a',name:'会议铃音'},
+  {id:'ringtone4.m4a',name:'清脆叮咚'},
+];
+let LOCAL=['我的铃声1.mp3','我的铃声2.mp3']; // 本地候选（来自 userData/ringtones）
+let playingBtn=null;
+function friendly(id){
+  if(id==='default')return '系统默认';
+  const b=LIB.find(p=>p.id===id);
+  return b?b.name:id;
+}
+
+// tabs
+document.querySelectorAll('.nav-item').forEach(n=>{
+  n.onclick=()=>{
+    document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
+    n.classList.add('active');
+    document.getElementById(n.dataset.tab).classList.add('active');
+  };
+});
+// 通知模式
+function selMode(el){
+  document.querySelectorAll('.mode').forEach(x=>x.classList.remove('sel'));
+  el.classList.add('sel');
+  tip('通知模式：'+el.querySelector('.mn').textContent);
+}
+// 消息显示方式
+function setDisplay(show){
+  document.getElementById('bContent').classList.toggle('on',show);
+  document.getElementById('bCount').classList.toggle('on',!show);
+  document.getElementById('dispDesc').textContent = show
+    ? '卡片显示头像 + 名称 + 最新一条消息 + 未读数'
+    : '卡片仅显示头像 + 名称 + 未读数，不显示具体消息文字';
+}
+// 渲染选择器列表（按 默认 / 内置 / 我的铃声 分组）
+function rtBodyHTML(curId){
+  const groups=[
+    {label:'默认',items:[LIB[0]]},
+    {label:'内置铃声',items:LIB.slice(1)},
+    {label:'我的铃声（本地）',items:LOCAL.map(f=>({id:f,name:f}))},
+  ];
+  let h='';
+  groups.forEach(g=>{
+    if(!g.items.length) return;
+    h+=`<div class="rt-group">${g.label}</div>`;
+    g.items.forEach(it=>{
+      const sel=it.id===curId?' sel':'';
+      h+=`<div class="rt-opt${sel}" data-id="${it.id}" onclick="rtSelect(this)">
+        <span class="rt-name">${it.name}</span>
+        <button class="rt-play" onclick="rtPreview(event,'${it.id}')" title="试听">▶</button>
+        <span class="rt-check">✓</span>
+      </div>`;
+    });
+  });
+  h+=`<label class="rt-upload">⬆ 上传自定义铃声<input type="file" accept="audio/*" onchange="rtUpload(this)"></label>`;
+  return h;
+}
+// 展开 / 收起（同时只展开一个）
+function togglePicker(trigger){
+  const picker=trigger.closest('.picker');
+  const willOpen=!picker.classList.contains('open');
+  document.querySelectorAll('.picker.open').forEach(p=>p.classList.remove('open'));
+  if(willOpen){
+    picker.classList.add('open');
+    picker.querySelector('.picker-body').innerHTML=rtBodyHTML(picker.dataset.cur);
+  }
+}
+// 选择铃声
+function rtSelect(row){
+  const picker=row.closest('.picker');
+  const id=row.dataset.id;
+  picker.querySelectorAll('.rt-opt').forEach(o=>o.classList.remove('sel'));
+  row.classList.add('sel');
+  picker.dataset.cur=id;
+  const name=friendly(id);
+  picker.querySelector('.picker-val').textContent=name;
+  const cur=picker.closest('.scene')?.querySelector('.scene-cur');
+  if(cur) cur.textContent='当前：'+name;
+  const type=picker.dataset.type, cname=picker.dataset.name;
+  if(type&&cname){
+    const badge=picker.closest('.contact').querySelector('.badge2[data-b="'+type+'"]');
+    if(badge) badge.textContent=(type==='msg'?'消息·':'语音·')+name;
+  }
+  tip('已选择：'+name);
+}
+function rtSelectByValue(picker,id){
+  const row=picker.querySelector('.rt-opt[data-id="'+cssEsc(id)+'"]');
+  if(row) rtSelect(row);
+}
+// 试听（仅预览，不改变选择）
+function rtPreview(e,id){
+  e.stopPropagation();
+  const btn=e.currentTarget;
+  if(playingBtn&&playingBtn!==btn) playingBtn.classList.remove('playing');
+  btn.classList.add('playing'); playingBtn=btn;
+  tip('▶ 试听：'+friendly(id));
+  clearTimeout(btn._t);
+  btn._t=setTimeout(()=>{btn.classList.remove('playing');if(playingBtn===btn)playingBtn=null;},1500);
+}
+// 上传自定义铃声
+function rtUpload(input){
+  const f=input.files[0]; if(!f) return;
+  const picker=input.closest('.picker');
+  if(!LOCAL.includes(f.name)) LOCAL.push(f.name);
+  picker.querySelector('.picker-body').innerHTML=rtBodyHTML(picker.dataset.cur);
+  rtSelectByValue(picker,f.name);
+  tip('已上传并设为：'+f.name+'（存本地）');
+  input.value='';
+}
+function cssEsc(s){return (window.CSS&&CSS.escape)?CSS.escape(s):String(s).replace(/"/g,'\\"');}
+// 联系人专属设置（无弹窗 · 内联）
+function toggleAdd(){
+  const el=document.getElementById('addInline');
+  const show=el.style.display==='none'||!el.style.display;
+  el.style.display=show?'flex':'none';
+  if(show) document.getElementById('addId').focus();
+}
+function doAdd(){
+  const id=document.getElementById('addId').value.trim();
+  const nm=document.getElementById('addName').value.trim()||id||'新联系人';
+  if(!id && nm==='新联系人'){tip('请输入用户 ID');return;}
+  insertContact(nm, nm.charAt(0));
+  document.getElementById('addId').value='';document.getElementById('addName').value='';
+  toggleAdd();tip('已添加：'+nm);
+}
+function insertContact(name,initial){
+  const panel=document.getElementById('contact');
+  const wrap=document.createElement('div');
+  wrap.innerHTML=contactCardHTML(name,initial);
+  panel.insertBefore(wrap.firstElementChild, panel.querySelector('.hint'));
+}
+function pickerHTML(type,curId,name){
+  return `<div class="picker" data-cur="${curId}" data-type="${type}" data-name="${name}">
+    <div class="picker-trigger" onclick="togglePicker(this)"><span class="picker-label">提示音</span><span class="picker-val">${friendly(curId)}</span><span class="picker-chev">⌄</span></div>
+    <div class="picker-body"></div>
+  </div>`;
+}
+function contactCardHTML(name,initial){
+  return `<div class="contact" data-name="${name}">
+    <div class="top">
+      <div class="avatar">${initial}</div>
+      <div class="meta"><div class="nm">${name} <span class="badge2 msg" data-b="msg">消息·系统默认</span><span class="badge2 voice" data-b="voice">语音·系统默认</span></div>
+      <div class="rt">为以下两类设置专属铃声（覆盖场景默认）</div></div>
+    </div>
+    <div class="cgrid">
+      <div class="gc"><div class="gl">消息提醒</div>${pickerHTML('msg','default',name)}</div>
+      <div class="gc"><div class="gl">语音提醒类</div>${pickerHTML('voice','default',name)}</div>
+    </div>
+  </div>`;
+}
+// 静音 / 响铃 双态切换
+function sw2(btn,state){
+  const wrap=btn.closest('.switch2');
+  wrap.querySelectorAll('button').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  tip(state==='ring'?'🔔 响铃':'🔕 已静音');
+}
+// tip
+function tip(msg){
+  const t=document.getElementById('tt');t.textContent=msg;t.classList.add('show');
+  clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1600);
+}
+// 点击空白处收起已展开的选择器
+document.addEventListener('click',e=>{
+  if(!e.target.closest('.picker')){
+    document.querySelectorAll('.picker.open').forEach(p=>p.classList.remove('open'));
+  }
+});
+</script>
+</body>
+</html>

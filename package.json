@@ -28,6 +28,7 @@
     "files": [
       "main.js",
       "config.js",
+      "lib/**/*",
       "src/**/*",
       "assets/**/*",
       "package.json",

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>托盘菜单 · 已连接用户列表 · 设计稿</title>
+<style>
+:root{
+  --c-primary:#185FA5; --c-primary-50:#E6F1FB;
+  --c-text:#2C2C2A; --c-text-2:#5F5E5A; --c-text-3:#888780;
+  --c-line:#ECEAE4; --c-card:#FFFFFF;
+  --shadow:0 10px 34px rgba(0,0,0,.18);
+  --font:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC',system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font);background:linear-gradient(135deg,#c9d3df,#aeb9c7);min-height:100vh;overflow:hidden}
+/* desktop + tray */
+.desktop{position:fixed;inset:0}
+.taskbar{position:fixed;bottom:0;left:0;right:0;height:40px;background:rgba(30,32,38,.82);backdrop-filter:blur(8px);display:flex;align-items:center;padding:0 14px;gap:14px}
+.tray{margin-left:auto;width:30px;height:30px;border-radius:7px;background:#fff;display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer}
+.tray .badge{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;border-radius:8px;background:#E83F2B;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;padding:0 4px;font-weight:700}
+/* context menu */
+.menu{position:fixed;right:18px;bottom:52px;width:260px;background:var(--c-card);border-radius:12px;box-shadow:var(--shadow);padding:6px;overflow:hidden;animation:slideUp .2s ease}
+@keyframes slideUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.menu .mh{padding:10px 12px;font-size:13px;font-weight:700;color:var(--c-text);border-bottom:1px solid var(--c-line)}
+.menu .grp{padding:8px 12px 4px;font-size:11px;color:var(--c-text-3);display:flex;align-items:center;justify-content:space-between}
+.menu .grp .add{color:var(--c-primary);cursor:pointer;font-size:11px}
+.menu .item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;font-size:13px;color:var(--c-text);cursor:pointer}
+.menu .item:hover{background:var(--c-primary-50)}
+.menu .item .av{width:26px;height:26px;border-radius:50%;background:var(--c-primary-50);color:var(--c-primary);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;flex-shrink:0}
+.menu .item .st{margin-left:auto;font-size:11px}
+.menu .item .st.on{color:var(--c-success)}
+.menu .item .st.off{color:var(--c-text-3)}
+.menu .divider{height:1px;background:var(--c-line);margin:6px 4px}
+.menu .item .ic{width:18px;text-align:center;color:var(--c-text-2)}
+.menu .item .chk{margin-left:auto;color:var(--c-primary);font-weight:700}
+/* legend */
+.legend{position:fixed;left:18px;top:18px;background:#fff;border-radius:12px;padding:14px 16px;box-shadow:var(--shadow);width:300px;font-size:12px;color:var(--c-text-2);line-height:1.7}
+.legend b{color:var(--c-text)}
+.legend .k{display:inline-block;background:#F1EFE8;border-radius:5px;padding:1px 6px;font-size:11px;color:var(--c-text-2);margin:0 2px}
+</style>
+</head>
+<body>
+<div class="desktop"></div>
+
+<div class="legend">
+  <b>托盘右键菜单 · 已连接用户列表</b><br><br>
+  • 顶部展示< b>已连接网页的用户</b>（来自网页侧上报，含在线/离线状态）<br>
+  • 点击「+ 连接新用户」可演示新增项<br>
+  • 下方保留 <span class="k">⚙ 设置</span> <span class="k">✓ 开机启动</span> <span class="k">退出</span>
+</div>
+
+<!-- 右键托盘菜单 -->
+<div class="menu" id="menu">
+  <div class="mh">我的日志 · 通知助手</div>
+
+  <div class="grp">已连接用户 <span class="add" onclick="addUser()">+ 连接新用户</span></div>
+  <div class="item"><div class="av">张</div>张三<span class="st on">在线</span></div>
+  <div class="item"><div class="av">李</div>李四<span class="st on">在线</span></div>
+  <div class="item"><div class="av">王</div>王五<span class="st off">离线</span></div>
+  <div class="item" id="newUser" style="display:none"><div class="av">赵</div>赵六<span class="st on">在线</span></div>
+
+  <div class="divider"></div>
+  <div class="item"><span class="ic">⚙</span>设置</div>
+  <div class="item"><span class="ic">↻</span>开机启动<span class="chk">✓</span></div>
+  <div class="item"><span class="ic">⏻</span>退出</div>
+</div>
+
+<div class="taskbar">
+  <div class="tray">🔔<span class="badge">3</span></div>
+</div>
+
+<script>
+function addUser(){document.getElementById('newUser').style.display='flex';}
+</script>
+</body>
+</html>

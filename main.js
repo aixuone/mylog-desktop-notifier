@@ -1,13 +1,20 @@
 // main.js - Electron main process: tray + WS server + HTTP server + notification windows
 process.env.ELECTRON_NO_ATTACH_CONSOLE = '1'
 
-const { app, Tray, Menu, BrowserWindow, ipcMain, shell, nativeImage } = require('electron')
+const { app, Tray, Menu, BrowserWindow, ipcMain, shell, nativeImage, dialog } = require('electron')
 const path = require('path')
+const crypto = require('crypto')
 const { WebSocketServer } = require('ws')
 const http = require('http')
 const https = require('https')
 const fs = require('fs')
 const net = require('net')
+const zlib = require('zlib')
+
+// ─── Feature modules (M1+) ──────────────────────
+const settingsStore = require('./lib/settingsStore')
+const { createRingtoneResolver } = require('./lib/ringtoneResolver')
+const { createNotificationCenter } = require('./lib/notificationCenter')
 
 // ─── Single instance lock ──────────────────────────
 // Prevent multiple instances of the notifier from running,
@@ -39,6 +46,11 @@ let isQuitting = false
 let currentWsPort = config.wsPort
 let currentHttpPort = 0
 const version = config.version
+
+// ─── Feature module instances (assigned in whenReady) ──
+let ringtoneResolver = null
+let notificationCenter = null
+let settingsWindow = null      // 设置面板单例窗口
 // ─── Tray icon state management ───────────────────────────
 // States: 'default' (connected, normal) | 'gray' (disconnected) | 'ringing' (incoming call) | 'unread' (unread messages)
 let trayIconState = 'gray'    // Start gray (no connections yet)
@@ -62,6 +74,112 @@ function loadIconCache() {
   if (!iconCache.gray && iconCache.default) {
     iconCache.gray = iconCache.default
   }
+
+  // Generate transparent icon for "unread" blinking (toggles default ↔ transparent)
+  const TRANSPARENT_PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  const transBase = nativeImage.createFromBuffer(Buffer.from(TRANSPARENT_PNG_B64, 'base64'))
+  if (transBase && !transBase.isEmpty() && iconCache.default) {
+    const sz = iconCache.default.getSize()
+    if (sz.width > 0 && sz.height > 0) {
+      iconCache.transparent = transBase.resize({ width: sz.width, height: sz.height })
+    }
+  }
+  if (!iconCache.transparent) {
+    iconCache.transparent = transBase
+  }
+}
+
+// ─── 单色关机(电源)图标：零依赖手写 PNG 编码 ─────────────
+function crc32(buf) {
+  if (!crc32.t) {
+    crc32.t = []
+    for (let n = 0; n < 256; n++) {
+      let c = n
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1)
+      crc32.t[n] = c >>> 0
+    }
+  }
+  let crc = 0xFFFFFFFF
+  for (let i = 0; i < buf.length; i++) crc = (crc >>> 8) ^ crc32.t[(crc ^ buf[i]) & 0xFF]
+  return (crc ^ 0xFFFFFFFF) >>> 0
+}
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length, 0)
+  const t = Buffer.from(type, 'ascii')
+  const cd = Buffer.concat([t, data])
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(cd), 0)
+  return Buffer.concat([len, cd, crc])
+}
+function encodePNG(width, height, rgba) {
+  const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0
+  const stride = width * 4
+  const raw = Buffer.alloc((stride + 1) * height)
+  for (let y = 0; y < height; y++) {
+    raw[y * (stride + 1)] = 0
+    rgba.copy(raw, y * (stride + 1) + 1, y * stride, y * stride + stride)
+  }
+  const idat = zlib.deflateSync(raw)
+  return Buffer.concat([sig, pngChunk('IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', Buffer.alloc(0))])
+}
+// 绘制电源符号：开口圆环 + 顶部竖线，单色 (90,90,90) 透明底
+function makeShutdownIcon(size) {
+  size = size || 64
+  const s = size, cx = s / 2, cy = s / 2
+  const R = s * 0.33, w = Math.max(2, Math.round(s * 0.12))
+  const gap = (32 * Math.PI) / 180, ext = s * 0.16
+  const buf = Buffer.alloc(s * s * 4)
+  for (let y = 0; y < s; y++) {
+    for (let x = 0; x < s; x++) {
+      const i = (y * s + x) * 4
+      const dx = x - cx, dy = y - cy
+      const d = Math.sqrt(dx * dx + dy * dy)
+      let on = false
+      if (Math.abs(d - R) <= w / 2) {
+        let ang = Math.atan2(-dy, dx)            // 0=右, π/2=上
+        if (ang < 0) ang += 2 * Math.PI
+        let diff = Math.abs(ang - Math.PI / 2)
+        if (diff > Math.PI) diff = 2 * Math.PI - diff
+        if (diff > gap) on = true
+      }
+      if (!on && Math.abs(dx) <= w / 2 && y <= cy && y >= cy - (R + ext)) on = true
+      if (on) { buf[i] = 90; buf[i + 1] = 90; buf[i + 2] = 90; buf[i + 3] = 255 }
+      else buf[i + 3] = 0
+    }
+  }
+  return nativeImage.createFromBuffer(encodePNG(s, s, buf))
+}
+let SHUTDOWN_ICON = null
+function getShutdownIcon() {
+  if (!SHUTDOWN_ICON) {
+    try { SHUTDOWN_ICON = makeShutdownIcon(64).resize({ width: 16, height: 16 }) } catch (e) { SHUTDOWN_ICON = null }
+  }
+  return SHUTDOWN_ICON
+}
+
+// 头像落盘后：写入连接项 + userId 缓存 + 触发菜单重建
+function storeClientIcon(wsClient, iconPath) {
+  const entry = connectedClients.get(wsClient)
+  if (entry) {
+    entry.localIconPath = iconPath
+    connectedClients.set(wsClient, entry)
+    if (entry.userId) userIconCache.set(entry.userId, iconPath)
+    updateTrayMenu()
+    if (entry.userId === currentUser.userId) localUserIconPath = iconPath
+  }
+}
+
+// 防御性加载菜单图标：空图/损坏格式返回 null，绝不抛异常
+function loadMenuIcon(p) {
+  if (!p || !fs.existsSync(p)) return null
+  try {
+    const img = nativeImage.createFromPath(p)
+    if (img.isEmpty()) return null
+    const r = img.resize({ width: 18, height: 18 })
+    return (r && !r.isEmpty()) ? r : img
+  } catch (_) { return null }
 }
 
 /** Check if any client is currently connected via WebSocket */
@@ -69,12 +187,28 @@ function hasConnectedClients() {
   return Array.from(connectedClients.values()).some(u => u.connected)
 }
 
+/** Mark a WS client as offline and update tray icon to gray (if no clients left) */
+function markClientOffline(ws, reason) {
+  if (!ws || !connectedClients.has(ws)) return
+  const entry = connectedClients.get(ws)
+  entry.connected = false
+  entry.lastSeenAt = Date.now()
+  connectedClients.set(ws, entry)
+  updateTrayMenu()
+
+  // If no more connected clients and not ringing → switch to gray with reason in tooltip
+  if (!hasConnectedClients() && trayIconState !== 'ringing') {
+    setTrayState('gray')
+    tray?.setToolTip(`我的日志-通知助手 | ${reason}`)
+  }
+}
+
 /**
  * Set tray icon state with optional blinking.
  * - 'default':  solid default icon (no blink)
  * - 'gray':     solid gray icon (no blink)
  * - 'ringing':  blink between default ↔ gray (500ms)
- * - 'unread':   blink between unread ↔ default (500ms)
+ * - 'unread':   blink between default ↔ transparent (500ms)
  */
 function setTrayState(state) {
   if (!tray) return
@@ -108,11 +242,11 @@ function setTrayState(state) {
       break
 
     case 'unread':
-      // Alternate: unread (red dot) ↔ default
-      tray.setImage(trayIcon(iconCache.unread || iconCache.default))
+      // Alternate: default (color) ↔ transparent (blink effect)
+      tray.setImage(trayIcon(iconCache.default))
       blinkInterval = setInterval(() => {
         blinkPhase = !blinkPhase
-        tray.setImage(trayIcon(blinkPhase ? iconCache.default : (iconCache.unread || iconCache.default)))
+        tray.setImage(trayIcon(blinkPhase ? iconCache.transparent : iconCache.default))
       }, 500)
       break
 
@@ -149,6 +283,9 @@ function trayIcon(img) {
 // User info from browser - supports multiple users (keyed by ws client id)
 // connectedClients: Map<ws, { clientId, userId, userName, userIcon, browserType, connected, localIconPath, lastSeenAt }>
 let connectedClients = new Map()
+
+// 头像按 userId 缓存（与易失的 connectedClients 条目解耦，避免重连 reclaim 时丢失）
+const userIconCache = new Map()
 
 // ─── Stale entry cleanup config ────────────────────────────
 // Disconnected entries older than this will be removed from the tray
@@ -190,9 +327,7 @@ const recentToasts = new Map()
 const DEDUP_CALL_WINDOW_MS = config.deduplication.callWindowMs
 const DEDUP_TOAST_WINDOW_MS = config.deduplication.toastWindowMs
 
-// Toast queue: ensure messages display one by one
-const toastQueue = []
-let isToastShowing = false
+// 消息通知已统一走通知中心（notificationCenter），不再使用逐条重建的 toast 窗口
 
 // Check if acrylic material is supported (Win10 1803+)
 function supportsAcrylic() {
@@ -230,6 +365,27 @@ function makePopupWindowOpts(w, h) {
     hasShadow: false,
     webPreferences: makeWebPrefs(),
   }
+}
+
+// ─── Notification center window rect (bottom-right) ──
+function getNcRect(w, h) {
+  const { screen } = require('electron')
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  const margin = 20
+  return { x: sw - w - margin, y: sh - h - margin }
+}
+
+// ─── Broadcast helper (main → all web clients) ──
+function broadcast(msg) {
+  if (!wsServer) return
+  const raw = JSON.stringify(msg)
+  wsServer.clients.forEach((c) => { if (c.readyState === 1) c.send(raw) })
+}
+
+// ─── Safe open external ──
+function safeOpenExternal(url) {
+  if (!url) return
+  try { shell.openExternal(url) } catch (e) { console.warn('[Open] failed:', e && e.message) }
 }
 
 // ─── Port finder ──────────────────────────────────────────
@@ -396,90 +552,76 @@ function stopStaleCleanup() {
   }
 }
 
+// ─── Tray custom menu (HTML popup) ───────────────
+// 用无边框 BrowserWindow 渲染玻璃卡片菜单，替代原生 Menu.buildFromTemplate，
+// 托盘右键菜单：原生 Menu.buildFromTemplate（清晰、可控、与系统风格一致）。
+// 规则：除「开机自启」(checkbox 自带对勾) 与「退出」(左侧退出图标) 外，其余项不显示图标。
 function updateTrayMenu() {
   if (!tray) return
 
   const menuItems = []
 
-  // ── Multi-user section ──────────────────────────────────
-  // Only show connected users
+  // ── Header（第一行标题 + 版本号） ──
+  menuItems.push({ label: `我的日志（v${version}）`, enabled: false })
+  menuItems.push({ type: 'separator' })
+
+  // ── Connected users（显示头像 + 在线状态标识） ──
+  // 仅在线用户项带图标（头像），其余菜单项（设置/版本等）不显示图标，符合统一风格。
   const connectedUsers = Array.from(connectedClients.values()).filter(u => u.connected)
   if (connectedUsers.length > 0) {
+    menuItems.push({ label: `在线用户 (${connectedUsers.length})`, enabled: false })
     connectedUsers.forEach((u) => {
       const displayName = u.userName || u.userId || '未知用户'
-      menuItems.push({
-        label: `${displayName} 🟢`,  // Added spaces for better width
+      const item = {
+        label: `  🟢 ${displayName}`,
         enabled: false,
-        // Use local icon path if available, resize to 16x16
-        ...(u.localIconPath && fs.existsSync(u.localIconPath)
-          ? { icon: nativeImage.createFromPath(u.localIconPath).resize({ width: 20, height: 20 }) }
-          : {})
-      })
+      }
+      // 头像：优先 userId 缓存（抗重连抖动），其次连接项 localIconPath，再次主用户 legacy 路径
+      const iconPath = (u.userId && userIconCache.get(u.userId)) || u.localIconPath ||
+        (u.userId === currentUser.userId ? localUserIconPath : '')
+      const ic = loadMenuIcon(iconPath)
+      if (ic) item.icon = ic
+      menuItems.push(item)
     })
     menuItems.push({ type: 'separator' })
   } else if (currentUser.userName) {
-    // Fallback: legacy single user display
-    menuItems.push({
-      label: `  ${currentUser.userName}`,  // Added spaces for better width
-      enabled: false
-    })
+    const item = { label: `  ⚪ ${currentUser.userName}（离线）`, enabled: false }
+    const ic = loadMenuIcon(localUserIconPath)
+    if (ic) item.icon = ic
+    menuItems.push(item)
     menuItems.push({ type: 'separator' })
   }
-  // ── End multi-user section ──────────────────────────────
 
+  // ── Actions ──
+  menuItems.push({ label: '设置', click: () => openSettingsWindow() })
   menuItems.push({
     label: '开机自启',
     type: 'checkbox',
     checked: app.getLoginItemSettings().openAtLogin,
     click: (item) => {
       app.setLoginItemSettings({ openAtLogin: item.checked })
+      settingsStore.set({ autoStart: item.checked })
+      updateTrayMenu()
     },
   })
   menuItems.push({ type: 'separator' })
-  menuItems.push({ label: `当前版本：${version}`, enabled: false })
+
+  // ── Exit（左侧单色关机图标，与「开机自启」对勾左列对齐） ──
   menuItems.push({ type: 'separator' })
-  menuItems.push({
-    label: '退出',
-    click: () => {
-      isQuitting = true
-      stopStaleCleanup()
-      if (blinkInterval) { clearInterval(blinkInterval); blinkInterval = null }
-
-      // Force-close all WebSocket connections immediately
-      if (wsServer) {
-        wsServer.clients.forEach(client => client.close())
-        wsServer.close()
-        wsServer = null
-      }
-      // Force-close HTTP server immediately
-      if (httpServer) {
-        httpServer.close()
-        httpServer = null
-      }
-
-      // Destroy all BrowserWindow instances (hidden windows still hold process)
-      if (callWindow && !callWindow.isDestroyed()) { callWindow.destroy(); callWindow = null }
-      if (meetingWindow && !meetingWindow.isDestroyed()) { meetingWindow.destroy(); meetingWindow = null }
-      if (toastWindow && !toastWindow.isDestroyed()) { toastWindow.destroy(); toastWindow = null }
-
-      // Destroy tray
-      if (tray) { tray.destroy(); tray = null }
-
-      // Hard quit: app.quit() requests exit, process.exit(0) guarantees it
-      app.quit()
-      process.exit(0)
-    },
-  })
+  const exitItem = { label: '退出', click: () => { isQuitting = true; quitApp() } }
+  const si = getShutdownIcon()
+  if (si) exitItem.icon = si
+  menuItems.push(exitItem)
 
   const contextMenu = Menu.buildFromTemplate(menuItems)
   tray.setContextMenu(contextMenu)
 
-  // Tooltip: show online count
+  // Tooltip：显示在线数量
   const onlineCount = connectedUsers.length
   if (onlineCount > 0) {
     tray.setToolTip(`我的日志-通知助手 | ${onlineCount} 个用户在线`)
   } else {
-    tray.setToolTip(currentUser.userName || '我的日志-通知助手')
+    tray.setToolTip(currentUser.userName ? `${currentUser.userName} - 我的日志通知助手` : '我的日志-通知助手')
   }
 }
 
@@ -585,6 +727,23 @@ function setUserInfo(userData, wsClient) {
 /** Download icon for a specific ws client and store in its entry */
 function downloadUserIconForClient(wsClient, iconUrl) {
   if (!iconUrl || typeof iconUrl !== 'string') return
+
+  // data: URL（base64 内联头像）直接解码落盘，无需网络请求
+  if (iconUrl.startsWith('data:image')) {
+    const m = /^data:image\/(png|jpeg|jpg|webp|gif);base64,(.*)$/i.exec(iconUrl)
+    if (m) {
+      const ext = (m[1] === 'jpeg') ? 'jpg' : m[1]
+      const iconDir = path.join(app.getPath('userData'), 'icons')
+      if (!fs.existsSync(iconDir)) fs.mkdirSync(iconDir, { recursive: true })
+      const iconPath = path.join(iconDir, `user-icon-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`)
+      fs.writeFile(iconPath, Buffer.from(m[2], 'base64'), (err) => {
+        if (err) { console.error('[Icon] dataURL save failed:', err); return }
+        storeClientIcon(wsClient, iconPath)
+      })
+      return
+    }
+  }
+
   if (!iconUrl.startsWith('http://') && !iconUrl.startsWith('https://')) return
 
   const client = iconUrl.startsWith('https://') ? https : http
@@ -619,13 +778,7 @@ function downloadUserIconForClient(wsClient, iconUrl) {
         console.log('[Icon] Saved to:', iconPath)
         const entry = connectedClients.get(wsClient)
         if (entry) {
-          entry.localIconPath = iconPath
-          connectedClients.set(wsClient, entry)
-          updateTrayMenu()
-          // Also update legacy path for primary user
-          if (entry.userId === currentUser.userId) {
-            localUserIconPath = iconPath
-          }
+          storeClientIcon(wsClient, iconPath)
         }
       })
     })
@@ -756,6 +909,28 @@ app.whenReady().then(() => {
 
     currentWsPort = wsPort
     createTray()
+
+    // ── Feature init (M1+) ──────────────────────
+    settingsStore.load()
+    ringtoneResolver = createRingtoneResolver({
+      settingsStore,
+      assetsDir: __dirname,                       // assets/ 位于项目根
+      userDataDir: settingsStore.getRingtoneDir(),
+      presets: config.ringtonePresets,
+    })
+    notificationCenter = createNotificationCenter({
+      BrowserWindow,
+      webPreferences: makeWebPrefs(),
+      getWindowRect: getNcRect,
+      settingsStore,
+      ringtoneResolver,
+      onUnreadChange: updateUnreadCount,
+      openExternal: safeOpenExternal,
+      broadcast,
+    })
+    notificationCenter.preCreate()
+    // ─────────────────────────────────────────────
+
     startHttpServer((err) => {
       if (err) {
         console.error('[HTTP] Failed to start HTTP server:', err)
@@ -792,6 +967,7 @@ app.on('before-quit', () => {
   if (callWindow && !callWindow.isDestroyed()) { callWindow.destroy(); callWindow = null }
   if (meetingWindow && !meetingWindow.isDestroyed()) { meetingWindow.destroy(); meetingWindow = null }
   if (toastWindow && !toastWindow.isDestroyed()) { toastWindow.destroy(); toastWindow = null }
+  if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.destroy(); settingsWindow = null }
 })
 
 // ─── System tray ──────────────────────────────────────────
@@ -805,7 +981,7 @@ function createTray() {
   updateTrayMenu()
 
   tray.on('click', () => {
-    // Click clears unread → back to connected/disconnected state
+    // Left click clears unread → back to connected/disconnected state
     updateUnreadCount(0)
     if (trayIconState !== 'ringing') {
       setTrayState(deriveTrayState())
@@ -931,11 +1107,34 @@ function handleBrowserMessage(ws, msg) {
         console.log('[Dedup] Skip duplicate toast')
         return
       }
-      showToast(msg.payload)
+      if (notificationCenter) notificationCenter.pushMessage(msg.payload || {})
+      break
+
+    case 'SYNC_CONTACTS':
+      if (notificationCenter && Array.isArray(msg.payload?.contacts)) {
+        notificationCenter.syncContacts(msg.payload.contacts)
+        console.log('[WS] Synced contacts:', msg.payload.contacts.length)
+      }
+      break
+
+    // 网页端实时下发的权威未读状态（IM SDK 真实未读数），桌面端以此为准重建聚合
+    case 'SYNC_UNREAD':
+      if (notificationCenter && Array.isArray(msg.payload?.items)) {
+        notificationCenter.syncUnread(msg.payload.items)
+        console.log('[WS] Synced unread from web:', msg.payload.items.length, 'items')
+      }
       break
 
     case 'UPDATE_UNREAD_COUNT':
       updateUnreadCount(msg.payload?.count || 0)
+      break
+
+    // 网页端已读同步：payload = { conversationId? } 或 {} 表示全部已读
+    case 'MARK_READ':
+      if (notificationCenter) {
+        notificationCenter.markRead(msg.payload?.conversationId || 'all')
+        console.log('[WS] Mark read from web:', msg.payload?.conversationId || 'all')
+      }
       break
 
     case 'CALL_CONNECTED':
@@ -947,6 +1146,59 @@ function handleBrowserMessage(ws, msg) {
 
     case 'PING':
       ws.send(JSON.stringify({ type: 'PONG', timestamp: Date.now() }))
+      break
+
+    // ── Connection state messages (from web) ─────────────
+    case 'KICKED':
+      console.log('[WS] User kicked offline')
+      markClientOffline(ws, '被踢下线')
+      if (notificationCenter) {
+        const rp = ringtoneResolver ? ringtoneResolver.resolve('message', null) : null
+        notificationCenter.pushSysAlert({
+          id: 'kick',
+          type: 'kick',
+          sticky: true,
+          time: Date.now(),
+          data: {
+            reason: msg.payload?.reason || '',
+            device: msg.payload?.device || '',
+            time: msg.payload?.time || Date.now(),
+          },
+          ringtonePath: rp,
+        })
+      }
+      break
+
+    case 'NET_OFFLINE':
+      console.log('[WS] Network offline reported by web')
+      markClientOffline(ws, '网络离线')
+      if (notificationCenter) {
+        notificationCenter.pushSysAlert({
+          id: 'offline',
+          type: 'offline',
+          sticky: true,
+          time: Date.now(),
+          data: { time: msg.payload?.time || Date.now() },
+          ringtonePath: null,   // 离线条提示，默认无声
+        })
+      }
+      break
+
+    case 'NET_ONLINE':
+      console.log('[WS] Network online reported by web')
+      if (ws && connectedClients.has(ws)) {
+        const entry = connectedClients.get(ws)
+        entry.connected = true
+        entry.lastSeenAt = Date.now()
+        connectedClients.set(ws, entry)
+        updateTrayMenu()
+        setTrayState('default')
+      }
+      if (notificationCenter) {
+        notificationCenter.dismissSysAlert('offline')
+        // 重连上线后，被踢常驻提醒也随之消除（符合「直到重连上线或手动关闭」）
+        notificationCenter.dismissSysAlert('kick')
+      }
       break
 
     default:
@@ -1004,7 +1256,7 @@ function preCreateCallWindow() {
   // Preload ringtone as soon as page is ready — eliminates ~5s audio decode delay on call arrival
   callWindow.webContents.once('did-finish-load', () => {
     callWindow.webContents.send('preload-ringtone', {
-      ringtonePath: getRingtonePath(),
+      ringtonePath: (ringtoneResolver ? ringtoneResolver.resolve('audio', null) : null) || getRingtonePath(),
       ringtoneConfig: config.ringtone,
     })
   })
@@ -1028,9 +1280,14 @@ function showCallWindow(payload, ws) {
   callWindow.focus()
 
   function sendCallPayload() {
+    var rp = ringtoneResolver
+      ? ringtoneResolver.resolve(payload.callType || 'audio', payload.callerId)
+      : null
+    // 兜底：resolver 可能因设置状态返回 null（如勿扰模式），仍需保证有铃声
+    if (!rp) rp = getRingtonePath()
     callWindow.webContents.send('call-data', {
       ...payload,
-      ringtonePath: getRingtonePath(),
+      ringtonePath: rp,
       ringtoneConfig: config.ringtone,
     })
   }
@@ -1088,7 +1345,7 @@ function preCreateMeetingWindow() {
   // Preload ringtone as soon as page is ready — eliminates ~5s audio decode delay on call arrival
   meetingWindow.webContents.once('did-finish-load', () => {
     meetingWindow.webContents.send('preload-ringtone', {
-      ringtonePath: getRingtonePath(),
+      ringtonePath: (ringtoneResolver ? ringtoneResolver.resolve('meeting', null) : null) || getRingtonePath(),
       ringtoneConfig: config.ringtone,
     })
   })
@@ -1112,9 +1369,13 @@ function showMeetingWindow(payload, ws) {
   meetingWindow.focus()
 
   function sendMeetingPayload() {
+    var rp = ringtoneResolver
+      ? ringtoneResolver.resolve('meeting', payload.callerId)
+      : null
+    if (!rp) rp = getRingtonePath()
     meetingWindow.webContents.send('meeting-data', {
       ...payload,
-      ringtonePath: getRingtonePath(),
+      ringtonePath: rp,
       ringtoneConfig: config.ringtone,
     })
   }
@@ -1157,79 +1418,9 @@ function closeMeetingWindow() {
   }
 }
 
-// ─── Message toast (bottom right, WeChat-style) ──────
-function showToast(payload) {
-  // If a toast is currently showing, queue this message
-  if (isToastShowing) {
-    toastQueue.push(payload)
-    console.log('[Toast] Queued message, queue length:', toastQueue.length)
-    return
-  }
-
-  displayToast(payload)
-}
-
-function displayToast(payload) {
-  isToastShowing = true
-
-  if (toastWindow) {
-    try { toastWindow.close() } catch (e) {}
-    toastWindow = null
-  }
-
-  const { screen } = require('electron')
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const { width: sw, height: sh } = primaryDisplay.workAreaSize
-  const w = config.toastWindow.width
-  const h = config.toastWindow.height
-  const margin = config.toastWindow.margin
-  const x = sw - w - margin
-  const y = sh - h - margin
-
-  toastWindow = new BrowserWindow({
-    width: w,
-    height: h,
-    x,
-    y,
-    frame: false,
-    ...(supportsAcrylic()
-      ? { backgroundMaterial: 'acrylic' }
-      : { backgroundColor: '#FFFFFF', transparent: false }),
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: false,
-    focusable: false,
-    hasShadow: false,
-    webPreferences: makeWebPrefs(),
-  })
-
-  toastWindow.setAlwaysOnTop(true, 'normal')
-  toastWindow.loadFile(path.join(__dirname, 'src', 'toast-window.html'))
-
-  toastWindow.webContents.once('did-finish-load', () => {
-    toastWindow.webContents.send('toast-data', payload)
-  })
-
-  // Handle window close event to show next message in queue
-  toastWindow.on('closed', () => {
-    toastWindow = null
-    isToastShowing = false
-
-    // Check if there are more messages in the queue
-    if (toastQueue.length > 0) {
-      const nextPayload = toastQueue.shift()
-      console.log('[Toast] Showing next message from queue, remaining:', toastQueue.length)
-      // Use setImmediate to ensure proper cleanup before showing next
-      setImmediate(() => displayToast(nextPayload))
-    }
-  })
-
-  setTimeout(() => {
-    if (toastWindow && !toastWindow.isDestroyed()) {
-      try { toastWindow.close() } catch (e) {}
-    }
-  }, config.timeout.toast)
-}
+// ─── Message toast (legacy) ─────────────────────────
+// 已被通知中心（notificationCenter）取代：SHOW_MESSAGE_NOTIFICATION → notificationCenter.pushMessage
+// 保留 toastWindow 变量仅用于退出清理（恒为 null）。
 
 // ─── IPC handlers ─────────────────────────────────────
 ipcMain.on('call-action', (event, action) => {
@@ -1268,13 +1459,130 @@ ipcMain.on('meeting-action', (event, action) => {
   closeMeetingWindow()
 })
 
-ipcMain.on('close-toast', () => {
-  if (toastWindow) {
-    try {
-      if (!toastWindow.isDestroyed()) toastWindow.destroy()
-    } catch (e) {
-      try { toastWindow.close() } catch (_) {}
-    }
-    toastWindow = null
+ipcMain.on('open-browser', (event, url) => {
+  safeOpenExternal(url)
+})
+
+// ─── Settings window IPC ──────────────────────────
+ipcMain.handle('settings-load', () => {
+  const s = settingsStore.getMerged()
+  const urls = {}
+  const allRels = ['assets/ringtone.m4a'].concat(config.ringtonePresets.builtin || [], s.localRingtones || [])
+  allRels.forEach((r) => {
+    const u = ringtoneResolver ? ringtoneResolver.toFile(r) : null
+    if (u) urls[r] = u
+  })
+  return {
+    settings: s,
+    version: version,
+    presets: config.ringtonePresets,
+    names: config.ringtoneNames,
+    builtin: config.ringtonePresets.builtin || [],
+    localRingtones: s.localRingtones || [],
+    contacts: settingsStore.loadContacts(),
+    ringtoneDir: settingsStore.getRingtoneDir(),
+    urls,
   }
 })
+
+ipcMain.on('settings-save', (event, partial) => {
+  if (!partial || typeof partial !== 'object') return
+  settingsStore.set(partial)
+  if (notificationCenter) notificationCenter.notifySettingsChanged()
+})
+
+// 删除指定联系人的专属铃声设置（真正移除 key，避免 deepMerge 把删除的 key 保留下来）
+ipcMain.on('settings-remove-contact', (event, cid) => {
+  if (!cid) return
+  settingsStore.removeContactRingtone(cid)
+  if (notificationCenter) notificationCenter.notifySettingsChanged()
+})
+
+ipcMain.handle('pick-ringtone', async () => {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: '选择铃声文件',
+      properties: ['openFile'],
+      filters: [{ name: '音频', extensions: ['mp3', 'm4a', 'wav', 'ogg', 'flac'] }],
+    })
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) return null
+    const src = result.filePaths[0]
+    const ext = (path.extname(src).toLowerCase().replace(/^\./, '') || 'mp3')
+    const stat = fs.statSync(src)
+    const hash = crypto.createHash('sha1').update(src + stat.size + Date.now()).digest('hex').slice(0, 16)
+    const dir = settingsStore.getRingtoneDir()
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    const rel = `ringtones/${hash}.${ext}`
+    fs.copyFileSync(src, path.join(dir, `${hash}.${ext}`))   // 主进程直接 copy，不限大小
+    settingsStore.addLocalRingtone(rel)
+    return { path: rel, name: path.basename(src) }
+  } catch (e) {
+    console.error('[Ringtone] pick failed:', e && e.message)
+    return null
+  }
+})
+
+ipcMain.on('set-auto-start', (event, value) => {
+  const v = !!value
+  app.setLoginItemSettings({ openAtLogin: v })
+  settingsStore.set({ autoStart: v })
+  updateTrayMenu()
+})
+
+// ─── Settings window singleton ────────────────────
+function openSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isVisible()) settingsWindow.focus()
+    else settingsWindow.show()
+    return
+  }
+  const { screen } = require('electron')
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  settingsWindow = new BrowserWindow({
+    width: 720,
+    height: 560,
+    show: true,
+    frame: true,
+    autoHideMenuBar: true,
+    center: true,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
+    webPreferences: makeWebPrefs(),
+  })
+  settingsWindow.loadFile(path.join(__dirname, 'src', 'settings-window.html'))
+  settingsWindow.on('closed', () => { settingsWindow = null })
+}
+
+// 真正退出应用（被托盘菜单「退出」与潜在其他入口复用）
+function quitApp() {
+  isQuitting = true
+  stopStaleCleanup()
+  if (blinkInterval) { clearInterval(blinkInterval); blinkInterval = null }
+
+  // Force-close all WebSocket connections immediately
+  if (wsServer) {
+    wsServer.clients.forEach(client => client.close())
+    wsServer.close()
+    wsServer = null
+  }
+  // Force-close HTTP server immediately
+  if (httpServer) {
+    httpServer.close()
+    httpServer = null
+  }
+
+  // Destroy all BrowserWindow instances (hidden windows still hold process)
+  if (callWindow && !callWindow.isDestroyed()) { callWindow.destroy(); callWindow = null }
+  if (meetingWindow && !meetingWindow.isDestroyed()) { meetingWindow.destroy(); meetingWindow = null }
+  if (toastWindow && !toastWindow.isDestroyed()) { toastWindow.destroy(); toastWindow = null }
+  if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.destroy(); settingsWindow = null }
+
+  // Destroy tray
+  if (tray) { tray.destroy(); tray = null }
+
+  // Hard quit: app.quit() requests exit, process.exit(0) guarantees it
+  app.quit()
+  process.exit(0)
+}
