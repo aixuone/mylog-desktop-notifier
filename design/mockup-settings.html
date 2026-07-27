@@ -425,7 +425,7 @@ function rtBodyHTML(curId){
       </div>`;
     });
   });
-  h+=`<label class="rt-upload">⬆ 上传自定义铃声<input type="file" accept="audio/*" onchange="rtUpload(this)"></label>`;
+  h=`<label class="rt-upload">⬆ 上传自定义铃声<input type="file" accept="audio/*" onchange="rtUpload(this)"></label>` + h;
   return h;
 }
 // 展开 / 收起（同时只展开一个）

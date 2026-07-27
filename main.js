@@ -56,6 +56,7 @@ let settingsWindow = null      // 设置面板单例窗口
 let trayIconState = 'gray'    // Start gray (no connections yet)
 let blinkInterval = null      // setInterval reference for blinking
 let blinkPhase = false        // true = showing alternate icon, false = showing primary icon
+let isRinging = false         // 来电/会议响铃瞬态：结束后必须显式清除，否则 deriveTrayState 会一直返回 ringing
 
 // Pre-loaded nativeImage cache for tray icons (avoids disk I/O on every blink)
 const iconCache = {}
@@ -197,7 +198,7 @@ function markClientOffline(ws, reason) {
   updateTrayMenu()
 
   // If no more connected clients and not ringing → switch to gray with reason in tooltip
-  if (!hasConnectedClients() && trayIconState !== 'ringing') {
+  if (!hasConnectedClients() && !isRinging) {
     setTrayState('gray')
     tray?.setToolTip(`我的日志-通知助手 | ${reason}`)
   }
@@ -222,6 +223,7 @@ function setTrayState(state) {
 
   const prevState = trayIconState
   trayIconState = state
+  isRinging = (state === 'ringing')
 
   switch (state) {
     case 'default':
@@ -233,11 +235,11 @@ function setTrayState(state) {
       break
 
     case 'ringing':
-      // Alternate: default (color) ↔ gray
+      // Alternate: default (color) ↔ transparent (明亮帧有色，暗帧完全透明，闪烁更醒目)
       tray.setImage(trayIcon(iconCache.default))
       blinkInterval = setInterval(() => {
         blinkPhase = !blinkPhase
-        tray.setImage(trayIcon(blinkPhase ? (iconCache.gray || iconCache.default) : iconCache.default))
+        tray.setImage(trayIcon(blinkPhase ? iconCache.transparent : iconCache.default))
       }, 500)
       break
 
@@ -260,10 +262,16 @@ function setTrayState(state) {
   }
 }
 
+/** 来电/会议提醒结束后，显式清除响铃瞬态并恢复真实图标状态 */
+function endRingingState() {
+  isRinging = false
+  setTrayState(deriveTrayState())
+}
+
 /** Derive the correct icon state based on current conditions */
 function deriveTrayState() {
   // Priority: ringing > unread > default/gray
-  if (trayIconState === 'ringing') return 'ringing'  // Don't auto-override ringing
+  if (isRinging) return 'ringing'  // Don't auto-override ringing
   if (unreadCount > 0) return 'unread'
   return hasConnectedClients() ? 'default' : 'gray'
 }
@@ -552,6 +560,22 @@ function stopStaleCleanup() {
   }
 }
 
+// ─── 当前在线用户数据（供设置面板「通用」页与托盘菜单同步展示） ───
+function getTrayUsersData() {
+  const connectedUsers = Array.from(connectedClients.values()).filter(u => u.connected)
+  if (connectedUsers.length > 0) {
+    return connectedUsers.map((u) => ({
+      name: u.userName || u.userId || '未知用户',
+      iconPath: (u.userId && userIconCache.get(u.userId)) || u.localIconPath ||
+        (u.userId === currentUser.userId ? localUserIconPath : ''),
+      online: true,
+    }))
+  } else if (currentUser.userName) {
+    return [{ name: currentUser.userName, iconPath: localUserIconPath, online: false }]
+  }
+  return []
+}
+
 // ─── Tray custom menu (HTML popup) ───────────────
 // 用无边框 BrowserWindow 渲染玻璃卡片菜单，替代原生 Menu.buildFromTemplate，
 // 托盘右键菜单：原生 Menu.buildFromTemplate（清晰、可控、与系统风格一致）。
@@ -573,7 +597,7 @@ function updateTrayMenu() {
     connectedUsers.forEach((u) => {
       const displayName = u.userName || u.userId || '未知用户'
       const item = {
-        label: `  🟢 ${displayName}`,
+        label: `${displayName} 🟢`,
         enabled: false,
       }
       // 头像：优先 userId 缓存（抗重连抖动），其次连接项 localIconPath，再次主用户 legacy 路径
@@ -585,7 +609,7 @@ function updateTrayMenu() {
     })
     menuItems.push({ type: 'separator' })
   } else if (currentUser.userName) {
-    const item = { label: `  ⚪ ${currentUser.userName}（离线）`, enabled: false }
+    const item = { label: `${currentUser.userName} ⚪（离线）`, enabled: false }
     const ic = loadMenuIcon(localUserIconPath)
     if (ic) item.icon = ic
     menuItems.push(item)
@@ -615,6 +639,11 @@ function updateTrayMenu() {
 
   const contextMenu = Menu.buildFromTemplate(menuItems)
   tray.setContextMenu(contextMenu)
+
+  // 实时同步在线用户列表给设置面板「通用」页（与托盘菜单展示完全一致）
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.webContents.send('tray-users-update', getTrayUsersData())
+  }
 
   // Tooltip：显示在线数量
   const onlineCount = connectedUsers.length
@@ -981,11 +1010,8 @@ function createTray() {
   updateTrayMenu()
 
   tray.on('click', () => {
-    // Left click clears unread → back to connected/disconnected state
-    updateUnreadCount(0)
-    if (trayIconState !== 'ringing') {
-      setTrayState(deriveTrayState())
-    }
+    // 左键点击 → 打开设置面板
+    openSettingsWindow()
   })
 }
 
@@ -1301,7 +1327,7 @@ function showCallWindow(payload, ws) {
   const timer = setTimeout(() => {
     if (callWindow && !callWindow.isDestroyed() && callWindow.isVisible()) {
       closeCallWindow()
-      setTrayState(deriveTrayState())
+      endRingingState()
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({
           type: 'USER_ACTION',
@@ -1390,7 +1416,7 @@ function showMeetingWindow(payload, ws) {
   const timer = setTimeout(() => {
     if (meetingWindow && !meetingWindow.isDestroyed() && meetingWindow.isVisible()) {
       closeMeetingWindow()
-      setTrayState(deriveTrayState())
+      endRingingState()
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({
           type: 'USER_ACTION',
@@ -1437,8 +1463,8 @@ ipcMain.on('call-action', (event, action) => {
       }
     })
   }
-  setTrayState(deriveTrayState())
   closeCallWindow()
+  endRingingState()
 })
 
 ipcMain.on('meeting-action', (event, action) => {
@@ -1455,8 +1481,8 @@ ipcMain.on('meeting-action', (event, action) => {
       }
     })
   }
-  setTrayState(deriveTrayState())
   closeMeetingWindow()
+  endRingingState()
 })
 
 ipcMain.on('open-browser', (event, url) => {
@@ -1529,6 +1555,9 @@ ipcMain.on('set-auto-start', (event, value) => {
   updateTrayMenu()
 })
 
+// 设置面板「通用」页拉取当前在线用户列表（与托盘菜单一致）
+ipcMain.handle('tray-users-get', () => getTrayUsersData())
+
 // ─── Settings window singleton ────────────────────
 function openSettingsWindow() {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -1552,6 +1581,11 @@ function openSettingsWindow() {
     webPreferences: makeWebPrefs(),
   })
   settingsWindow.loadFile(path.join(__dirname, 'src', 'settings-window.html'))
+  settingsWindow.webContents.once('did-finish-load', () => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send('tray-users-update', getTrayUsersData())
+    }
+  })
   settingsWindow.on('closed', () => { settingsWindow = null })
 }
 

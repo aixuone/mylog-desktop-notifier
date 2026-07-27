@@ -77,6 +77,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pickRingtone: () => ipcRenderer.invoke('pick-ringtone'),
   /** 设置开机启动 */
   setAutoStart: (value) => ipcRenderer.send('set-auto-start', value),
+  /** 拉取当前在线用户列表（与托盘右键菜单一致） */
+  trayUsersGet: () => ipcRenderer.invoke('tray-users-get'),
+  /** 订阅在线用户列表实时更新 */
+  onTrayUsers: (callback) => ipcRenderer.on('tray-users-update', (_, data) => callback(data)),
 
   // ─── Browser ──────────────────────────────────
   /** Open browser to conversation page */

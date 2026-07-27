@@ -38,12 +38,12 @@ module.exports = {
   },
   // 候选项展示名（与文件解耦，便于改名）
   ringtoneNames: {
-    'assets/ringtone.m4a': '经典铃声',
-    'assets/ringtones/default.mp3': '默认',
-    'assets/ringtones/msg1.mp3': '消息 1',
-    'assets/ringtones/msg2.mp3': '消息 2',
-    'assets/ringtones/msg3.mp3': '消息 3',
-    'assets/ringtones/msg4.mp3': '消息 4',
+    'assets/ringtone.m4a': '长铃声1',
+    'assets/ringtones/default.mp3': '消息 1',
+    'assets/ringtones/msg1.mp3': '消息 2',
+    'assets/ringtones/msg2.mp3': '消息 3',
+    'assets/ringtones/msg3.mp3': '消息 4',
+    'assets/ringtones/msg4.mp3': '消息 5',
   },
 
   // 通知中心窗口（右下角常驻预加载）

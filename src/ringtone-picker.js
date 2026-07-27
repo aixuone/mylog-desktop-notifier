@@ -7,7 +7,7 @@
   function basename(p) { return p ? p.split('/').pop() : '' }
   function displayName(rel, names) {
     if (!rel || rel === 'default') return (names && names['assets/ringtone.m4a']) || '经典铃声'
-    if (rel.startsWith('assets/')) return (names && names[rel]) || '内置铃声'
+    if (rel.startsWith('assets/')) return (names && names[rel]) || basename(rel)
     if (rel.startsWith('ringtones/')) return basename(rel)
     return rel
   }
@@ -49,6 +49,8 @@
     trigger.className = 'picker-trigger'
     trigger.type = 'button'
     function renderTrigger() {
+      var cands = getCandidates() || {}
+      lastNames = cands.names || lastNames
       var v = getValue()
       trigger.innerHTML = '<span class="picker-cur">' + displayName(v, lastNames) + '</span><span class="picker-chev">▾</span>'
     }
@@ -75,7 +77,7 @@
       var html = ''
       // 默认
       html += '<div class="picker-group">默认</div>'
-      html += rowHtml(row('default', '默认 · ' + displayName('default', lastNames), v === 'default' || !v))
+      html += rowHtml(row('default', displayName('default', lastNames), v === 'default' || !v))
       // 内置铃声（随包铃声，如 assets/ringtones 下的 default.mp3 / msg1~4.mp3）
       if (builtin.length) {
         html += '<div class="picker-group">内置铃声</div>'
@@ -185,19 +187,42 @@
       if (open) { closePanel(); return }
       panel = buildPanel()
 
-      // 用 fixed 定位，避免被父容器 overflow 裁剪
+      // 用 fixed 定位并先挂到 body，才能拿到真实高度做边界检测
+      document.body.appendChild(panel)
+      open = true
+
       const rect = trigger.getBoundingClientRect()
-      // 面板优先在触发器下方展开；如果右侧空间不足则左对齐到触发器右边缘
-      let left = rect.left + window.scrollX
       const panelW = 240
+      const margin = 4
+
+      // 水平：优先左对齐触发器；右侧空间不足则右对齐
+      let left = rect.left + window.scrollX
       if (left + panelW > window.innerWidth) {
         left = rect.right + window.scrollX - panelW
       }
-      panel.style.left = Math.max(4, left) + 'px'
-      panel.style.top = (rect.bottom + 2 + window.scrollY) + 'px'
+      panel.style.left = Math.max(margin, left) + 'px'
 
-      document.body.appendChild(panel)
-      open = true
+      // 垂直：优先向下展开；下方空间不足则向上翻转
+      let panelH = panel.offsetHeight || 280
+      const spaceBelow = window.innerHeight - rect.bottom - margin
+      let top
+      if (spaceBelow >= panelH) {
+        top = rect.bottom + margin + window.scrollY
+      } else {
+        // 向上展开
+        top = rect.top - panelH - margin + window.scrollY
+        // 向上也顶到窗口顶部时，压缩面板高度并置顶
+        if (top < margin) {
+          top = margin
+          const newMax = Math.max(120, rect.top - margin * 2)
+          panel.style.maxHeight = newMax + 'px'
+          panelH = panel.offsetHeight
+          top = rect.top - panelH - margin + window.scrollY
+          if (top < margin) top = margin
+        }
+      }
+      panel.style.top = Math.max(margin, top) + 'px'
+
       // 点击外部关闭
       setTimeout(function () {
         document.addEventListener('click', onDocClick, true)

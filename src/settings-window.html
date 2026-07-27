@@ -248,6 +248,21 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
 .link-banner .lb-reason { font-weight: 500; font-size: 12px; opacity: 0.9; }
 
 .hint-line { font-size: 12px; color: #9A9893; margin-top: 8px; line-height: 1.6; }
+
+/* 托盘在线用户列表（与托盘右键菜单一致） */
+.tray-users { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; }
+.tu-item { display: flex; align-items: center; gap: 10px; }
+.tu-avatar {
+  width: 30px; height: 30px; border-radius: 50%; background: #E6F1FB; color: #185FA5;
+  display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px;
+  overflow: hidden; flex-shrink: 0; position: relative;
+}
+.tu-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; position: absolute; }
+.tu-name { flex: 1; min-width: 0; font-size: 13px; color: #2C2C2A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tu-status { font-size: 12px; flex-shrink: 0; }
+.tu-status.on { color: #15803D; }
+.tu-status.off { color: #9A9893; }
+.tu-empty { font-size: 13px; color: #9A9893; padding: 4px 0; }
 </style>
 </head>
 <body>
@@ -265,13 +280,18 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
     <section data-panel="general">
       <div class="panel-hint">基础通知行为与系统级设置</div>
       <div class="row">
-        <div class="grow"><div class="label">开机启动</div><div class="desc">登录系统后自动运行通知助手</div></div>
+        <div class="grow"><div class="label">开机启动</div><div class="desc">登录系统后自动启动</div></div>
         <button class="switch" id="sw-autostart"></button>
       </div>
       <div class="row" style="flex-direction:column; align-items:stretch;">
         <div class="label" style="margin-bottom:6px;">通知模式</div>
         <div class="modes" id="modes"></div>
-        <div class="hint-line">提示：通知模式优先级最高，会覆盖「铃声」面板的总开关。最终生效设置以铃声面板顶部的状态为准。</div>
+        <div class="hint-line">提示：此处设置覆盖「铃声」面板的总开关。</div>
+      </div>
+      <div class="row" style="flex-direction:column; align-items:stretch;">
+        <div class="label" style="margin-bottom:6px;">已登录用户</div>
+        <div id="tray-users" class="tray-users"></div>
+        <!-- <div class="hint-line">与右键托盘菜单中的「在线用户」列表实时同步一致。</div> -->
       </div>
     </section>
 
@@ -297,7 +317,7 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
         </div>
       </div>
       <div class="row">
-        <div class="grow"><div class="label">消息提醒持续时长</div><div class="desc">空闲后自动收起（未读仍保留在托盘）</div></div>
+        <div class="grow"><div class="label">消息提醒持续时长</div><div class="desc">消息提醒显示时间后自动收起</div></div>
         <input type="range" id="rng-duration" min="3" max="30" step="1">
         <span class="slider-val" id="duration-val"></span>
       </div>
@@ -305,8 +325,8 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
 
     <!-- 联系人专属设置 -->
     <section data-panel="contacts" hidden>
-      <div class="panel-hint">为指定联系人设置专属铃声（点击添加按钮从已同步的联系人中选择）</div>
-      <button class="btn-add-contact" id="btn-add-contact">＋ 添加联系人</button>
+      <div class="panel-hint">为指定联系人设置专属铃声</div>
+      <button class="btn-add-contact" id="btn-add-contact">＋ 添加联系人专属铃声</button>
       <div id="contacts"></div>
     </section>
 
@@ -329,10 +349,10 @@ var contacts = []
 var pickers = []
 
 var MODES = [
-  { key: 'normal', t: '正常通知', d: '所有通知与提示音正常' },
-  { key: 'silent', t: '静音模式', d: '仅视觉提示，关闭所有声音' },
-  { key: 'blockChat', t: '屏蔽聊天消息', d: '聊天消息不弹不响；通话/会议正常' },
-  { key: 'dnd', t: '勿扰模式', d: '全部屏蔽（含通话/会议）' },
+  { key: 'normal', t: '正常通知', d: '弹窗通知开启，提示音开启' },
+  { key: 'silent', t: '静音模式', d: '弹窗通知开启，提示音静音🔕' },
+  { key: 'blockChat', t: '屏蔽弹窗通知', d: '弹窗通知关闭，提示音开启' },
+  { key: 'dnd', t: '勿扰模式', d: '弹窗通知关闭，提示音静音🔕' },
 ]
 
 // 各场景「个性化铃声」选择器（仅选择 file；是否发声由通用模式 + 总开关统一控制）
@@ -423,7 +443,10 @@ function loadAll() {
     S = d.settings || {}
     C = { names: d.names || {}, localRingtones: d.localRingtones || [], urls: d.urls || {}, presets: d.presets || {}, builtin: d.builtin || [] }
     contacts = d.contacts || []
-    try { renderGeneral(); renderRingtone(); renderMessage(); renderContacts(); renderAbout(d) } catch (e) { console.error('[Settings] render error:', e) }
+    try { renderGeneral(); renderRingtone(); renderMessage(); renderContacts(); renderAbout(d); renderTrayUsers() } catch (e) { console.error('[Settings] render error:', e) }
+    // 托盘在线用户列表：初次拉取 + 订阅实时更新（与托盘右键菜单一致）
+    api.trayUsersGet().then(renderTrayUsers).catch(function () {})
+    api.onTrayUsers(renderTrayUsers)
   }).catch(function (err) {
     console.error('[Settings] loadAll failed:', err && err.message)
   })
@@ -746,6 +769,24 @@ function renderAbout(d) {
   document.getElementById('about-version').textContent = d.version || ''
   document.getElementById('about-ringtone-dir').textContent = d.ringtoneDir || ''
   document.getElementById('about-settings-path').textContent = (d.ringtoneDir ? d.ringtoneDir.replace(/ringtones$/, 'settings.json') : '')
+}
+
+// ── 托盘在线用户（与托盘右键菜单一致） ──
+function renderTrayUsers(list) {
+  var box = document.getElementById('tray-users')
+  if (!box) return
+  if (!list || !list.length) {
+    box.innerHTML = '<div class="tu-empty">当前无用户信息</div>'
+    return
+  }
+  box.innerHTML = list.map(function (u) {
+    var av = u.iconPath
+      ? '<div class="tu-avatar"><img src="file://' + u.iconPath + '" onerror="this.style.display=\'none\'">' + escapeHtml((u.name || '?').charAt(0)) + '</div>'
+      : '<div class="tu-avatar">' + escapeHtml((u.name || '?').charAt(0)) + '</div>'
+    return '<div class="tu-item">' + av +
+      '<span class="tu-name">' + escapeHtml(u.name || '未知用户') + '</span>' +
+      '<span class="tu-status ' + (u.online ? 'on' : 'off') + '">' + (u.online ? '🟢 在线' : '⚪ 离线') + '</span></div>'
+  }).join('')
 }
 
 function escapeHtml(s) {
