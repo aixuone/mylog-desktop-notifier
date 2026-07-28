@@ -75,12 +75,14 @@
       var panelEl = document.createElement('div')
       panelEl.className = 'picker-panel'
       var html = ''
+      // 上传自定义铃声（置顶，方便随时上传）
+      html += '<button class="picker-upload" data-act="upload">⬆ 上传自定义铃声</button>'
       // 默认
-      html += '<div class="picker-group">默认</div>'
+      html += '<div class="picker-group">长铃声</div>'
       html += rowHtml(row('default', displayName('default', lastNames), v === 'default' || !v))
       // 内置铃声（随包铃声，如 assets/ringtones 下的 default.mp3 / msg1~4.mp3）
       if (builtin.length) {
-        html += '<div class="picker-group">内置铃声</div>'
+        html += '<div class="picker-group">短铃声</div>'
         builtin.forEach(function (rel) {
           html += rowHtml(row(rel, displayName(rel, lastNames), v === rel))
         })
@@ -92,7 +94,6 @@
           html += rowHtml(row(rel, displayName(rel, lastNames), v === rel))
         })
       }
-      html += '<button class="picker-upload" data-act="upload">⬆ 上传自定义铃声</button>'
       panelEl.innerHTML = html
 
       // 加载各铃声时长（缓存，避免重复解析元数据）

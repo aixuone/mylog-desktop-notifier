@@ -408,8 +408,8 @@ function setDisplay(show){
 // 渲染选择器列表（按 默认 / 内置 / 我的铃声 分组）
 function rtBodyHTML(curId){
   const groups=[
-    {label:'默认',items:[LIB[0]]},
-    {label:'内置铃声',items:LIB.slice(1)},
+    {label:'长铃声',items:[LIB[0]]},
+    {label:'短铃声',items:LIB.slice(1)},
     {label:'我的铃声（本地）',items:LOCAL.map(f=>({id:f,name:f}))},
   ];
   let h='';

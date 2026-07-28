@@ -208,8 +208,8 @@ function markClientOffline(ws, reason) {
  * Set tray icon state with optional blinking.
  * - 'default':  solid default icon (no blink)
  * - 'gray':     solid gray icon (no blink)
- * - 'ringing':  blink between default ↔ gray (500ms)
- * - 'unread':   blink between default ↔ transparent (500ms)
+ * - 'ringing':  solid ringing icon (NO blink — 来电/会议期间不闪烁)
+ * - 'unread':   ONLY blink condition: default ↔ transparent (500ms)
  */
 function setTrayState(state) {
   if (!tray) return
@@ -235,12 +235,8 @@ function setTrayState(state) {
       break
 
     case 'ringing':
-      // Alternate: default (color) ↔ transparent (明亮帧有色，暗帧完全透明，闪烁更醒目)
-      tray.setImage(trayIcon(iconCache.default))
-      blinkInterval = setInterval(() => {
-        blinkPhase = !blinkPhase
-        tray.setImage(trayIcon(blinkPhase ? iconCache.transparent : iconCache.default))
-      }, 500)
+      // 来电/会议期间：显示静态彩色图标，不闪烁（按需求：闪烁仅在「有未读消息」时触发）
+      tray.setImage(trayIcon(iconCache.ringing || iconCache.default))
       break
 
     case 'unread':
