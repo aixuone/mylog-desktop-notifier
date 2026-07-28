@@ -952,6 +952,7 @@ app.whenReady().then(() => {
       onUnreadChange: updateUnreadCount,
       openExternal: safeOpenExternal,
       broadcast,
+      isWebConnected: hasConnectedClients,
     })
     notificationCenter.preCreate()
     // ─────────────────────────────────────────────

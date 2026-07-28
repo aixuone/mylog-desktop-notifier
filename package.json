@@ -1,6 +1,6 @@
 {
   "name": "mylog-desktop-notifier",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "ixu",
   "description": "MyLog 桌面通知代理 - 系统级来电/消息提醒",
   "main": "main.js",
@@ -16,7 +16,7 @@
   "build": {
     "appId": "com.tianyuan.mylog.desktop-notifier",
     "productName": "我的日志_桌面通知",
-    "artifactName": "${productName} 安装包 ${version}.exe",
+    "artifactName": "${productName} 安装包 ${version}.${ext}",
     "copyright": "Copyright (c) 2025 tianyuan",
     "asar": true,
     "asarUnpack": [
@@ -53,12 +53,14 @@
           "arch": ["x64", "arm64"]
         }
       ],
+      "artifactName": "${productName} 安装包 ${version}.${ext}",
       "icon": "assets/icon.png",
       "category": "public.app-category.utilities",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
       "extendInfo": {
         "LSUIElement": true,
         "NSHighResolutionCapable": true
