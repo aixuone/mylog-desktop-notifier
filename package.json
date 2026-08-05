@@ -1,6 +1,6 @@
 {
   "name": "mylog-desktop-notifier",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": "ixu",
   "description": "MyLog 桌面通知代理 - 系统级来电/消息提醒",
   "main": "main.js",

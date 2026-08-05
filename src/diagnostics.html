@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>诊断测试 · 我的日志通知助手</title>
+<style>
+@font-face {
+  font-family: 'System UI';
+  src: local('Microsoft YaHei UI'), local('Microsoft YaHei'),
+       local('PingFang SC'), local('PingFang HK'),
+       local('Noto Sans CJK SC'), local('SimHei'),
+       local(system-ui), local(sans-serif);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'System UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  color: #2C2C2A; min-height: 100vh; overflow-y: auto;
+  background:
+    radial-gradient(900px 460px at 12% -8%, rgba(24,95,165,0.14), transparent 60%),
+    radial-gradient(760px 420px at 100% 0%, rgba(255,149,0,0.12), transparent 55%),
+    linear-gradient(160deg, #FBFCFE 0%, #F2F5FA 100%);
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 780px; margin: 0 auto; padding: 26px 26px 48px; }
+header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+header .logo { font-size: 24px; }
+header h1 { font-size: 19px; font-weight: 700; letter-spacing: .2px; }
+header .sub { font-size: 12px; color: #9A9893; margin-top: 2px; }
+
+.card {
+  background: rgba(255,255,255,0.62);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255,255,255,0.7);
+  box-shadow: 0 10px 30px rgba(31,45,61,0.10);
+  border-radius: 16px; padding: 18px 20px; margin-top: 18px;
+}
+.card h2 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+.card .hint { font-size: 12px; color: #9A9893; margin-bottom: 14px; line-height: 1.6; }
+
+.btn {
+  border: 1px solid #D8D5CF; background: #fff; color: #2C2C2A;
+  font-family: inherit; font-size: 13px; padding: 9px 16px; border-radius: 9px; cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s, transform .08s;
+}
+.btn:hover { border-color: #185FA5; color: #185FA5; }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: #185FA5; color: #fff; border-color: #185FA5; font-weight: 600; }
+.btn.primary:hover { background: #15508C; color: #fff; }
+.btn.green { background: #16A34A; color: #fff; border-color: #16A34A; }
+.btn.green:hover { background: #138A3E; color: #fff; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+/* verdict banner */
+.verdict {
+  margin-top: 14px; padding: 14px 16px; border-radius: 12px; font-weight: 700; font-size: 14px;
+  display: flex; align-items: center; gap: 10px;
+}
+.verdict.ok { color: #15803D; background: #E7F6EC; border: 1px solid #BCE3C8; }
+.verdict.bad { color: #B45309; background: #FEF3E2; border: 1px solid #FBDCA0; }
+.verdict.idle { color: #5F5E5A; background: #F2F4F7; border: 1px solid #E4E7EC; }
+
+/* report table */
+table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid rgba(0,0,0,0.06); vertical-align: top; }
+th { color: #9A9893; font-weight: 600; font-size: 12px; }
+td .name { font-weight: 600; }
+td .detail { color: #9A9893; font-size: 12px; margin-top: 3px; line-height: 1.5; }
+.tag { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; font-size: 12px; padding: 3px 9px; border-radius: 999px; }
+.tag.pass { color: #15803D; background: #E7F6EC; }
+.tag.fail { color: #B45309; background: #FEF3E2; }
+.tag.skip { color: #5F5E5A; background: #EEF0F3; }
+
+/* manual cards */
+.manual-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+@media (max-width: 680px) { .manual-grid { grid-template-columns: 1fr; } }
+.mtest { border: 1px solid rgba(0,0,0,0.07); border-radius: 12px; padding: 14px; background: rgba(255,255,255,0.5); display: flex; flex-direction: column; gap: 10px; }
+.mtest .mt-title { font-size: 13px; font-weight: 700; }
+.mtest .mt-desc { font-size: 12px; color: #9A9893; line-height: 1.5; min-height: 32px; }
+.confirm { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #15803D; font-weight: 600; opacity: 0; transition: opacity .2s; }
+.confirm.on { opacity: 1; }
+
+/* fullscreen demo target */
+#fs-demo {
+  position: fixed; inset: 0; background: linear-gradient(135deg, #185FA5, #0E3F73);
+  color: #fff; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 16px; z-index: 9999;
+}
+#fs-demo.on { display: flex; }
+#fs-demo .big { font-size: 26px; font-weight: 800; }
+#fs-demo .small { font-size: 14px; opacity: .85; }
+
+/* display info */
+.disp-list { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.disp-item { border: 1px solid rgba(0,0,0,0.07); border-radius: 10px; padding: 10px 12px; background: rgba(255,255,255,0.5); font-size: 12px; }
+.disp-item .di-head { font-weight: 700; font-size: 13px; }
+.disp-item .di-line { color: #6B6A65; margin-top: 3px; }
+.badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 6px; }
+.badge.primary { color: #185FA5; background: #E2EFFB; }
+.badge.active { color: #15803D; background: #E7F6EC; }
+.kv { font-size: 12px; color: #5F5E5A; margin-top: 8px; line-height: 1.7; }
+.kv b { color: #2C2C2A; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="logo">🩺</span>
+    <div>
+      <h1>诊断测试</h1>
+      <div class="sub">自动检测 + 手工确认：弹窗、铃声、全屏、权限与多显示器环境</div>
+    </div>
+  </header>
+
+  <!-- 自动测试 -->
+  <section class="card">
+    <h2>自动测试</h2>
+    <div class="hint">一键运行程序化检查。窗口可见性 / 铃声路径 / 全屏 API / 权限矩阵由主进程与当前页面协同验证；无需人工介入。</div>
+    <div class="btn-row">
+      <button class="btn primary" id="btn-auto">▶ 运行自动测试</button>
+      <span id="auto-status" style="font-size:12px;color:#9A9893;"></span>
+    </div>
+    <div id="verdict" class="verdict idle">尚未运行。点击「运行自动测试」开始。</div>
+    <table id="report" hidden>
+      <thead><tr><th style="width:30px;">#</th><th>检查项</th><th>结果</th><th>说明</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- 手工测试 -->
+  <section class="card">
+    <h2>手工测试</h2>
+    <div class="hint">触发真实场景，由你/客户肉眼确认后勾选。适合验证「有声无窗」「点了没反应」这类需人确认的体验问题。</div>
+    <div class="manual-grid">
+      <div class="mtest">
+        <div class="mt-title">① 弹窗可见性</div>
+        <div class="mt-desc">触发一条测试通知卡，确认小白窗出现在你正在看的屏幕上。</div>
+        <button class="btn" id="m-popup">触发弹窗</button>
+        <button class="btn" id="m-popup-close">关闭弹窗</button>
+        <div class="confirm" id="c-popup">✓ 我看到了弹窗</div>
+      </div>
+      <div class="mtest">
+        <div class="mt-title">② 铃声播放</div>
+        <div class="mt-desc">播放消息铃声，确认能听到声音（静音/勿扰模式下应无声音）。</div>
+        <button class="btn" id="m-ring">播放铃声</button>
+        <div class="confirm" id="c-ring">✓ 我听到了声音</div>
+      </div>
+      <div class="mtest">
+        <div class="mt-title">③ 全屏能力</div>
+        <div class="mt-desc">进入全屏演示页，确认会议页全屏能正常工作。</div>
+        <button class="btn" id="m-fs">全屏演示</button>
+        <button class="btn" id="m-fs-exit">退出全屏</button>
+        <div class="confirm" id="c-fs">✓ 已进入全屏</div>
+      </div>
+      <div class="mtest">
+        <div class="mt-title">④ 屏幕共享源 / 真实共享</div>
+        <div class="mt-desc">取本机源 + 跑真实 getDisplayMedia（与腾讯会议同一条 Electron 路径）。分别测“音视频同求”和“纯视频”两种，定位是音频路径还是视频路径失败。</div>
+        <div class="btn-row" style="gap:6px;">
+          <select id="sc-audio" style="font-family:inherit;font-size:12px;padding:7px 8px;border:1px solid #D8D5CF;border-radius:8px;background:#fff;color:#2C2C2A;">
+            <option value="mute">仅视频 (mute)</option>
+            <option value="loopback">系统循环音频 (loopback)</option>
+            <option value="loopbackWithMute">循环音频可静音</option>
+          </select>
+          <button class="btn" id="sc-audio-apply">应用</button>
+        </div>
+        <button class="btn" id="m-sc">获取源 + 真实共享测试</button>
+        <div class="kv" id="sc-e2e" style="font-size:12px;white-space:pre-wrap;">—</div>
+        <div class="confirm" id="c-sc">✓ 环境层与端到端均成功</div>
+      </div>
+      <div class="mtest">
+        <div class="mt-title">⑤ 来电浮窗</div>
+        <div class="mt-desc">触发来电浮窗，确认能正常弹出（2.5s 自动关闭）。</div>
+        <button class="btn" id="m-call">触发来电浮窗</button>
+        <div class="confirm" id="c-call">✓ 看到了来电浮窗</div>
+      </div>
+      <div class="mtest">
+        <div class="mt-title">⑥ 会议浮窗</div>
+        <div class="mt-desc">触发会议邀请浮窗，确认能正常弹出（2.5s 自动关闭）。</div>
+        <button class="btn" id="m-meet">触发会议浮窗</button>
+        <div class="confirm" id="c-meet">✓ 看到了会议浮窗</div>
+      </div>
+      <div class="mtest">
+        <div class="mt-title">⑦ 离线/被踢通知</div>
+        <div class="mt-desc">模拟离线/被踢常驻通知，确认卡片出现且 ✕ 不收起。</div>
+        <button class="btn" id="m-sa">模拟常驻通知</button>
+        <div class="confirm" id="c-sa">✓ 看到常驻通知且未误关</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 多显示器环境 -->
+  <section class="card">
+    <h2>多显示器环境</h2>
+    <div class="hint">辅助排查「有声无窗」：弹窗现在会落在光标所在屏幕的右下角。若你正用多屏，请确认主屏/光标屏设置。</div>
+    <div class="kv" id="env-kv">加载中…</div>
+    <div class="disp-list" id="disp-list"></div>
+  </section>
+</div>
+
+<!-- 全屏演示覆盖层 -->
+<div id="fs-demo">
+  <div class="big">全屏演示中 🖥️</div>
+  <div class="small">这是一个全屏页面，证明 requestFullscreen() 在当前环境可用。</div>
+  <button class="btn" id="fs-demo-exit" style="background:#fff;color:#185FA5;">退出全屏</button>
+</div>
+
+<script>
+var api = window.electronAPI
+if (!api) {
+  document.body.innerHTML = '<div style="color:red;padding:24px;">Error: electronAPI not available</div>'
+} else {
+  init()
+}
+
+function init() {
+  // ── 自动测试 ──
+  document.getElementById('btn-auto').onclick = runAuto
+
+  // ── 手工：弹窗 ──
+  document.getElementById('m-popup').onclick = function () { api.diagPushTest(); mark('c-popup', false) }
+  document.getElementById('m-popup-close').onclick = function () { api.diagCloseTest() }
+  document.getElementById('c-popup').onclick = function () { this.classList.toggle('on') }
+
+  // ── 手工：铃声 ──
+  document.getElementById('m-ring').onclick = function () { api.diagPlayRingtone(); mark('c-ring', false) }
+  document.getElementById('c-ring').onclick = function () { this.classList.toggle('on') }
+
+  // ── 手工：全屏 ──
+  document.getElementById('m-fs').onclick = enterFullscreen
+  document.getElementById('m-fs-exit').onclick = exitFullscreen
+  document.getElementById('fs-demo-exit').onclick = exitFullscreen
+  document.addEventListener('fullscreenchange', function () {
+    var on = !!document.fullscreenElement
+    document.getElementById('fs-demo').classList.toggle('on', on)
+    if (on) mark('c-fs', false)
+  })
+
+  // ── 手工：屏幕共享源（P0-1）+ 真实端到端 getDisplayMedia ──
+  document.getElementById('m-sc').onclick = async function () {
+    var box = document.getElementById('sc-e2e')
+    box.textContent = '测试中…'
+    var env = null, e2e = null
+    try { env = await api.diagScreenCapture() } catch (e) { env = null }
+    try { e2e = await testScreenShareE2E() } catch (e) { e2e = { audioMode: { ok: false, error: String(e) }, videoMode: { ok: false, error: String(e) } } }
+    var txt = '环境层：' + (env ? (env.ok ? (env.count + ' 个源，模式=' + env.audioMode) : ('失败 ' + (env.error || ''))) : '无数据')
+      + '\n端到端(音视频同求)：' + fmtE2E(e2e.audioMode)
+      + '\n端到端(纯视频)：' + fmtE2E(e2e.videoMode)
+    box.textContent = txt
+    if (e2e && e2e.videoMode && e2e.videoMode.ok && e2e.videoMode.hasVideo) mark('c-sc', false)
+  }
+  // ── 手工：切换屏幕共享音频模式（排查 SDK 是否需音频轨道）──
+  document.getElementById('sc-audio-apply').onclick = async function () {
+    var mode = document.getElementById('sc-audio').value
+    var r = await api.diagSetScreenShareAudio(mode).catch(function (e) { return { ok: false, error: String(e) } })
+    document.getElementById('sc-e2e').textContent = '音频模式已切换为：' + (r.ok ? r.mode : ('失败 ' + (r.error || '')))
+  }
+  // ── 手工：来电浮窗（P1-5）──
+  document.getElementById('m-call').onclick = async function () {
+    try { var r = await api.diagShowCall(); if (r && r.visible) mark('c-call', false) } catch (e) {}
+  }
+  // ── 手工：会议浮窗（P1-5）──
+  document.getElementById('m-meet').onclick = async function () {
+    try { var r = await api.diagShowMeeting(); if (r && r.visible) mark('c-meet', false) } catch (e) {}
+  }
+  // ── 手工：离线/被踢常驻通知（P0-3）──
+  document.getElementById('m-sa').onclick = async function () {
+    try { var r = await api.diagSysAlert(); if (r && r.pushed && r.pushed.indexOf('offline') >= 0) mark('c-sa', false) } catch (e) {}
+  }
+
+  // 初始加载环境信息
+  loadEnv()
+}
+
+function mark(id, _force) {
+  var el = document.getElementById(id)
+  if (el) el.classList.add('on')
+}
+
+function setVerdict(ok, msg) {
+  var v = document.getElementById('verdict')
+  v.className = 'verdict ' + (ok === null ? 'idle' : (ok ? 'ok' : 'bad'))
+  v.textContent = (ok === null ? 'ℹ️ ' : (ok ? '✅ ' : '⚠️ ')) + msg
+}
+
+function addRow(tbody, i, name, pass, detail, skip) {
+  var tag = skip
+    ? '<span class="tag skip">跳过</span>'
+    : (pass ? '<span class="tag pass">PASS</span>' : '<span class="tag fail">FAIL</span>')
+  var tr = document.createElement('tr')
+  tr.innerHTML = '<td>' + i + '</td>' +
+    '<td><div class="name">' + name + '</div></td>' +
+    '<td>' + tag + '</td>' +
+    '<td><div class="detail">' + (detail || '') + '</div></td>'
+  tbody.appendChild(tr)
+}
+
+async function runAuto() {
+  var btn = document.getElementById('btn-auto')
+  btn.disabled = true
+  document.getElementById('auto-status').textContent = '运行中…'
+  setVerdict(null, '正在运行自动检查…')
+
+  // 1) 全屏 API 功能验证（渲染进程内 requestFullscreen，不留全屏）
+  var fsOk = await testFullscreenApi()
+
+  // 2) 主进程侧检查
+  var data
+  try {
+    data = await api.diagRunAuto({ fullscreenOk: fsOk })
+  } catch (e) {
+    document.getElementById('auto-status').textContent = ''
+    btn.disabled = false
+    setVerdict(false, '自动检查失败：' + (e && e.message ? e.message : e))
+    return
+  }
+
+  // 补充诊断（P0+P1 缺口项）：屏幕共享源 / 聚焦 / 常驻通知 / 铃声多场景 / 来电会议浮窗 / 模式联动
+  var ext
+  try {
+    ext = await Promise.all([
+      api.diagScreenCapture(),
+      api.diagFocus({ conversationId: '__diag__', url: 'https://data.tygps.com/mylog-pc/' }),
+      api.diagSysAlert(),
+      api.diagRingtoneScenes(),
+      api.diagShowCall(),
+      api.diagShowMeeting(),
+      api.diagModeLinkage(),
+    ])
+  } catch (e) {
+    document.getElementById('auto-status').textContent = ''
+    btn.disabled = false
+    setVerdict(false, '扩展诊断失败：' + (e && e.message ? e.message : e))
+    return
+  }
+  var [sc, fo, sa, rs, cl, mt, ml] = ext
+
+  // 真实端到端：从诊断页直接调 getDisplayMedia（走与腾讯会议相同的 Electron handler 路径）
+  var scE2E = null
+  try { scE2E = await testScreenShareE2E() } catch (e) { scE2E = { audioMode: { ok: false, error: String(e) }, videoMode: { ok: false, error: String(e) } } }
+
+  var rows = []
+  // R1 弹窗可见性
+  var w = data.window || {}
+  var winPass = !!(w.visible && w.onScreen)
+  rows.push(['弹窗可见性', winPass,
+    'visible=' + w.visible + '，onScreen=' + w.onScreen +
+    (w.bounds ? '，坐标(' + w.bounds.x + ',' + w.bounds.y + ')' : '') +
+    (winPass ? '' : ' → 窗口未出现在任何显示器可视区')])
+
+  // R2 铃声
+  var r = data.ringtone || {}
+  var ringPass = !!(r.path && r.exists)
+  var ringDetail = '路径：' + (r.path || '无') + (r.exists ? '' : '（文件不存在！）')
+  if (r.muted) ringDetail += '；当前为静音/勿扰模式，预期无声音（属正常联动）'
+  rows.push(['铃声播放', ringPass, ringDetail])
+
+  // R3 全屏能力
+  var fsPerm = (data.permissions || []).find(function (p) { return p.permission === 'fullscreen' })
+  var fsPermOk = fsPerm ? fsPerm.allow : false
+  var fsPass = fsPermOk && fsOk
+  rows.push(['全屏能力', fsPass,
+    '权限 fullscreen=' + (fsPermOk ? 'allow' : 'deny') + '；requestFullscreen=' + (fsOk ? '可用' : '拒绝/不可用')])
+
+  // R4 权限矩阵
+  var denied = (data.permissions || []).filter(function (p) { return !p.allow })
+  var permPass = denied.length === 0
+  rows.push(['权限矩阵(含屏幕共享)', permPass,
+    '检测 ' + (data.permissions ? data.permissions.length : 0) + ' 项' +
+    (permPass ? '，全部放行' : '；被拒：' + denied.map(function (p) { return p.permission }).join('、'))])
+
+  // R5 多显示器（展示，不计入 PASS/FAIL）
+  var env = '显示器 ' + data.displayCount + ' 块；主屏#' + data.primaryId +
+    '；光标所在屏#' + data.activeId + '；通知窗落点(' + data.ncRect.x + ',' + data.ncRect.y + ')'
+  rows.push(['多显示器环境', null, env + (data.displayCount > 1 ? '（多屏：弹窗跟随光标屏）' : '')])
+
+  // R6 屏幕共享源获取（P0-1）：权限放行 ≠ 共享可用，直击客户"意外出错"
+  var scOk = !!(sc && sc.ok && sc.count > 0)
+  var scE2EOk = !!(scE2E && scE2E.videoMode && scE2E.videoMode.ok && scE2E.videoMode.hasVideo)
+  var scPass = scOk && scE2EOk
+  var scDetail = '环境层：' + (sc ? (sc.ok ? ('取到 ' + sc.count + ' 个源，模式=' + sc.audioMode)
+                                         : ('失败 ' + (sc.error || '未知')))
+                               : '无数据')
+  scDetail += '｜端到端(音视频同求)：' + fmtE2E(scE2E && scE2E.audioMode)
+  scDetail += '｜端到端(纯视频)：' + fmtE2E(scE2E && scE2E.videoMode)
+  if (!scE2EOk) {
+    var am = scE2E && scE2E.audioMode, vm = scE2E && scE2E.videoMode
+    if (vm && vm.ok && am && !am.ok) scDetail += ' → 纯视频成功、音视频同求失败：系统音频路径问题，诊断窗④切 loopback 模式重试'
+    else if (am && am.ok && vm && !vm.ok) scDetail += ' → 纯视频也失败：可能是多屏/显卡/捕获器问题，检查显示器配置'
+    else scDetail += ' → 环境层正常但端到端失败，需进一步定位（看主进程 [ScreenShare] 日志）'
+  }
+  rows.push(['屏幕共享源获取', scPass, scDetail])
+
+  // R7 通知点击聚焦（P0-2）
+  var focusExpected = (fo && fo.webConnected) ? 'focus' : 'external'
+  var focusOk = !!(fo && fo.action === focusExpected)
+  rows.push(['通知点击聚焦', focusOk,
+    fo ? ('网页在线=' + fo.webConnected + '；实际动作=' + fo.action + '；预期=' + focusExpected +
+          (fo.action === 'focus' ? '（已向网页广播 FOCUS_CONVERSATION）' : '（已回退 openExternal）'))
+        : '未返回数据'])
+
+  // R8 离线/被踢常驻通知（P0-3）：sticky 常驻、✕ 不收起、dismiss 后清零
+  var saPushedOk = !!(sa && sa.pushed && sa.pushed.indexOf('offline') >= 0 && sa.pushed.indexOf('kick') >= 0)
+  var saOk = saPushedOk && !!(sa && sa.ncCloseSuppressed) && !!(sa && sa.afterDismissAll && sa.afterDismissAll.length === 0)
+  rows.push(['离线/被踢常驻通知', saOk,
+    sa ? ('推送 offline/kick=' + saPushedOk + '；常驻时✕不收起=' + !!sa.ncCloseSuppressed +
+          '；dismiss 后清零=' + (sa.afterDismissAll && sa.afterDismissAll.length === 0))
+        : '未返回数据'])
+
+  // R9 来电浮窗弹出（P1-5）
+  var callOk = !!(cl && cl.visible)
+  rows.push(['来电浮窗弹出', callOk,
+    cl ? (callOk ? '来电浮窗已显示' : ('未显示' + (cl.error ? '：' + cl.error : ''))) : '未返回数据'])
+
+  // R10 会议浮窗弹出（P1-5）
+  var meetOk = !!(mt && mt.visible)
+  rows.push(['会议浮窗弹出', meetOk,
+    mt ? (meetOk ? '会议浮窗已显示' : ('未显示' + (mt.error ? '：' + mt.error : ''))) : '未返回数据'])
+
+  // R11 通知模式联动（P1-6）：dnd 下弹窗抑制 + 铃声静音 + 模式可恢复
+  var modeOk = !!(ml && ml.dndBlockedPopup && ml.dndMuted && ml.restored)
+  rows.push(['通知模式联动', modeOk,
+    ml ? ('原模式=' + ml.origMode + '；dnd 下弹窗被抑制=' + !!ml.dndBlockedPopup +
+          '；dnd 下铃声静音=' + !!ml.dndMuted + '；模式已恢复=' + !!ml.restored)
+        : '未返回数据'])
+
+  // 渲染表格
+  var tbody = document.querySelector('#report tbody')
+  tbody.innerHTML = ''
+  rows.forEach(function (row, idx) { addRow(tbody, idx + 1, row[0], row[1], row[2], row[1] === null) })
+  document.getElementById('report').hidden = false
+
+  // 总判定（忽略 R5 展示项）
+  var checks = rows.filter(function (r) { return r[1] !== null })
+  var allPass = checks.every(function (r) { return r[1] === true })
+  setVerdict(allPass, allPass ? '全部检查通过 ✅' : '存在失败项，请查看上方说明 ⚠️')
+  document.getElementById('auto-status').textContent = ''
+  btn.disabled = false
+}
+
+// 单次 getDisplayMedia 子测试（带 stop，避免长期占用屏幕源）
+function runGetDisplayMedia(constraints) {
+  return new Promise(function (resolve) {
+    var md = navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia
+    if (!md) { resolve({ ok: false, error: 'getDisplayMedia 不可用' }); return }
+    md.call(navigator.mediaDevices, constraints)
+      .then(function (stream) {
+        var v = stream.getVideoTracks()[0]
+        var a = stream.getAudioTracks()[0]
+        var s = (v && v.getSettings) ? v.getSettings() : {}
+        stream.getTracks().forEach(function (t) { t.stop() }) // 立刻停止，避免占用屏幕源
+        resolve({
+          ok: true, hasVideo: !!v, hasAudio: !!a,
+          displaySurface: s.displaySurface || '(无)',
+          frameRate: s.frameRate || '(无)',
+          width: s.width || '(无)', height: s.height || '(无)',
+        })
+      })
+      .catch(function (err) {
+        resolve({ ok: false, error: (err && err.name ? err.name + ': ' : '') + (err && err.message ? err.message : String(err)) })
+      })
+  })
+}
+
+// 真实端到端：走与腾讯会议相同的 Electron handler 路径，分两个子测试定位“音频路径 vs 视频路径”：
+//   audioMode —— {video:true, audio:true}（与腾讯会议 SDK 等价，必触发 audioRequested）
+//   videoMode —— {video:true}（纯视频，不触发 audioRequested）
+// 顺序执行（先停前一路的轨道再起下一路），避免并发抢占同一捕获源在某些机器上互相干扰。
+function testScreenShareE2E() {
+  return runGetDisplayMedia({ video: true, audio: true }).then(function (audioRes) {
+    return runGetDisplayMedia({ video: true }).then(function (videoRes) {
+      return { audioMode: audioRes, videoMode: videoRes }
+    })
+  })
+}
+
+// 端到端结果格式化
+function fmtE2E(r) {
+  if (!r) return '未执行'
+  return r.ok
+    ? ('成功 video=' + r.hasVideo + ' audio=' + r.hasAudio + ' surface=' + r.displaySurface + ' ' + r.width + '×' + r.height)
+    : ('失败 ' + (r.error || ''))
+}
+
+function testFullscreenApi() {
+  return new Promise(function (resolve) {
+    try {
+      var el = document.documentElement
+      var p = (el.requestFullscreen && el.requestFullscreen()) || Promise.resolve()
+      Promise.resolve(p).then(function () {
+        // 立即退出，避免停留在全屏
+        if (document.fullscreenElement) document.exitFullscreen().catch(function () {})
+        resolve(true)
+      }).catch(function () {
+        resolve(false)
+      })
+    } catch (e) {
+      resolve(false)
+    }
+  })
+}
+
+function enterFullscreen() {
+  var demo = document.getElementById('fs-demo')
+  demo.classList.add('on')
+  var el = demo
+  var p = (el.requestFullscreen && el.requestFullscreen())
+  if (p && p.catch) p.catch(function () { /* 某些环境需在用户手势内触发，按钮本身已是手势 */ })
+}
+function exitFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(function () {})
+  document.getElementById('fs-demo').classList.remove('on')
+}
+
+// 环境信息
+async function loadEnv() {
+  try {
+    var d = await api.diagDisplayInfo()
+    var kv = document.getElementById('env-kv')
+    kv.innerHTML =
+      '主页地址：<b>' + escapeHtml(d.mainUrl) + '</b><br>' +
+      '显示器数量：<b>' + d.displayCount + '</b> ｜ 主屏：<b>#' + d.primaryId + '</b> ｜ 光标所在屏：<b>#' + d.activeId + '</b><br>' +
+      '通知窗将落点（光标屏右下角）：<b>(' + d.ncRect.x + ', ' + d.ncRect.y + ')</b>'
+    var list = document.getElementById('disp-list')
+    list.innerHTML = (d.displays || []).map(function (ds) {
+      var badges = ''
+      if (ds.isPrimary) badges += '<span class="badge primary">主屏</span>'
+      if (ds.id === d.activeId) badges += '<span class="badge active">光标所在</span>'
+      return '<div class="disp-item">' +
+        '<div class="di-head">显示器 #' + ds.id + badges + '</div>' +
+        '<div class="di-line">分辨率 ' + ds.bounds.width + '×' + ds.bounds.height + ' ＠' + ds.scaleFactor + 'x</div>' +
+        '<div class="di-line">workArea 原点(' + ds.workArea.x + ', ' + ds.workArea.y + ') 尺寸 ' +
+          ds.workArea.width + '×' + ds.workArea.height + '</div>' +
+        '</div>'
+    }).join('')
+  } catch (e) {
+    document.getElementById('env-kv').textContent = '环境信息加载失败：' + (e && e.message ? e.message : e)
+  }
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  })
+}
+</script>
+</body>
+</html>

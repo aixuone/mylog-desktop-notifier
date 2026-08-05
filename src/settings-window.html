@@ -236,6 +236,25 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
 .about-line { font-size: 13px; color: #5F5E5A; padding: 8px 0; border-bottom: 1px solid #F0F0F0; }
 .about-line b { color: #2C2C2A; font-weight: 600; }
 
+/* 主页地址编辑 */
+.mp-row { display: flex; align-items: center; gap: 10px; padding: 14px 0; border-bottom: 1px solid #F0F0F0; }
+.mp-row .mp-label { font-size: 14px; font-weight: 500; flex-shrink: 0; }
+.mp-row .mp-input {
+  flex: 1; min-width: 0; font-family: inherit; font-size: 13px; color: #2C2C2A;
+  padding: 8px 10px; border: 1px solid #D8D5CF; border-radius: 8px; outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.mp-row .mp-input:focus { border-color: #185FA5; box-shadow: 0 0 0 3px rgba(24,95,165,0.12); }
+.mp-row .mp-input.invalid { border-color: #D9534F; box-shadow: 0 0 0 3px rgba(217,83,79,0.12); }
+.mp-reset {
+  flex-shrink: 0; border: 1px solid #D8D5CF; background: #fff; color: #5F5E5A;
+  font-family: inherit; font-size: 12px; padding: 7px 12px; border-radius: 8px; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.mp-reset:hover { background: #F5F6F8; color: #185FA5; }
+.mp-hint { font-size: 12px; color: #9A9893; margin-top: 6px; }
+.mp-hint.err { color: #D9534F; }
+
 /* ── 联动横幅（实时生效状态，纯文本） ── */
 .link-banner {
   display: flex; align-items: center; gap: 10px;
@@ -293,6 +312,10 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
         <div id="tray-users" class="tray-users"></div>
         <!-- <div class="hint-line">与右键托盘菜单中的「在线用户」列表实时同步一致。</div> -->
       </div>
+      <div class="row">
+        <div class="grow"><div class="label">诊断测试</div><div class="desc">自动/手工检测弹窗、铃声、全屏等是否正常</div></div>
+        <button class="mp-reset" id="btn-diagnostics" type="button">打 开</button>
+      </div>
     </section>
 
     <!-- 铃声 -->
@@ -333,6 +356,13 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
     <!-- 关于 -->
     <section data-panel="about" hidden>
       <div class="panel-hint">版本与存储信息</div>
+      <div class="mp-row">
+        <span class="mp-label">主页地址</span>
+        <input class="mp-input" id="mp-url" type="text" spellcheck="false"
+               placeholder="https://data.tygps.com/mylog-pc/" autocomplete="off">
+        <button class="mp-reset" id="mp-reset" type="button">恢复默认</button>
+      </div>
+      <div class="mp-hint" id="mp-hint">托盘点击 / 主入口打开的网页地址，仅支持 http(s)。</div>
       <div class="about-line">应用版本：<b id="about-version"></b></div>
       <div class="about-line">铃声存储目录：<b id="about-ringtone-dir"></b></div>
       <div class="about-line">设置文件：<b id="about-settings-path"></b></div>
@@ -444,6 +474,9 @@ function loadAll() {
     C = { names: d.names || {}, localRingtones: d.localRingtones || [], urls: d.urls || {}, presets: d.presets || {}, builtin: d.builtin || [] }
     contacts = d.contacts || []
     try { renderGeneral(); renderRingtone(); renderMessage(); renderContacts(); renderAbout(d); renderTrayUsers() } catch (e) { console.error('[Settings] render error:', e) }
+    // 诊断测试入口
+    var btnDiag = document.getElementById('btn-diagnostics')
+    if (btnDiag) btnDiag.onclick = function () { try { api.openDiagnostics() } catch (e) { console.error('[Settings] openDiagnostics failed:', e) } }
     // 托盘在线用户列表：初次拉取 + 订阅实时更新（与托盘右键菜单一致）
     api.trayUsersGet().then(renderTrayUsers).catch(function () {})
     api.onTrayUsers(renderTrayUsers)
@@ -765,10 +798,50 @@ function onDocClickForContactPicker(e) {
 }
 
 // ── About ──
+const MP_DEFAULT = 'https://data.tygps.com/mylog-pc/'
+
 function renderAbout(d) {
   document.getElementById('about-version').textContent = d.version || ''
   document.getElementById('about-ringtone-dir').textContent = d.ringtoneDir || ''
   document.getElementById('about-settings-path').textContent = (d.ringtoneDir ? d.ringtoneDir.replace(/ringtones$/, 'settings.json') : '')
+
+  const input = document.getElementById('mp-url')
+  const hint = document.getElementById('mp-hint')
+  const current = (S && S.mainPageUrl) || MP_DEFAULT
+  input.value = current
+  input.classList.remove('invalid')
+  hint.classList.remove('err')
+  hint.textContent = '托盘点击 / 主入口打开的网页地址，仅支持 http(s)。'
+
+  // 实时保存（带 http(s) 校验）
+  input.oninput = function () {
+    const v = input.value.trim()
+    if (!v) {
+      input.classList.add('invalid')
+      hint.classList.add('err')
+      hint.textContent = '地址不能为空，请填写以 http:// 或 https:// 开头的网页地址。'
+      return
+    }
+    if (!/^https?:\/\//i.test(v)) {
+      input.classList.add('invalid')
+      hint.classList.add('err')
+      hint.textContent = '仅支持 http(s) 地址，请以 http:// 或 https:// 开头。'
+      return
+    }
+    input.classList.remove('invalid')
+    hint.classList.remove('err')
+    hint.textContent = '已保存，下次托盘点击将打开该地址。'
+    save({ mainPageUrl: v })
+  }
+
+  // 恢复默认
+  document.getElementById('mp-reset').onclick = function () {
+    input.value = MP_DEFAULT
+    input.classList.remove('invalid')
+    hint.classList.remove('err')
+    hint.textContent = '已恢复默认地址，下次托盘点击将打开该地址。'
+    save({ mainPageUrl: MP_DEFAULT })
+  }
 }
 
 // ── 托盘在线用户（与托盘右键菜单一致） ──

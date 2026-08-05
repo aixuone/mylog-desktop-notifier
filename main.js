@@ -1,7 +1,7 @@
 // main.js - Electron main process: tray + WS server + HTTP server + notification windows
 process.env.ELECTRON_NO_ATTACH_CONSOLE = '1'
 
-const { app, Tray, Menu, BrowserWindow, ipcMain, shell, nativeImage, dialog } = require('electron')
+const { app, Tray, Menu, BrowserWindow, ipcMain, shell, nativeImage, dialog, session, desktopCapturer, globalShortcut } = require('electron')
 const path = require('path')
 const crypto = require('crypto')
 const { WebSocketServer } = require('ws')
@@ -35,6 +35,12 @@ app.on('second-instance', (event, commandLine, workingDirectory) => {
 const config = require('./config.js')
 console.log('[Config] Loaded from config.js')
 
+// ─── 屏幕共享捕获管线修复（getDisplayMedia AbortError）──
+// 启用 WebRTC 桌面捕获特性，稳定 Electron 内 getDisplayMedia 的捕获启动链路。
+// 注意：刻意不关闭 Chromium 沙箱——本应用会加载远程页面并通过 preload 桥接 IPC，
+// 关沙箱是安全回退，仅当此开关仍不生效、且确认需要时再考虑 --no-sandbox。
+app.commandLine.appendSwitch('enable-features', 'WebRtcDesktopCapture')
+
 // ─── Global state ──────────────────────────────────────────
 let tray = null
 let wsServer = null
@@ -51,6 +57,7 @@ const version = config.version
 let ringtoneResolver = null
 let notificationCenter = null
 let settingsWindow = null      // 设置面板单例窗口
+let diagnosticsWindow = null   // 诊断测试窗口单例
 // ─── Tray icon state management ───────────────────────────
 // States: 'default' (connected, normal) | 'gray' (disconnected) | 'ringing' (incoming call) | 'unread' (unread messages)
 let trayIconState = 'gray'    // Start gray (no connections yet)
@@ -348,6 +355,298 @@ function makeWebPrefs() {
   }
 }
 
+// ─── Permission policy (shared) ──────────────────
+// 可信来源：官方域名 / 本地回环 / 本机内置页面(file://，仅我们自己的 UI)。
+// 仅对可信来源放行一组"安全"Web API；危险权限(camera 等)即便可信也默认拒绝。
+var TRUSTED_RE = /^https?:\/\/(?:[^\/]+\.)?tygps\.com|^https?:\/\/(localhost|127\.0\.0\.1)(?::\d+)?(?:\/|$)|^file:\/\//i
+var SAFE_PERMISSIONS = ['media', 'display-capture', 'fullscreen', 'clipboard-read', 'clipboard-write', 'pointerLock', 'notifications']
+function permissionAllowed(url, permission) {
+  return TRUSTED_RE.test(url || '') && SAFE_PERMISSIONS.indexOf(permission) !== -1
+}
+
+// ─── Screen sharing (getDisplayMedia) ─────────────
+// Electron 不会把屏幕/窗口源直接暴露给调用 navigator.mediaDevices.getDisplayMedia() 的页面，
+// 必须由主进程注册 display media request handler 来提供候选源，否则屏幕共享会静默失败。
+// 视频会议运行在主页面窗口（加载远程会议页），使用的是 defaultSession，故在此注册。
+//
+// audio 模式说明（Electron Streams.audio 类型已确认仅接受 'loopback' | 'loopbackWithMute'，
+// NOT 'mute'/布尔）。取值行为：
+//   'mute'            —— 用户未要求系统音频时的“纯视频”偏好
+//   'loopback'        —— 附带系统循环音频（Windows 支持）
+//   'loopbackWithMute'—— 附带系统循环音频且可静音（Windows 支持）
+// 关键根因（客户“屏幕共享意外出错 / AbortError: Error starting capture”）：
+//   腾讯会议 Web SDK 调用 getDisplayMedia({ audio: true }) 请求系统音频。Electron 的
+//   setDisplayMediaRequestHandler 里，若回调只回 { video: sources }（不传 audio），Electron
+//   无法满足页面请求的音频约束 → 直接 AbortError。因此当 request.audioRequested 为真时，
+//   必须提供合法 audio 值（用户选了 loopback 类就用之，否则兜底 loopbackWithMute）。
+//   页面只要视频时则纯视频（不传 audio），最安全。默认 'loopback'（捕获系统音频，本地不静音）。
+let screenShareAudioMode = 'loopback'
+// 根据【页面请求】与当前音频模式，构造合法的 Streams 响应。
+// audioRequested 为真 → 必须给合法 audio；否则纯视频。
+// 从源列表里挑【单个】源返回。关键：Electron 的 Streams.video 类型要求是
+// 单个 DesktopCapturerSource（NOT 数组）——上一版把整个数组回给 callback，Electron
+// 无法解析出唯一源 → getDisplayMedia 启动捕获即 AbortError（音视频/纯视频都会失败，
+// 也解释了“环境层能枚举 7 个源、端到端却 AbortError”的现象）。
+// 按页面请求的类型顺序挑第一个匹配源（屏幕优先于窗口），无匹配则回落 sources[0]。
+function pickScreenShareSource(sources, request) {
+  if (!sources || !sources.length) return null
+  var want = (request && request.types) || ['screen', 'window']
+  for (var i = 0; i < want.length; i++) {
+    var prefix = want[i] + ':'
+    var hit = sources.filter(function (s) { return s && s.id && s.id.indexOf(prefix) === 0 })[0]
+    if (hit) return hit
+  }
+  return sources[0]
+}
+function buildScreenShareStreams(sources, request) {
+  var src = pickScreenShareSource(sources, request)
+  var resp = { video: src }
+  var audioRequested = !!(request && request.audioRequested)
+  if (audioRequested && src) {
+    // 页面请求了系统音频：必须给合法 audio 值，否则 Electron 无法满足音频约束 → AbortError。
+    if (screenShareAudioMode === 'loopback') resp.audio = 'loopback'
+    else resp.audio = 'loopbackWithMute' // loopbackWithMute / 默认 mute → 兜底合法值
+  }
+  return resp
+}
+
+// ─── 屏幕共享 shim 注入（main world）───
+// 必须走 executeJavaScript 注入到网页 main world，而不是 preload：
+// contextIsolation=true 时 preload 运行在隔离 world，对 navigator.mediaDevices.getUserMedia
+// 的包裹渗透不到网页 main world，腾讯 TRTC SDK 在 main world 调用会完全绕过 preload 的 shim。
+const SCREEN_SHARE_SHIM_PATH = path.join(__dirname, 'src', 'screenshare-shim.js')
+let _screenShareShimCache = null
+function loadScreenShareShimSource() {
+  if (_screenShareShimCache == null) {
+    try { _screenShareShimCache = fs.readFileSync(SCREEN_SHARE_SHIM_PATH, 'utf8') } catch (e) { _screenShareShimCache = '' }
+  }
+  return _screenShareShimCache
+}
+// 把兼容 shim 注入指定窗口的 main world；枚举首选屏幕源作为 chromeMediaSourceId 注入 SDK
+async function injectScreenShareShim(win) {
+  if (!win || win.isDestroyed()) return
+  const src = loadScreenShareShimSource()
+  if (!src) { console.error('[ScreenShare] shim file empty, skip inject'); return }
+  let sourceId = ''
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1, height: 1 } })
+    const screen = sources.find((s) => s.id && s.id.indexOf('screen:') === 0) || sources[0]
+    sourceId = screen ? screen.id : ''
+  } catch (e) { console.error('[ScreenShare] enumerate for shim failed:', e && e.message) }
+  const cfg = JSON.stringify({ sourceId: sourceId, audioMode: screenShareAudioMode })
+  try {
+    await win.webContents.executeJavaScript('(function(){window.__SCREEN_SHARE_CFG__=' + cfg + ';})()')
+    await win.webContents.executeJavaScript(src)
+    console.log('[ScreenShare] shim injected to main world | sourceId=' + (sourceId ? sourceId.slice(0, 16) + '…' : '(none)'))
+  } catch (e) {
+    console.error('[ScreenShare] shim executeJavaScript failed:', e && e.message)
+  }
+}
+
+// ─── 屏幕共享源选择窗口 ─────────────────────────
+// 弹出模态窗口让用户选择要分享的屏幕/窗口，替代原先"自动选第一个源"。
+// 返回用户选中的 source 对象；用户取消或超时返回 null。
+// parentWin: 父窗口（来自 request.webContents），用于真正模态阻止父窗口操作。
+async function showScreenSharePicker(sources, parentWin) {
+  return new Promise(function (resolve) {
+    // 唯一 IPC channel，避免并发 getDisplayMedia 请求相互冲突
+    var channel = 'screen-share-select-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
+    var settled = false   // 防止 closed/超时/handle 重复 resolve
+    var picker = null
+    var timeoutTimer = null
+
+    function finish(result) {
+      if (settled) return
+      settled = true
+      if (timeoutTimer) { clearTimeout(timeoutTimer); timeoutTimer = null }
+      try { ipcMain.removeHandler(channel) } catch (e) { /* handler 可能已移除 */ }
+      if (picker && !picker.isDestroyed()) { picker.destroy() }
+      resolve(result)
+    }
+
+    // 选择窗口 webPreferences：在 makeWebPrefs() 基础上覆写 nodeIntegration/contextIsolation。
+    // 原因：选择窗口加载内联 data URL，内联脚本需 require('electron').ipcRenderer.invoke 回传选择结果；
+    // makeWebPrefs() 默认 contextIsolation:true 下 main world 无法访问 ipcRenderer，而 preload
+    // （src/preload.js，不在本次修改范围）未暴露通用 invoke 通道。本窗口仅加载主进程本地构造的
+    // 可信内容、不加载任何远程页面，故安全风险可控。
+    var webPrefs = Object.assign(makeWebPrefs(), {
+      nodeIntegration: true,
+      contextIsolation: false,
+      preload: undefined,
+    })
+
+    picker = new BrowserWindow({
+      width: 820,
+      height: 620,
+      modal: !!parentWin,
+      parent: parentWin || undefined,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      title: '选择要分享的内容',
+      backgroundColor: '#1e1e1e',
+      show: true,
+      center: true,
+      autoHideMenuBar: true,
+      webPreferences: webPrefs,
+    })
+
+    // 一次性接收渲染进程回传的选择结果
+    ipcMain.handle(channel, function (e, sourceId) {
+      var picked = null
+      for (var i = 0; i < sources.length; i++) {
+        if (sources[i].id === sourceId) { picked = sources[i]; break }
+      }
+      finish(picked)
+    })
+
+    // 用户点 X 关闭 → 取消
+    picker.on('closed', function () { finish(null) })
+
+    // 60 秒未选择 → 自动关闭并取消共享
+    timeoutTimer = setTimeout(function () { finish(null) }, 60000)
+
+    picker.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(buildScreenSharePickerHTML(sources, channel)))
+  })
+}
+
+// 构造源选择窗口的内联 HTML（深色主题）：屏幕 / 应用窗口分组 + 缩略图卡片网格
+function buildScreenSharePickerHTML(sources, channel) {
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+  }
+  function card(s) {
+    var thumb = (s.thumbnail && s.thumbnail.toDataURL) ? s.thumbnail.toDataURL() : ''
+    var name = esc(s.name || s.id)
+    var id = esc(s.id)
+    return '<div class="card" data-id="' + id + '" tabindex="0">' +
+      '<div class="thumb">' + (thumb ? '<img src="' + thumb + '" alt="">' : '<div class="nothumb">无预览</div>') + '</div>' +
+      '<div class="name" title="' + name + '">' + name + '</div>' +
+      '</div>'
+  }
+  function group(title, items) {
+    if (!items || !items.length) return ''
+    return '<section class="group"><h2>' + esc(title) + '</h2><div class="grid">' +
+      items.map(card).join('') + '</div></section>'
+  }
+  var screens = sources.filter(function (s) { return s.id && s.id.indexOf('screen:') === 0 })
+  var windows = sources.filter(function (s) { return s.id && s.id.indexOf('window:') === 0 })
+  var others = sources.filter(function (s) { return !s.id || (s.id.indexOf('screen:') !== 0 && s.id.indexOf('window:') !== 0) })
+
+  var p = []
+  p.push('<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>选择要分享的内容</title>')
+  p.push('<style>',
+    'html,body{margin:0;padding:0;height:100%;background:#1e1e1e;color:#e6e6e6;font-family:"Microsoft YaHei",Segoe UI,sans-serif;overflow:hidden}',
+    'body{display:flex;flex-direction:column}',
+    'header{padding:16px 20px 12px;border-bottom:1px solid #333}',
+    'header h1{margin:0;font-size:16px;font-weight:600}',
+    'header p{margin:4px 0 0;font-size:12px;color:#9aa}',
+    '.wrap{flex:1;overflow:auto;padding:12px 20px 20px}',
+    '.group{margin-bottom:18px}',
+    '.group h2{margin:0 0 10px;font-size:13px;color:#bbb;font-weight:600}',
+    '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}',
+    '.card{background:#2a2a2a;border:2px solid transparent;border-radius:8px;overflow:hidden;cursor:pointer;transition:transform .08s ease,border-color .12s ease,background .12s ease}',
+    '.card:hover{border-color:#3a9bff;background:#303030}',
+    '.card:focus{outline:none;border-color:#3a9bff}',
+    '.card.selected{border-color:#3a9bff;background:#1f3a5f;transform:scale(.98)}',
+    '.thumb{width:100%;height:104px;background:#000;display:flex;align-items:center;justify-content:center}',
+    '.thumb img{width:100%;height:100%;object-fit:cover;display:block}',
+    '.nothumb{color:#666;font-size:12px}',
+    '.name{padding:6px 8px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    'footer{padding:10px 20px;border-top:1px solid #333;font-size:11px;color:#777;text-align:center}',
+    '</style></head><body>')
+  p.push('<header><h1>选择要分享的屏幕或窗口</h1><p>点击下方卡片选择要分享的内容，按 Esc 取消</p></header>')
+  p.push('<div class="wrap">',
+    group('屏幕', screens),
+    group('应用窗口', windows),
+    group('其他', others),
+    '</div>')
+  p.push('<footer>60 秒内未选择将自动取消</footer>')
+  p.push('<script>')
+  // channel 通过 JSON.stringify 注入，避免引号注入
+  p.push('var CH=' + JSON.stringify(channel) + ';')
+  p.push(
+    'var cards=document.querySelectorAll(".card");',
+    'for(var i=0;i<cards.length;i++){(function(c){',
+    '  c.addEventListener("click",function(){',
+    '    var id=c.getAttribute("data-id");',
+    '    for(var j=0;j<cards.length;j++){cards[j].classList.remove("selected");}',
+    '    c.classList.add("selected");',
+    '    try{require("electron").ipcRenderer.invoke(CH,id);}catch(e){window.close();}',
+    '  });',
+    '  c.addEventListener("keydown",function(e){if(e.key==="Enter"){c.click();}});',
+    '})(cards[i]);}')
+  p.push('document.addEventListener("keydown",function(e){if(e.key==="Escape"){window.close();}});')
+  p.push('</script></body></html>')
+  return p.join('')
+}
+
+function setupScreenShare() {
+  var saved = settingsStore.get() && settingsStore.get().screenShareAudio
+  // loopbackWithMute 会静音本地系统输出（喇叭无声），不符合"默认分享声音"需求，迁移为 loopback
+  if (saved === 'loopbackWithMute') {
+    saved = 'loopback'
+    try { settingsStore.set({ screenShareAudio: 'loopback' }) } catch (e) {}
+  }
+  if (saved === 'mute' || saved === 'loopback') screenShareAudioMode = saved
+
+  session.defaultSession.setDisplayMediaRequestHandler(function (request, callback) {
+    var reqWc = request && request.webContents
+    var url = reqWc ? reqWc.getURL() : '(unknown)'
+    var audioRequested = !!(request && request.audioRequested)
+    var videoRequested = !!(request && request.videoRequested)
+    var types = (request && request.types) ? request.types : ['screen', 'window']
+    console.log('[ScreenShare] getDisplayMedia requested from:', url,
+      '| videoRequested:', videoRequested, '| audioRequested:', audioRequested, '| audioMode:', screenShareAudioMode)
+    // 父窗口：用于模态选择窗口（阻止用户在选择期间操作会议页）
+    var parentWin = reqWc ? BrowserWindow.fromWebContents(reqWc) : null
+    desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 320, height: 180 },
+    }).then(async function (sources) {
+      if (!sources || !sources.length) {
+        console.warn('[ScreenShare] no sources available, cancel share')
+        callback({})
+        return
+      }
+      // 仅一个源时跳过选择窗口，直接返回（优化体验）；多源时弹窗让用户选
+      var picked = (sources.length === 1) ? sources[0] : await showScreenSharePicker(sources, parentWin)
+      if (!picked) {
+        // 用户取消或 60 秒超时
+        console.log('[ScreenShare] user cancelled source selection')
+        callback({})
+        return
+      }
+      // 复用 buildScreenShareStreams 的音频逻辑构造响应
+      var streams = { video: picked }
+      if (audioRequested) {
+        if (screenShareAudioMode === 'loopback') streams.audio = 'loopback'
+        else streams.audio = 'loopbackWithMute' // mute / loopbackWithMute 兜底合法值
+      }
+      console.log('[ScreenShare] sources resolved:', sources.length,
+        '| picked:', (picked.id + ' (' + picked.name + ')'),
+        '| callback(audio:' + (streams.audio || 'omitted-video-only') + ')')
+      callback(streams)
+    }).catch(function (err) {
+      console.error('[ScreenShare] getSources failed:', err && err.message)
+      callback({})
+    })
+  })
+
+  session.defaultSession.setPermissionRequestHandler(function (webContents, permission, cb) {
+    var url = webContents.getURL()
+    // 仅对可信来源放行一组安全的 Web API（媒体/采集/全屏/剪贴板/指针锁定/通知）；
+    // 原实现只放行 media/display-capture，导致主页面窗口内 requestFullscreen()、
+    // 剪贴板、指针锁定、通知等被拒（表现为"点击无响应/报错"）。
+    var allow = permissionAllowed(url, permission)
+    // 诊断日志：便于远程定位"被拒的权限"（如屏幕共享仍报错的客户机）
+    console.log('[Permission]', allow ? 'allow' : 'deny', permission, 'url:', url)
+    cb(allow)
+  })
+}
+
 // Shared BrowserWindow options for center-popup notification windows
 function makePopupWindowOpts(w, h) {
   return {
@@ -371,12 +670,17 @@ function makePopupWindowOpts(w, h) {
   }
 }
 
-// ─── Notification center window rect (bottom-right) ──
-function getNcRect(w, h) {
+// ─── Active display (光标当前所在显示器) ──
+function getActiveDisplay() {
   const { screen } = require('electron')
-  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  return screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+}
+
+// ─── Notification center window rect (bottom-right of active display) ──
+function getNcRect(w, h) {
+  const wa = getActiveDisplay().workArea
   const margin = 20
-  return { x: sw - w - margin, y: sh - h - margin }
+  return { x: wa.x + wa.width - w - margin, y: wa.y + wa.height - h - margin }
 }
 
 // ─── Broadcast helper (main → all web clients) ──
@@ -384,6 +688,46 @@ function broadcast(msg) {
   if (!wsServer) return
   const raw = JSON.stringify(msg)
   wsServer.clients.forEach((c) => { if (c.readyState === 1) c.send(raw) })
+}
+
+// ─── App-window targeted helpers ──────────────────────
+// 向应用窗口连接定向发送消息（不广播给外部浏览器）
+function sendToAppClient(msg) {
+  if (!wsServer) return
+  const raw = JSON.stringify(msg)
+  wsServer.clients.forEach((c) => {
+    if (c.readyState !== 1) return
+    const entry = connectedClients.get(c)
+    if (entry && entry.isAppWindow && entry.connected) c.send(raw)
+  })
+}
+
+// 检查是否有应用窗口连接
+function hasAppClient() {
+  return Array.from(connectedClients.values()).some(u => u.isAppWindow && u.connected)
+}
+
+// 置前主页面窗口，并可选地跳转到指定 url（SPA 路由跳转，不刷新页面）
+function focusMainWindow(url) {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+  if (mainPageWindow.isMinimized()) mainPageWindow.restore()
+  mainPageWindow.show()
+  mainPageWindow.focus()
+  // 如果有 url，用 executeJavaScript 在页面内触发 SPA 路由跳转
+  // 网页端可能未处理 FOCUS_CONVERSATION 消息，直接用 history.pushState + popstate 最可靠
+  if (url) {
+    try {
+      mainPageWindow.webContents.executeJavaScript(
+        "(function(u){" +
+        "  try {" +
+        "    if (window.location.pathname + window.location.search === u.split('//')[1].split('/').slice(1).join('/')) return;" +
+        "    window.history.pushState({}, '', u);" +
+        "    window.dispatchEvent(new PopStateEvent('popstate'));" +
+        "  } catch(e) { window.location.href = u; }" +
+        "})(" + JSON.stringify(url) + ")"
+      )
+    } catch (e) { console.warn('[FocusMain] executeJavaScript failed:', e && e.message) }
+  }
 }
 
 // ─── Safe open external ──
@@ -614,6 +958,14 @@ function updateTrayMenu() {
 
   // ── Actions ──
   menuItems.push({ label: '设置', click: () => openSettingsWindow() })
+  // 调试窗口：打开主页面窗口的 Chrome DevTools，查看 TRTC SDK 内部日志（或用 Ctrl+Shift+I）
+  menuItems.push({ label: '调试窗口', click: () => {
+    if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+      mainPageWindow.webContents.openDevTools()
+      mainPageWindow.show()
+      mainPageWindow.focus()
+    }
+  }})
   menuItems.push({
     label: '开机自启',
     type: 'checkbox',
@@ -693,6 +1045,8 @@ function setUserInfo(userData, wsClient) {
         ) {
           // Reclaim: transfer data from old entry to new ws, delete old key
           const needIconDownload = userIcon && userIcon !== (oldEntry.userIcon || '')
+          // isAppWindow 以新 ws 的 UA 标记为准（用户可能换了连接方式）
+          const newIsAppWindow = currentEntry ? !!currentEntry.isAppWindow : false
           const reclaimed = {
             clientId: oldEntry.clientId,     // keep same clientId (stable identity)
             userId,
@@ -702,6 +1056,7 @@ function setUserInfo(userData, wsClient) {
             connected: true,
             localIconPath: oldEntry.localIconPath,  // reuse downloaded icon
             lastSeenAt: now,
+            isAppWindow: newIsAppWindow,
           }
           connectedClients.delete(oldWs)       // remove old ws mapping
           connectedClients.set(wsClient, reclaimed)  // map new ws to reclaimed entry
@@ -925,6 +1280,21 @@ if (process.platform === 'darwin') {
 }
 
 app.whenReady().then(() => {
+  // 覆盖 UA，移除 Electron 字样，让 TRTC Web SDK 认为是标准 Chrome 浏览器
+  // TRTC 在 startScreenCapture 内部检测到 Electron 环境后直接报 -1005 not supported
+  try {
+    const origUA = session.defaultSession.getUserAgent()
+    // 末尾追加 MylogDesktop/1.0 标记：不含 Electron 字样，不影响 TRTC 检测，
+    // 但能让 WS server 识别应用窗口连接（外部浏览器 UA 不含此标记）
+    const cleanUA = origUA
+      .replace(/\s*Electron\/[\d.]+/i, '')
+      .replace(/\s*mylog-desktop-notifier\/[\d.]+/i, '')
+      + ' MylogDesktop/1.0'
+    session.defaultSession.setUserAgent(cleanUA)
+    console.log('[UA] Original:', origUA)
+    console.log('[UA] Cleaned: ', cleanUA)
+  } catch (e) { console.error('[UA] override failed:', e) }
+
   findAvailablePort(config.wsPort, config.handshake.maxAttempts, (err, wsPort) => {
     if (err || !wsPort) {
       console.error('[Port] No available ports found, exiting')
@@ -934,6 +1304,9 @@ app.whenReady().then(() => {
 
     currentWsPort = wsPort
     createTray()
+
+    // ── 屏幕共享支持（getDisplayMedia 需在会话层注册源提供器）──
+    setupScreenShare()
 
     // ── Feature init (M1+) ──────────────────────
     settingsStore.load()
@@ -953,6 +1326,10 @@ app.whenReady().then(() => {
       openExternal: safeOpenExternal,
       broadcast,
       isWebConnected: hasConnectedClients,
+      // 应用窗口定向能力（用于通知点击分流：应用窗口连接 → 置前 + FOCUS_CONVERSATION）
+      sendToAppClient,
+      hasAppClient,
+      focusMainWindow,
     })
     notificationCenter.preCreate()
     // ─────────────────────────────────────────────
@@ -997,6 +1374,117 @@ app.on('before-quit', () => {
 })
 
 // ─── System tray ──────────────────────────────────────────
+let mainPageWindow = null
+let mainPagePendingShow = false   // 首屏加载完成前不显示窗口（避免白屏/假死）
+const MAIN_PAGE_DEFAULT = 'https://data.tygps.com/mylog-pc/'
+
+// 读取/保存主页面窗口尺寸与位置（记忆上次状态，首次才用默认 1300x700）
+function loadMainPageBounds() {
+  const b = settingsStore.get() && settingsStore.get().mainPageBounds
+  if (b && typeof b.width === 'number' && typeof b.height === 'number') return b
+  return null
+}
+let _boundsTimer = null
+function saveMainPageBounds() {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+  const b = mainPageWindow.getBounds()
+  if (_boundsTimer) clearTimeout(_boundsTimer)
+  _boundsTimer = setTimeout(() => {
+    settingsStore.set({ mainPageBounds: { x: b.x, y: b.y, width: b.width, height: b.height } })
+  }, 300)
+}
+
+// 托盘点击 → 打开主页面网页（默认 1300x700，地址可在设置「关于」中修改）
+function openMainPage() {
+  let url = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
+  // 兜底：必须是 http/https，否则回退默认地址（避免 loadURL 加载非法内容）
+  if (!/^https?:\/\//i.test(url || '')) url = MAIN_PAGE_DEFAULT
+
+  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+    // 点击切换语义：最小化则恢复；可见且聚焦则隐藏（类 IM）；其余置顶显示
+    if (mainPageWindow.isMinimized()) { mainPageWindow.restore(); mainPageWindow.focus(); return }
+    if (mainPageWindow.isVisible() && mainPageWindow.isFocused()) { mainPageWindow.hide(); return }
+    mainPageWindow.show(); mainPageWindow.focus()
+    return
+  }
+
+  const b = loadMainPageBounds()
+  mainPageWindow = new BrowserWindow({
+    ...(b ? { x: b.x, y: b.y, width: b.width, height: b.height } : { width: 1300, height: 700, center: true }),
+    minWidth: 800,
+    minHeight: 480,
+    show: false,            // 首屏加载完成后再显示，避免白屏/假死
+    frame: true,
+    autoHideMenuBar: true,
+    icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
+    webPreferences: makeWebPrefs(),
+  })
+
+  // 关闭即隐藏到托盘（继续当前页面），而非销毁；真正退出由全局 isQuitting 控制
+  mainPageWindow.on('close', (e) => {
+    if (!isQuitting) { e.preventDefault(); mainPagePendingShow = false; mainPageWindow.hide() }
+  })
+  // ─── 渲染进程 console 桥接到主进程 ───
+  // 用户无法直接查看主页面窗口的 console 日志（TRTC SDK 的报错、调用路径全藏在渲染进程）。
+  // 通过 webContents.on('console-message') 把所有 console.log/warn/error 输出到主进程控制台，
+  // 这样 npm run dev 的终端里就能看到 SDK 内部到底干了什么。
+  mainPageWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    var tag = '[MainPage Console]'
+    // level: 0=verbose, 1=info, 2=warning, 3=error
+    if (level === 3) console.error(tag, message, '|', sourceId, ':', line)
+    else if (level === 2) console.warn(tag, message, '|', sourceId, ':', line)
+    else console.log(tag, message, '|', sourceId, ':', line)
+  })
+
+  // ─── Ctrl+Shift+I 打开 DevTools ───
+  // 让用户能直接在主页面窗口里打开 Chrome DevTools，查看 TRTC SDK 的真实调用日志。
+  // 窗口关闭时注销快捷键；重新打开时重新注册。
+  try {
+    globalShortcut.register('CommandOrControl+Shift+I', function () {
+      if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+        mainPageWindow.webContents.toggleDevTools()
+      }
+    })
+  } catch (e) {
+    console.warn('[DevTools] 快捷键注册失败:', e && e.message)
+  }
+
+  mainPageWindow.on('closed', () => {
+    mainPageWindow = null
+    try { globalShortcut.unregister('CommandOrControl+Shift+I') } catch (e) {}
+  })
+
+  // 主页面 shim 注入时机：优先 dom-ready（比 did-finish-load 更早，在 SDK 脚本执行前包裹），
+  // did-finish-load 作为备用（全页重载时 JS 上下文重建，__SCREEN_SHARE_SHIM_INSTALLED__ 重置，
+  // 需重新注入；shim 内部有防重包裹守卫）。
+  // SPA 内部路由切换不会触发这两个事件，shim 持久化于同一 JS 上下文。
+  mainPageWindow.webContents.on('dom-ready', () => injectScreenShareShim(mainPageWindow))
+  mainPageWindow.webContents.on('did-finish-load', () => injectScreenShareShim(mainPageWindow))
+
+  // 加载状态：任务栏不确定进度；首屏完成才显示；失败进入本地兜底错误页
+  mainPageWindow.webContents.on('did-start-loading', () => {
+    mainPageWindow.setProgressBar(-1, { mode: 'indeterminate' })
+  })
+  mainPageWindow.webContents.on('did-stop-loading', () => {
+    mainPageWindow.setProgressBar(-1)
+    if (mainPagePendingShow) { mainPagePendingShow = false; mainPageWindow.show(); mainPageWindow.focus() }
+  })
+  mainPageWindow.webContents.on('did-fail-load', (e, errorCode, errorDescription, validatedURL) => {
+    console.warn('[MainPage] load failed:', errorCode, errorDescription, validatedURL)
+    mainPageWindow.setProgressBar(-1)
+    const errPage = 'file://' + path.join(__dirname, 'src', 'mainpage-error.html') + '?url=' + encodeURIComponent(validatedURL || url)
+    if (mainPageWindow.getURL() !== errPage) mainPageWindow.loadURL(errPage)
+    if (mainPagePendingShow) { mainPagePendingShow = false; mainPageWindow.show() }
+  })
+
+  // 记忆窗口尺寸/位置
+  mainPageWindow.on('resize', saveMainPageBounds)
+  mainPageWindow.on('move', saveMainPageBounds)
+
+  mainPagePendingShow = true
+  mainPageWindow.loadURL(url)
+}
+
 function createTray() {
   loadIconCache()
 
@@ -1007,8 +1495,8 @@ function createTray() {
   updateTrayMenu()
 
   tray.on('click', () => {
-    // 左键点击 → 打开设置面板
-    openSettingsWindow()
+    // 左键点击 → 打开主页面网页（默认 1300x700，地址见「关于」设置）
+    openMainPage()
   })
 }
 
@@ -1022,10 +1510,14 @@ function registerProtocol() {
 function startWSServer() {
   wsServer = new WebSocketServer({ port: currentWsPort, host: '127.0.0.1' })
 
-  wsServer.on('connection', (ws) => {
+  wsServer.on('connection', (ws, request) => {
     const clientId = ++clientIdCounter
     const now = Date.now()
-    console.log('[WS] Browser connected, clientId:', clientId)
+    // 通过 UA 标记识别应用窗口连接（mainPageWindow）vs 外部浏览器连接
+    // 应用窗口 UA 末尾含 MylogDesktop/1.0（由 app.whenReady 中 setUserAgent 注入）
+    const reqUA = (request && request.headers && request.headers['user-agent']) || ''
+    const isAppWindow = /MylogDesktop/i.test(reqUA)
+    console.log('[WS] Browser connected, clientId:', clientId, 'isAppWindow:', isAppWindow)
 
     // Pre-register placeholder so we can track this connection
     connectedClients.set(ws, {
@@ -1037,6 +1529,7 @@ function startWSServer() {
       connected: true,
       localIconPath: '',
       lastSeenAt: now,
+      isAppWindow,
     })
 
     ws.send(JSON.stringify({ type: 'CONNECTED', payload: { version: version, port: currentWsPort } }))
@@ -1160,6 +1653,17 @@ function handleBrowserMessage(ws, msg) {
       }
       break
 
+    // 网页端当前正在查看的会话变化（打开/切换/关闭）。conversationId 为 null 表示无具体会话（如停留在会话列表）。
+    // 桌面端据此实时感知"用户正在看哪个会话"，抑制该会话的消息弹窗与未读闪烁；
+    // 切到某会话即清掉它的未读，托盘立即停止闪烁（解决「网页端已读状态未实时同步到桌面」的问题）。
+    case 'ACTIVE_CONVERSATION':
+      if (notificationCenter) {
+        const cid = (msg.payload && msg.payload.conversationId) ? msg.payload.conversationId : null
+        notificationCenter.setActiveConversation(cid)
+        console.log('[WS] Active conversation:', cid)
+      }
+      break
+
     case 'CALL_CONNECTED':
     case 'CALL_ENDED':
       setTrayState(deriveTrayState())
@@ -1265,13 +1769,12 @@ function isDuplicateToast(convId, content) {
 
 // ─── Incoming call window (pre-created for instant show) ─
 function preCreateCallWindow() {
-  const { screen } = require('electron')
-  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  const wa = getActiveDisplay().workArea
 
   callWindow = new BrowserWindow({
     ...makePopupWindowOpts(CALL_W, CALL_H),
-    x: Math.round((sw - CALL_W) / 2),
-    y: Math.round((sh - CALL_H) / 2),
+    x: Math.round(wa.x + (wa.width - CALL_W) / 2),
+    y: Math.round(wa.y + (wa.height - CALL_H) / 2),
   })
   callWindow.setAlwaysOnTop(true, 'screen-saver')
   callWindow.setVisibleOnAllWorkspaces(true)
@@ -1295,9 +1798,8 @@ function showCallWindow(payload, ws) {
     callWindow._timer = null
   }
 
-  const { screen } = require('electron')
-  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
-  callWindow.setPosition(Math.round((sw - CALL_W) / 2), Math.round((sh - CALL_H) / 2))
+  const wa = getActiveDisplay().workArea
+  callWindow.setPosition(Math.round(wa.x + (wa.width - CALL_W) / 2), Math.round(wa.y + (wa.height - CALL_H) / 2))
   callWindow.webContents.setAudioMuted(false)   // Unmute in case previously muted
   callWindow.show()
   callWindow.focus()
@@ -1354,13 +1856,12 @@ function closeCallWindow() {
 
 // ─── Meeting window (screen center, dedicated to meeting invites) ─
 function preCreateMeetingWindow() {
-  const { screen } = require('electron')
-  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  const wa = getActiveDisplay().workArea
 
   meetingWindow = new BrowserWindow({
     ...makePopupWindowOpts(MEETING_W, MEETING_H),
-    x: Math.round((sw - MEETING_W) / 2),
-    y: Math.round((sh - MEETING_H) / 2),
+    x: Math.round(wa.x + (wa.width - MEETING_W) / 2),
+    y: Math.round(wa.y + (wa.height - MEETING_H) / 2),
   })
   meetingWindow.setAlwaysOnTop(true, 'screen-saver')
   meetingWindow.setVisibleOnAllWorkspaces(true)
@@ -1384,9 +1885,8 @@ function showMeetingWindow(payload, ws) {
     meetingWindow._timer = null
   }
 
-  const { screen } = require('electron')
-  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
-  meetingWindow.setPosition(Math.round((sw - MEETING_W) / 2), Math.round((sh - MEETING_H) / 2))
+  const wa = getActiveDisplay().workArea
+  meetingWindow.setPosition(Math.round(wa.x + (wa.width - MEETING_W) / 2), Math.round(wa.y + (wa.height - MEETING_H) / 2))
   meetingWindow.webContents.setAudioMuted(false)   // Unmute in case previously muted
   meetingWindow.show()
   meetingWindow.focus()
@@ -1585,6 +2085,207 @@ function openSettingsWindow() {
   })
   settingsWindow.on('closed', () => { settingsWindow = null })
 }
+
+// ─── Diagnostics window (自检：自动 + 手工) ──────
+const NC_W = 360, NC_H = 520   // 通知中心窗口尺寸（须与 notificationCenter.js 保持一致）
+
+function openDiagnosticsWindow() {
+  if (diagnosticsWindow && !diagnosticsWindow.isDestroyed()) {
+    if (diagnosticsWindow.isVisible()) diagnosticsWindow.focus()
+    else diagnosticsWindow.show()
+    return
+  }
+  diagnosticsWindow = new BrowserWindow({
+    width: 840, height: 680,
+    show: true, frame: true, autoHideMenuBar: true,
+    center: false, resizable: true, minimizable: true, maximizable: true,
+    icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
+    webPreferences: makeWebPrefs(),
+  })
+  // 居中到光标当前所在显示器（与通知窗一致，避免多屏下跑到客户没在看的屏）
+  const wa = getActiveDisplay().workArea
+  diagnosticsWindow.setPosition(
+    Math.round(wa.x + Math.max(0, (wa.width - 840) / 2)),
+    Math.round(wa.y + Math.max(0, (wa.height - 680) / 2)),
+  )
+  diagnosticsWindow.loadFile(path.join(__dirname, 'src', 'diagnostics.html'))
+  diagnosticsWindow.on('closed', () => { diagnosticsWindow = null })
+}
+
+// 纯环境信息（无副作用）：供诊断窗「多显示器环境」面板使用
+function getDiagEnv() {
+  const { screen } = require('electron')
+  const displays = screen.getAllDisplays().map((d) => ({
+    id: d.id,
+    isPrimary: d.id === screen.getPrimaryDisplay().id,
+    bounds: d.bounds,
+    workArea: d.workArea,
+    scaleFactor: d.scaleFactor,
+  }))
+  const primary = screen.getPrimaryDisplay()
+  const cursor = screen.getCursorScreenPoint()
+  const active = screen.getDisplayNearestPoint(cursor)
+  const mainUrl = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
+  const permissions = SAFE_PERMISSIONS.map((p) => ({ permission: p, allow: permissionAllowed(mainUrl, p) }))
+  return {
+    displayCount: displays.length,
+    displays,
+    primaryId: primary.id,
+    cursor,
+    activeId: active.id,
+    ncRect: getNcRect(NC_W, NC_H),
+    mainUrl,
+    permissions,
+  }
+}
+
+// 自动测试：在 getDiagEnv 基础上附带副作用（真实显示通知窗 + 试播铃声），用于验证可见性/可听性
+function buildDiagAuto(autoFullscreenOk) {
+  const env = getDiagEnv()
+  let windowState = null
+  let ringtone = null
+  if (notificationCenter) {
+    notificationCenter.showWindow()                 // 真实显示通知窗，验证可见性
+    windowState = notificationCenter.getWindowState()
+    ringtone = notificationCenter.previewRingtone('message', null)
+    setTimeout(() => { try { notificationCenter.hideWindow() } catch (e) {} }, 2500)  // 自动收起
+  }
+  return Object.assign({}, env, {
+    window: windowState,
+    ringtone,
+    fullscreenApiOk: !!autoFullscreenOk,
+  })
+}
+
+ipcMain.on('open-diagnostics', () => openDiagnosticsWindow())
+ipcMain.handle('diag:display-info', () => getDiagEnv())
+ipcMain.handle('diag:permission-matrix', () => {
+  const mainUrl = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
+  return SAFE_PERMISSIONS.map((p) => ({ permission: p, allow: permissionAllowed(mainUrl, p) }))
+})
+ipcMain.handle('diag:run-auto', async (e, arg) => {
+  // arg.fullscreenOk 由渲染进程在完成 requestFullscreen 后回填
+  return buildDiagAuto(arg && arg.fullscreenOk)
+})
+ipcMain.on('diag:push-test', () => { if (notificationCenter) notificationCenter.pushTest() })
+ipcMain.on('diag:play-ringtone', () => { if (notificationCenter) notificationCenter.previewRingtone('message', null) })
+ipcMain.on('diag:close-test', () => { if (notificationCenter) notificationCenter.hideWindow() })
+
+// ── 诊断扩展（P0+P1 补充项，见 .workbuddy/diagnostics-gap.md）──
+// P0-1 屏幕共享"源获取"实测：直接调本机 desktopCapturer，验证驱动/显卡/权限能拿到源
+// （权限放行 ≠ 共享可用，客户"意外出错"极可能在此层失败）
+ipcMain.handle('diag:screencapture', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1, height: 1 } })
+    return {
+      ok: true,
+      count: sources.length,
+      audioMode: screenShareAudioMode,
+      sample: sources.slice(0, 3).map((s) => ({ id: s.id, name: s.name })),
+    }
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e), audioMode: screenShareAudioMode }
+  }
+})
+
+// 运行时切换屏幕共享音频模式（mute / loopback / loopbackWithMute），用于排查
+// “腾讯 SDK 是否因缺少音频轨道而报未知错误”这一假设；持久化到 settings 下次启动仍生效。
+ipcMain.handle('diag:set-screenshare-audio', (e, mode) => {
+  if (mode !== 'mute' && mode !== 'loopback' && mode !== 'loopbackWithMute') {
+    return { ok: false, error: 'invalid mode: ' + mode }
+  }
+  screenShareAudioMode = mode
+  try { settingsStore.set({ screenShareAudio: mode }); console.log('[ScreenShare] audio mode persisted:', mode) } catch (err) {}
+  return { ok: true, mode: screenShareAudioMode }
+})
+
+// ── 屏幕共享兼容：为腾讯 TRTC 旧式 getUserMedia({chromeMediaSource:'desktop'}) 提供源 ──
+// Electron 无原生源选择框，TRTC SDK 走 legacy getUserMedia 时会因缺少 chromeMediaSourceId 而失败。
+// 这里返回主进程枚举到的首选屏幕源（id/name），由 preload 的 shim 注入到约束中。
+ipcMain.handle('get-desktop-source', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1, height: 1 } })
+    const screen = sources.find((s) => s.id && s.id.indexOf('screen:') === 0) || sources[0]
+    return { ok: true, id: screen ? screen.id : null, name: screen ? screen.name : null }
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) }
+  }
+})
+
+// 主页面媒体调用埋点（来自 preload 的 shim）：定位腾讯 SDK 实际走哪条捕获路径
+ipcMain.on('page-media-log', (event, msg) => {
+  console.log('[MainPage Media]', msg)
+})
+
+// P0-2 通知点击聚焦（FOCUS_CONVERSATION / 回退 openExternal）
+ipcMain.handle('diag:focus', (e, data) => {
+  return notificationCenter ? notificationCenter.diagFocusTest(data || {}) : null
+})
+
+// P0-3 网页端离线/被踢常驻通知（sticky 不随 ✕ 收起）
+ipcMain.handle('diag:sysalert', () => {
+  return notificationCenter ? notificationCenter.diagSysAlertTest() : null
+})
+
+// P1-4 铃声多场景解析（message/call/meeting/联系人专属，silent 不试播）
+ipcMain.handle('diag:ringtone-scenes', () => {
+  if (!notificationCenter) return null
+  const contacts = (settingsStore.loadContacts && settingsStore.loadContacts()) || []
+  const cid = contacts.length ? contacts[0].id : null
+  return {
+    message: notificationCenter.previewRingtone('message', null, true),
+    call: notificationCenter.previewRingtone('call', null, true),
+    meeting: notificationCenter.previewRingtone('meeting', null, true),
+    contact: cid ? notificationCenter.previewRingtone('message', cid, true) : null,
+    contactId: cid,
+  }
+})
+
+// P1-5 来电浮窗弹出（show + 验证 visible，2.5s 自动关闭并静音，避免干扰真实来电状态）
+ipcMain.handle('diag:show-call', () => {
+  try {
+    if (!callWindow || callWindow.isDestroyed()) preCreateCallWindow()
+    callWindow.show()
+    try { callWindow.webContents.setAudioMuted(true) } catch (e) {}
+    const visible = callWindow.isVisible()
+    setTimeout(() => { try { closeCallWindow() } catch (e) {} }, 2500)
+    return { visible }
+  } catch (e) {
+    return { visible: false, error: (e && e.message) || String(e) }
+  }
+})
+
+// P1-5 会议浮窗弹出
+ipcMain.handle('diag:show-meeting', () => {
+  try {
+    if (!meetingWindow || meetingWindow.isDestroyed()) preCreateMeetingWindow()
+    meetingWindow.show()
+    try { meetingWindow.webContents.setAudioMuted(true) } catch (e) {}
+    const visible = meetingWindow.isVisible()
+    setTimeout(() => { try { closeMeetingWindow() } catch (e) {} }, 2500)
+    return { visible }
+  } catch (e) {
+    return { visible: false, error: (e && e.message) || String(e) }
+  }
+})
+
+// P1-6 通知模式联动：切 dnd 验证铃声静音 + 弹窗被抑制，随后恢复原模式
+ipcMain.handle('diag:mode-linkage', () => {
+  const origMode = settingsStore.getMerged().notifyMode
+  settingsStore.set({ notifyMode: 'dnd' })
+  if (notificationCenter) {
+    notificationCenter.markRead('__diag_mode__')
+    notificationCenter.hideWindow()
+    notificationCenter.pushMessage({ conversationId: '__diag_mode__', senderId: '__diag_mode__', senderName: '诊断', content: 'x' })
+  }
+  const win = notificationCenter ? notificationCenter.getWindowState() : null
+  const r = notificationCenter ? notificationCenter.previewRingtone('message', null, true) : null
+  const dndBlockedPopup = !(win && win.visible)
+  const dndMuted = r ? r.muted : false
+  if (notificationCenter) { notificationCenter.markRead('__diag_mode__'); notificationCenter.hideWindow() }
+  settingsStore.set({ notifyMode: origMode })
+  return { origMode, dndBlockedPopup, dndMuted, restored: settingsStore.getMerged().notifyMode === origMode }
+})
 
 // 真正退出应用（被托盘菜单「退出」与潜在其他入口复用）
 function quitApp() {

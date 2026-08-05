@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>无法打开主页</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: #F5F6F8; color: #2C2C2A; height: 100vh;
+    display: flex; align-items: center; justify-content: center; -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    background: #fff; border: 1px solid #ECECEC; border-radius: 14px;
+    padding: 32px 36px; max-width: 440px; width: calc(100% - 48px); text-align: center;
+    box-shadow: 0 12px 36px rgba(0,0,0,0.08);
+  }
+  .icon { font-size: 40px; margin-bottom: 12px; }
+  .title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+  .desc { font-size: 13px; color: #9A9893; line-height: 1.6; margin-bottom: 22px; word-break: break-all; }
+  .btn {
+    border: none; background: #185FA5; color: #fff; font-size: 14px;
+    padding: 10px 24px; border-radius: 8px; cursor: pointer; font-family: inherit;
+    transition: background 0.15s;
+  }
+  .btn:hover { background: #1472C4; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">📡</div>
+    <div class="title">无法打开主页</div>
+    <div class="desc" id="url"></div>
+    <button class="btn" id="retry">重试</button>
+  </div>
+  <script>
+    var url = new URLSearchParams(location.search).get('url') || ''
+    document.getElementById('url').textContent = url ? ('地址：' + url) : ''
+    document.getElementById('retry').onclick = function () {
+      if (url) window.location.href = url
+    }
+  </script>
+</body>
+</html>

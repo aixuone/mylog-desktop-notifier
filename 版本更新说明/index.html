@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>我的日志 · 桌面通知助手 更新说明 v1.2.0</title>
+    <style>
+      :root {
+        --text: #1d1d1f;
+        --muted: #6e6e73;
+        --accent: #007aff;
+        --accent2: #5e5ce6;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        min-height: 100vh;
+        color: var(--text);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+          "Helvetica Neue", sans-serif;
+        line-height: 1.65;
+        background:
+          radial-gradient(
+            1200px 620px at 82% -12%,
+            rgba(0, 122, 255, 0.1),
+            transparent 60%
+          ),
+          radial-gradient(
+            1000px 520px at -5% 0%,
+            rgba(255, 149, 0, 0.07),
+            transparent 55%
+          ),
+          linear-gradient(180deg, #fbfbfd 0%, #f1f1f4 100%);
+        background-attachment: fixed;
+      }
+      .wrap {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 64px 24px 72px;
+      }
+      h1 {
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin: 0 0 10px;
+      }
+      .ver {
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        font-weight: 700;
+      }
+      .lead {
+        color: var(--muted);
+        margin: 0 0 44px;
+        font-size: 16px;
+      }
+      .item {
+        background: rgba(255, 255, 255, 0.55);
+        -webkit-backdrop-filter: blur(20px) saturate(180%);
+        backdrop-filter: blur(20px) saturate(180%);
+        border: 1px solid rgba(255, 255, 255, 0.7);
+        box-shadow:
+          0 8px 30px rgba(0, 0, 0, 0.07),
+          inset 0 1px 0 rgba(255, 255, 255, 0.6);
+        border-radius: 20px;
+        padding: 28px;
+        margin-bottom: 22px;
+        transition:
+          transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+          box-shadow 0.25s;
+      }
+      .item:hover {
+        transform: translateY(-3px);
+        box-shadow:
+          0 14px 40px rgba(0, 0, 0, 0.1),
+          inset 0 1px 0 rgba(255, 255, 255, 0.6);
+      }
+      .item h2 {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0 0 10px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .item h2 .idx {
+        flex: none;
+        width: 28px;
+        height: 28px;
+        border-radius: 9px;
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        color: #fff;
+        font-size: 13px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 3px 10px rgba(0, 122, 255, 0.35);
+      }
+      .item p {
+        margin: 0 0 18px;
+        color: var(--muted);
+        font-size: 14.5px;
+      }
+      .shot {
+        display: flex;
+        gap: 18px;
+      }
+      .shot img {
+        flex: 1;
+        max-width: 30%;
+        height: auto;
+        border-radius: 12px;
+        display: block;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+        background: #fff;
+        border: 1px dashed #888;
+      }
+      .placeholder {
+        flex: 1 1 calc(50% - 9px);
+        min-width: 240px;
+        min-height: 180px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.45);
+        border: 2px dashed #c7c7cc;
+        border-radius: 12px;
+        color: #86868b;
+        font-size: 13px;
+        text-align: center;
+        padding: 20px;
+      }
+      footer {
+        color: #9a9aa0;
+        font-size: 12px;
+        text-align: center;
+        margin-top: 40px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>我的日志 · 桌面通知助手 <span class="ver">v1.2.0</span></h1>
+      <p class="lead">
+        本次更新新增独立设置面板、支持按场景与联系人自定义铃声、优化消息通知
+        UI，并新增网页端用户离线 / 被踢下线通知。
+      </p>
+
+      <div class="item">
+        <h2><span class="idx">01</span>新增设置面板</h2>
+        <p>
+          新增独立设置窗口，左侧导航分「通用 / 铃声 / 消息 / 联系人专属设置 /
+          关于」。通用页可直接切换通知模式（正常 / 静音 / 屏蔽弹窗 /
+          勿扰），并同步显示托盘在线用户列表；左键点击托盘图标即可直接打开设置面板。
+        </p>
+        <div class="shot">
+          <img
+            src="./assets/2.png"
+            alt="通用设置：通知模式与已登录用户列表"
+          />
+          <img
+            src="./assets/1.png"
+            alt="托盘菜单：在线用户头像、设置入口与开机自启"
+          />
+        </div>
+      </div>
+
+      <div class="item">
+        <h2><span class="idx">02</span>个性化铃声提醒</h2>
+        <p>
+          铃声面板支持按场景（语音通话 / 视频通话 / 视频会议 / 消息通知）分别设置铃声，并提供总开关。总开关与通用通知模式联动，静音或勿扰模式下自动禁用。自定义铃声上传入口已移到下拉列表顶部，选择器会自动处理窗口边界避免被裁切；联系人专属铃声仅替换声音，不影响模式控制。
+        </p>
+        <div class="shot">
+          <img
+            src="./assets/3.png"
+            alt="铃声面板：总开关与各场景铃声选择"
+          />
+          <img
+            src="./assets/5.png"
+            alt="铃声下拉：上传按钮置顶与铃声列表"
+          />
+          <img
+            src="./assets/4.png"
+            alt="上传自定义铃声：系统文件选择器选取音频文件"
+          />
+        </div>
+        <p></p>
+        <h2>特别关注 专属铃声</h2>
+        <div class="shot">
+          <img
+            src="./assets/6.png"
+            alt="联系人专属铃声：按联系人分别设置消息与语音提醒"
+          />
+          
+        </div>
+      </div>
+
+      <div class="item">
+        <h2><span class="idx">03</span>消息通知优化 UI</h2>
+        <p>
+          消息页可设置通知卡片展示内容或仅显示数量，并调整提醒停留时长。常驻通知卡片带未读角标；点击通知时，若网页端已在线则通过
+          WebSocket 聚焦已有浏览器标签并标记已读，避免反复新开标签。
+        </p>
+        <div class="shot">
+          <img
+            src="./assets/7.png"
+            alt="消息设置：展示方式与提醒持续时长"
+          />
+          <img src="./assets/8.png" alt="通知卡片：未读消息与角标展示" />
+          <img src="./assets/9.png" alt="通知卡片：未读消息汇总效果" />
+        </div>
+      </div>
+
+      <div class="item">
+        <h2><span class="idx">04</span>网页端用户离线 / 被踢下线通知</h2>
+        <p>
+          当网页端用户离线或被踢下线时，桌面端会弹出常驻通知（与聊天消息区分），重连上线或用户点击后可隐藏。
+        </p>
+        <div class="shot">
+          <img src="./assets/10.png" alt="通知卡片：未读消息汇总效果" />
+        </div>
+      </div>
+
+      <footer>我的日志 · 桌面通知助手　v1.2.0</footer>
+    </div>
+  </body>
+</html>
