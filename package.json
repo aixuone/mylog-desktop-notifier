@@ -50,7 +50,10 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "artifactName": "${productName} 安装包 ${version}.${ext}",
@@ -88,6 +91,8 @@
     }
   },
   "dependencies": {
+    "pinyin-pro": "^3.29.1",
+    "solarlunar": "^3.1.0",
     "ws": "8.18.0"
   },
   "devDependencies": {

@@ -34,6 +34,9 @@ body {
 }
 .nav-item:hover { background: #ECEEF1; }
 .nav-item.active { background: #E2EFFB; color: #185FA5; font-weight: 600; }
+/* 诊断测试：左侧导航栏左下方的独立快捷入口 */
+.nav-item.nav-diag { margin-top: auto; border-top: 1px solid #E4E6E9; padding-top: 12px; }
+.nav-item.nav-diag:hover { background: #ECEEF1; }
 
 /* Content */
 .content { flex: 1; overflow-y: auto; padding: 22px 26px; }
@@ -252,8 +255,31 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
   transition: background 0.15s, color 0.15s;
 }
 .mp-reset:hover { background: #F5F6F8; color: #185FA5; }
+.mp-apply {
+  flex-shrink: 0; border: 1px solid #185FA5; background: #185FA5; color: #fff;
+  font-family: inherit; font-size: 12px; padding: 7px 16px; border-radius: 8px; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.mp-apply:hover { background: #15508C; }
+.mp-apply:disabled { opacity: 0.6; cursor: default; }
 .mp-hint { font-size: 12px; color: #9A9893; margin-top: 6px; }
 .mp-hint.err { color: #D9534F; }
+
+/* 快捷键捕获输入 */
+.hk-wrap { display: flex; align-items: center; gap: 10px; }
+.hk-input {
+  min-width: 180px; text-align: center; font-family: inherit; font-size: 13px;
+  color: #2C2C2A; background: #fff; border: 1px solid #E0DED9; border-radius: 8px;
+  padding: 8px 14px; cursor: pointer; transition: border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+.hk-input:hover { border-color: #B9D4F0; }
+.hk-input.capturing { border-color: #185FA5; background: #EAF2FB; color: #185FA5; }
+.hk-reset {
+  border: 1px solid #E0DED9; background: #fff; color: #5F5E5A; font-family: inherit;
+  font-size: 12px; padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: background 0.15s;
+}
+.hk-reset:hover { background: #F5F6F8; color: #185FA5; }
 
 /* ── 联动横幅（实时生效状态，纯文本） ── */
 .link-banner {
@@ -293,6 +319,7 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
     <button class="nav-item" data-tab="message">消息</button>
     <button class="nav-item" data-tab="contacts">联系人专属设置</button>
     <button class="nav-item" data-tab="about">关于</button>
+    <button class="nav-item nav-diag" data-action="diagnostics" type="button">🧪 诊断测试</button>
   </aside>
   <main class="content" id="content">
     <!-- 通用 -->
@@ -308,13 +335,17 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
         <div class="hint-line">提示：此处设置覆盖「铃声」面板的总开关。</div>
       </div>
       <div class="row" style="flex-direction:column; align-items:stretch;">
+        <div class="label" style="margin-bottom:6px;">显示/隐藏网页窗口快捷键</div>
+        <div class="hk-wrap">
+          <button class="hk-input" id="hk-mainpage" type="button">点击设置</button>
+          <button class="hk-reset" id="hk-reset" type="button">恢复默认</button>
+        </div>
+        <div class="hint-line">点击输入框后按下组合键（如 Ctrl+Shift+M）。保存后立即生效，无需重启。</div>
+      </div>
+      <div class="row" style="flex-direction:column; align-items:stretch;">
         <div class="label" style="margin-bottom:6px;">已登录用户</div>
         <div id="tray-users" class="tray-users"></div>
         <!-- <div class="hint-line">与右键托盘菜单中的「在线用户」列表实时同步一致。</div> -->
-      </div>
-      <div class="row">
-        <div class="grow"><div class="label">诊断测试</div><div class="desc">自动/手工检测弹窗、铃声、全屏等是否正常</div></div>
-        <button class="mp-reset" id="btn-diagnostics" type="button">打 开</button>
       </div>
     </section>
 
@@ -360,6 +391,7 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
         <span class="mp-label">主页地址</span>
         <input class="mp-input" id="mp-url" type="text" spellcheck="false"
                placeholder="https://data.tygps.com/mylog-pc/" autocomplete="off">
+        <button class="mp-apply" id="mp-apply" type="button">应用</button>
         <button class="mp-reset" id="mp-reset" type="button">恢复默认</button>
       </div>
       <div class="mp-hint" id="mp-hint">托盘点击 / 主入口打开的网页地址，仅支持 http(s)。</div>
@@ -474,9 +506,6 @@ function loadAll() {
     C = { names: d.names || {}, localRingtones: d.localRingtones || [], urls: d.urls || {}, presets: d.presets || {}, builtin: d.builtin || [] }
     contacts = d.contacts || []
     try { renderGeneral(); renderRingtone(); renderMessage(); renderContacts(); renderAbout(d); renderTrayUsers() } catch (e) { console.error('[Settings] render error:', e) }
-    // 诊断测试入口
-    var btnDiag = document.getElementById('btn-diagnostics')
-    if (btnDiag) btnDiag.onclick = function () { try { api.openDiagnostics() } catch (e) { console.error('[Settings] openDiagnostics failed:', e) } }
     // 托盘在线用户列表：初次拉取 + 订阅实时更新（与托盘右键菜单一致）
     api.trayUsersGet().then(renderTrayUsers).catch(function () {})
     api.onTrayUsers(renderTrayUsers)
@@ -486,16 +515,39 @@ function loadAll() {
 }
 
 // ── Nav ──
+// 切换到指定面板（tab 为 data-tab 值，如 general/ringtone/contacts）
+function switchTab(tab) {
+  if (!tab) return
+  var target = null
+  document.querySelectorAll('.nav-item').forEach(function (x) {
+    if (x.getAttribute('data-tab') === tab) target = x
+  })
+  if (!target) return
+  document.querySelectorAll('.nav-item').forEach(function (x) { x.classList.remove('active') })
+  target.classList.add('active')
+  document.querySelectorAll('section[data-panel]').forEach(function (sec) {
+    sec.hidden = sec.getAttribute('data-panel') !== tab
+  })
+}
+
 document.querySelectorAll('.nav-item').forEach(function (b) {
   b.addEventListener('click', function () {
-    document.querySelectorAll('.nav-item').forEach(function (x) { x.classList.remove('active') })
-    b.classList.add('active')
-    var tab = b.getAttribute('data-tab')
-    document.querySelectorAll('section[data-panel]').forEach(function (sec) {
-      sec.hidden = sec.getAttribute('data-panel') !== tab
-    })
+    // 诊断测试：独立快捷入口，直接打开诊断窗口，不切换右侧面板
+    if (b.getAttribute('data-action') === 'diagnostics') {
+      try { api.openDiagnostics() } catch (e) { console.error('[Settings] openDiagnostics failed:', e) }
+      return
+    }
+    switchTab(b.getAttribute('data-tab'))
   })
 })
+
+// 主窗口顶部菜单「设置」子项跳转：打开时从 URL ?tab= 读取，已打开时由主进程 IPC 推送
+try {
+  var _sp = new URLSearchParams(location.search)
+  var _tab = _sp.get('tab')
+  if (_tab) switchTab(_tab)
+} catch (e) {}
+if (api && api.onSwitchTab) api.onSwitchTab(function (tab) { switchTab(tab) })
 
 // ── General ──
 function renderGeneral() {
@@ -522,6 +574,68 @@ function renderGeneral() {
     }
   })
   refreshLinkage()
+  renderHotkeyInput()
+}
+
+// 将按键事件规范化为 Electron accelerator 键名
+function normalizeAccelKey(e) {
+  var k = e.key
+  if (k === ' ' || k === 'Spacebar') return 'Space'
+  if (k === 'Control' || k === 'Shift' || k === 'Alt' || k === 'Meta' || k === 'AltGraph' || k === 'OS') return null
+  if (k.indexOf('Arrow') === 0) return k.slice(5)        // ArrowUp -> Up
+  if (k.length === 1) return k.toUpperCase()              // 字母/数字
+  var map = { Escape: 'Esc', Delete: 'Del' }
+  return map[k] || k                                       // F1..F12 / Enter / Tab / PageUp ...
+}
+
+// 显示/隐藏网页窗口快捷键：捕获式输入，修改后即时生效
+function renderHotkeyInput() {
+  var btn = document.getElementById('hk-mainpage')
+  var reset = document.getElementById('hk-reset')
+  if (!btn) return
+  var capturing = false
+  function cancelCapture() {
+    if (!capturing) return
+    capturing = false
+    try { document.removeEventListener('keydown', onKey, true) } catch (e) {}
+    btn.classList.remove('capturing')
+    btn.textContent = S.mainPageHotkey || 'CommandOrControl+Shift+M'
+    try { api.setHotkeyCapture(false) } catch (e) {}   // 恢复全局快捷键
+  }
+  function onKey(e) {
+    e.preventDefault(); e.stopPropagation()
+    if (e.key === 'Escape') { cancelCapture(); return }
+    var mods = []
+    if (e.ctrlKey || e.metaKey) mods.push('CommandOrControl') // Ctrl(Win/Linux) 或 Cmd(Mac)
+    if (e.altKey) mods.push('Alt')
+    if (e.shiftKey) mods.push('Shift')
+    var key = normalizeAccelKey(e)
+    if (!key) return                                     // 仅按下修饰键，继续等待
+    if (mods.length === 0) { btn.textContent = '请包含 Ctrl/Alt/Shift'; return }
+    var combo = mods.join('+') + '+' + key
+    try { document.removeEventListener('keydown', onKey, true) } catch (e2) {}
+    capturing = false
+    btn.classList.remove('capturing')
+    try { api.setHotkeyCapture(false) } catch (e2) {}   // 恢复全局快捷键
+    save({ mainPageHotkey: combo })
+    btn.textContent = combo
+  }
+  btn.onclick = function () {
+    if (capturing) { cancelCapture(); return }
+    capturing = true
+    btn.classList.add('capturing')
+    btn.textContent = '按下快捷键… (Esc 取消)'
+    try { api.setHotkeyCapture(true) } catch (e) {}     // 捕获期间临时注销，避免 OS 吞掉组合键
+    document.addEventListener('keydown', onKey, true)
+  }
+  btn.onblur = cancelCapture
+  reset.onclick = function () {
+    cancelCapture()
+    save({ mainPageHotkey: 'CommandOrControl+Shift+M' })
+    btn.textContent = 'CommandOrControl+Shift+M'
+  }
+  btn.textContent = S.mainPageHotkey || 'CommandOrControl+Shift+M'
+  btn.classList.remove('capturing')
 }
 
 // ── Ringtone ──
@@ -800,6 +914,13 @@ function onDocClickForContactPicker(e) {
 // ── About ──
 const MP_DEFAULT = 'https://data.tygps.com/mylog-pc/'
 
+function validateMainPageUrl(v) {
+  v = (v || '').trim()
+  if (!v) return { ok: false, msg: '地址不能为空，请填写以 http:// 或 https:// 开头的网页地址。' }
+  if (!/^https?:\/\//i.test(v)) return { ok: false, msg: '仅支持 http(s) 地址，请以 http:// 或 https:// 开头。' }
+  return { ok: true, msg: '' }
+}
+
 function renderAbout(d) {
   document.getElementById('about-version').textContent = d.version || ''
   document.getElementById('about-ringtone-dir').textContent = d.ringtoneDir || ''
@@ -807,6 +928,7 @@ function renderAbout(d) {
 
   const input = document.getElementById('mp-url')
   const hint = document.getElementById('mp-hint')
+  const applyBtn = document.getElementById('mp-apply')
   const current = (S && S.mainPageUrl) || MP_DEFAULT
   input.value = current
   input.classList.remove('invalid')
@@ -815,23 +937,46 @@ function renderAbout(d) {
 
   // 实时保存（带 http(s) 校验）
   input.oninput = function () {
-    const v = input.value.trim()
-    if (!v) {
+    const res = validateMainPageUrl(input.value)
+    if (!res.ok) {
       input.classList.add('invalid')
       hint.classList.add('err')
-      hint.textContent = '地址不能为空，请填写以 http:// 或 https:// 开头的网页地址。'
-      return
-    }
-    if (!/^https?:\/\//i.test(v)) {
-      input.classList.add('invalid')
-      hint.classList.add('err')
-      hint.textContent = '仅支持 http(s) 地址，请以 http:// 或 https:// 开头。'
+      hint.textContent = res.msg
       return
     }
     input.classList.remove('invalid')
     hint.classList.remove('err')
-    hint.textContent = '已保存，下次托盘点击将打开该地址。'
-    save({ mainPageUrl: v })
+    hint.textContent = '已保存，点击「应用」可立即刷新主窗口网页地址。'
+    save({ mainPageUrl: input.value.trim() })
+  }
+
+  // 应用：立即把主页面窗口刷新为新地址（即时生效，无需重启/重开）
+  applyBtn.onclick = function () {
+    const res = validateMainPageUrl(input.value)
+    if (!res.ok) {
+      input.classList.add('invalid')
+      hint.classList.add('err')
+      hint.textContent = res.msg
+      return
+    }
+    input.classList.remove('invalid')
+    hint.classList.remove('err')
+    save({ mainPageUrl: input.value.trim() })
+    applyBtn.disabled = true
+    applyBtn.textContent = '应用中…'
+    Promise.resolve(api.applyMainPage(input.value.trim()))
+      .then(function (r) {
+        hint.textContent = (r && r.ok)
+          ? '已应用：主窗口正在打开「' + input.value.trim() + '」'
+          : '应用失败，请确认地址格式后重试。'
+      })
+      .catch(function () {
+        hint.textContent = '应用失败，请确认地址格式后重试。'
+      })
+      .then(function () {
+        applyBtn.disabled = false
+        applyBtn.textContent = '应用'
+      })
   }
 
   // 恢复默认

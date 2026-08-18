@@ -13,30 +13,50 @@
        local(system-ui), local(sans-serif);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
 body {
   font-family: 'System UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
-  background: transparent;
-  width: 380px; height: 280px;
+  background: #F5F6F8;
+  width: 100%; height: 100%;
   overflow: hidden; user-select: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+/* 铺满窗口本体（与通知中心一致：无外框留白、无圆角外框，从根上消除窗口硬边/灰边） */
 #app {
   width: 100%; height: 100%;
-  background: rgba(255,255,255,0.92);
-  /* border-radius: 12px; */
+  background: #fff;
   display: flex; flex-direction: column;
-  align-items: center;
-  padding: 28px 24px 20px;
-  position: relative; overflow: hidden;
+  overflow: hidden;
 }
-.tip {
-  position: absolute; top: 0; left: 0; right: 0;
-  height: 4px;
-}
+/* 顶部彩色强调条（按通话类型着色） */
+.tip { height: 4px; flex-shrink: 0; }
 .tip-audio { background: linear-gradient(90deg, #185FA5, #378ADD); }
 .tip-video { background: linear-gradient(90deg, #3B6D11, #639922); }
 .tip-meeting { background: linear-gradient(90deg, #BA7517, #EF9F27); }
+
+/* 头部：标题 + ✕（与通知中心 .header 风格一致） */
+.header {
+  height: 46px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px 0 16px;
+  background: #fff;
+  border-bottom: 1px solid #ECECEC;
+}
+.header .title { font-size: 15px; font-weight: 600; color: #2C2C2A; }
+.header .spacer { flex: 1; }
+.header .btn-close {
+  font-size: 16px; color: #9A9893; background: transparent;
+  border: none; border-radius: 8px; padding: 4px 9px; cursor: pointer;
+  font-family: inherit; transition: background 0.15s, color 0.15s;
+}
+.header .btn-close:hover { background: #F1EFE8; color: #555552; }
+
+.body {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 22px 22px 18px;
+}
 
 .avatar {
   width: 64px; height: 64px; border-radius: 50%;
@@ -55,102 +75,65 @@ body {
   width: 100%; height: 100%; font-size: 26px; font-weight: 600;
   color: #185FA5;
 }
-
-.call-type-row {
-  display: flex; align-items: center; gap: 6px;
-  margin-bottom: 20px;
-}
+.call-type-row { display: flex; align-items: center; gap: 6px; margin-bottom: 16px; }
 .call-type-icon { width: 16px; height: 16px; flex-shrink: 0; }
 .call-type-icon svg { width: 100%; height: 100%; }
 .call-type-label { font-size: 13px; color: #888780; }
-
 .name {
   font-size: 16px; font-weight: 600; color: #2C2C2A;
-  margin-bottom: 20px; max-width: 280px;
-  line-height: 20px; height: 20px;
-  text-overflow: ellipsis; white-space: nowrap;
-}
-.message {
-  font-size: 13px; color: #5F5E5A; max-width: 300px;
+  margin-bottom: 4px; max-width: 280px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  margin-bottom: 20px;
 }
 
-.actions {
-  display: flex; align-items: center; gap: 40px; margin-top: auto;
-}
+.actions { display: flex; align-items: center; gap: 40px; margin-top: auto; }
 .btn {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
-  border: none; cursor: pointer;
-  background: none; padding: 0;
-  font-family: inherit; font-size: 12px;
-  color: #5F5E5A;
-  transition: transform 0.15s;
-  outline: none;
+  border: none; cursor: pointer; background: none; padding: 0;
+  font-family: inherit; font-size: 12px; color: #5F5E5A;
+  transition: transform 0.15s; outline: none;
 }
 .btn:hover { transform: scale(1.08); }
 .btn:active { transform: scale(0.96); }
+.btn-circle { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 
-.btn-circle {
-  width: 56px; height: 56px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-
-.btn-ignore {
-  position: absolute; top: 16px; right: 20px;
-  padding: 4px 14px; border-radius: 12px;
-  font-size: 12px; color: #888780;
-  background: #F1EFE8; border: none; cursor: pointer;
-  font-family: inherit;
-  transition: background 0.15s;
-}
-.btn-ignore:hover { background: #E0DDD6; color: #555552; }
-
-.timeout-bar {
-  position: absolute; bottom: 0; left: 0; right: 0;
-  height: 5px; background: #E6F1FB;
-  border-radius: 0 0 12px 12px;
-}
+/* 超时进度条 */
+.timeout-bar { height: 5px; background: #E6F1FB; width: 100%; flex-shrink: 0; }
 .timeout-fill { height: 100%; transition: width 1s linear; }
 </style>
 </head>
 <body>
 <div id="app">
   <div id="tip" class="tip tip-audio"></div>
-  <div class="call-type-row">
-    <div class="call-type-icon" id="call-type-icon"></div>
-    <div class="call-type-label" id="call-type-label"></div>
+  <div class="header">
+    <span class="title" id="card-title">语音通话</span>
+    <span class="spacer"></span>
+    <button class="btn-close" id="btn-close" title="忽略">✕</button>
   </div>
-
-  <div class="avatar" id="avatar">
-    <div class="fallback" id="avatar-fallback"></div>
+  <div class="body">
+    <div class="avatar" id="avatar"><div class="fallback" id="avatar-fallback"></div></div>
+    <div class="name" id="caller-name">未知用户</div>
+    <div class="call-type-row">
+      <div class="call-type-icon" id="call-type-icon"></div>
+      <div class="call-type-label" id="call-type-label"></div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-accept" id="btn-accept">
+        <div class="btn-circle">
+          <svg t="1781228721809" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="4972" width="56" height="56"><path d="M512.418773 512.478598m-510.504382 0a510.504382 510.504382 0 1 0 1021.008764 0 510.504382 510.504382 0 1 0-1021.008764 0Z" fill="#52C41A" p-id="4973"></path><path d="M317.94851 255.950146l-28.386835 16.81075c-43.891412 25.993846-65.896943 77.532853-54.011763 126.499396 19.642454 80.893009 67.362648 159.243466 143.160585 235.041402l6.151976 6.082181c73.883544 72.278247 150.180019 117.964401 228.889426 137.078403 48.966543 11.88518 100.495579-10.120351 126.499396-54.011762l16.81075-28.386835 1.595326-2.78185c19.004323-34.120039 11.765531-61.599533-22.424304-81.999767-5.045219-3.011178-10.539124-5.982473-16.471743-8.923856-18.824849-9.312717-35.256709-16.641246-49.295579-21.985589-21.197897-8.076339-38.457332-3.978345-54.251061 12.51334l-24.209075 25.275949-1.854567 1.804713c-7.627653 6.959611-17.748004 10.569036-28.017916 9.920935-28.875404-1.834625-64.132113-23.142201-105.780098-63.912756l-4.187731-4.137877c-43.472639-43.472639-66.156183-80.125258-68.060604-109.957858-0.707926-11.1274 3.589484-22.075326 11.725648-29.872483l25.275949-24.209075c16.491685-15.793729 20.579708-33.053165 12.51334-54.251061-5.344343-14.03887-12.672872-30.47073-21.985589-49.295579-2.941383-5.94259-5.912678-11.436495-8.923856-16.481714-13.051762-21.86594-28.985083-32.714158-47.720195-32.714158-11.316845 0.009971-23.680623 3.988315-37.04148 11.895151z" fill="#FFFFFF" p-id="4974"></path></svg>
+        </div>
+        <span id="btn-accept-label">接听</span>
+      </button>
+      <button class="btn btn-reject" id="btn-reject">
+        <div class="btn-circle">
+          <svg t="1781228813700" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1664" width="56" height="56"><path d="M512 512m-512 0a512 512 0 1 0 1024 0 512 512 0 1 0-1024 0Z" fill="#E83F2B" p-id="1665"></path><path d="M269.856 580.24l96.128 2.208a29.456 29.456 0 0 0 29.92-28.912l0.48-29.408c0.288-16.64 33.376-49.2 116.24-50.56s115.264 36.704 115.008 53.312l-0.48 29.408a29.456 29.456 0 0 0 28.896 29.92l96.128 2.208a29.44 29.44 0 0 0 29.92-28.912l0.48-29.408a100.32 100.32 0 0 0-21.728-62.544 186.848 186.848 0 0 0-58.304-48.992 401.28 401.28 0 0 0-187.936-45.984 401.6 401.6 0 0 0-189.328 39.632 204.592 204.592 0 0 0-47.552 33.44 145.808 145.808 0 0 0-12.4 13.536 100.32 100.32 0 0 0-23.872 61.776l-0.496 29.408a29.456 29.456 0 0 0 28.912 29.92z" fill="#FFFFFF" p-id="1666"></path></svg>
+        </div>
+        <span id="btn-reject-label">挂断</span>
+      </button>
+    </div>
   </div>
-  <div class="name" id="caller-name"></div>
-
-  <div class="actions">
-    <button class="btn btn-accept" id="btn-accept">
-      <div class="btn-circle">
-        <svg t="1781228721809" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="4972" width="56" height="56"><path d="M512.418773 512.478598m-510.504382 0a510.504382 510.504382 0 1 0 1021.008764 0 510.504382 510.504382 0 1 0-1021.008764 0Z" fill="#52C41A" p-id="4973"></path><path d="M317.94851 255.950146l-28.386835 16.81075c-43.891412 25.993846-65.896943 77.532853-54.011763 126.499396 19.642454 80.893009 67.362648 159.243466 143.160585 235.041402l6.151976 6.082181c73.883544 72.278247 150.180019 117.964401 228.889426 137.078403 48.966543 11.88518 100.495579-10.120351 126.499396-54.011762l16.81075-28.386835 1.595326-2.78185c19.004323-34.120039 11.765531-61.599533-22.424304-81.999767-5.045219-3.011178-10.539124-5.982473-16.471743-8.923856-18.824849-9.312717-35.256709-16.641246-49.295579-21.985589-21.197897-8.076339-38.457332-3.978345-54.251061 12.51334l-24.209075 25.275949-1.854567 1.804713c-7.627653 6.959611-17.748004 10.569036-28.017916 9.920935-28.875404-1.834625-64.132113-23.142201-105.780098-63.912756l-4.187731-4.137877c-43.472639-43.472639-66.156183-80.125258-68.060604-109.957858-0.707926-11.1274 3.589484-22.075326 11.725648-29.872483l25.275949-24.209075c16.491685-15.793729 20.579708-33.053165 12.51334-54.251061-5.344343-14.03887-12.672872-30.47073-21.985589-49.295579-2.941383-5.94259-5.912678-11.436495-8.923856-16.481714-13.051762-21.86594-28.985083-32.714158-47.720195-32.714158-11.316845 0.009971-23.680623 3.988315-37.04148 11.895151z" fill="#FFFFFF" p-id="4974"></path></svg>
-      </div>
-      <span id="btn-accept-label">接听</span>
-    </button>
-    <button class="btn btn-reject" id="btn-reject">
-      <div class="btn-circle">
-        <svg t="1781228813700" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1664" width="56" height="56"><path d="M512 512m-512 0a512 512 0 1 0 1024 0 512 512 0 1 0-1024 0Z" fill="#E83F2B" p-id="1665"></path><path d="M269.856 580.24l96.128 2.208a29.456 29.456 0 0 0 29.92-28.912l0.48-29.408c0.288-16.64 33.376-49.2 116.24-50.56s115.264 36.704 115.008 53.312l-0.48 29.408a29.456 29.456 0 0 0 28.896 29.92l96.128 2.208a29.44 29.44 0 0 0 29.92-28.912l0.48-29.408a100.32 100.32 0 0 0-21.728-62.544 186.848 186.848 0 0 0-58.304-48.992 401.28 401.28 0 0 0-187.936-45.984 401.6 401.6 0 0 0-189.328 39.632 204.592 204.592 0 0 0-47.552 33.44 145.808 145.808 0 0 0-12.4 13.536 100.32 100.32 0 0 0-23.872 61.776l-0.496 29.408a29.456 29.456 0 0 0 28.912 29.92z" fill="#FFFFFF" p-id="1666"></path></svg>
-      </div>
-      <span id="btn-reject-label">挂断</span>
-    </button>
-  </div>
-
-  <button class="btn-ignore" id="btn-ignore">忽略</button>
-
-  <div class="timeout-bar">
-    <div class="timeout-fill" id="timeout-fill" style="width:100%"></div>
-  </div>
+  <div class="timeout-bar"><div class="timeout-fill" id="timeout-fill" style="width:100%"></div></div>
 </div>
 
-<!-- Hidden audio element for ringtone -->
 <audio id="ringtone-audio" style="display:none;"></audio>
 
 <script>
@@ -163,12 +146,12 @@ var ICONS = {
 var LABELS = {
   audio: '语音通话',
   video: '视频通话',
+  meeting: '多人会议',
   accept: '接听',
   reject: '挂断',
   ignore: '忽略',
   unknown: '未知用户',
   inviting: '正在邀请你',
-  meeting: '多人会议',
 };
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -176,6 +159,7 @@ document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('btn-accept-label').textContent = LABELS.accept;
   document.getElementById('caller-name').textContent = LABELS.unknown;
   document.getElementById('call-type-label').textContent = LABELS.audio;
+  document.getElementById('card-title').textContent = LABELS.audio;
 
   if (!window.electronAPI) {
     document.body.innerHTML = '<div style="color:red;padding:20px;font-family:sans-serif;">Error: electronAPI not available</div>';
@@ -187,51 +171,35 @@ document.addEventListener('DOMContentLoaded', function() {
   var elapsed = 0;
   var TIMEOUT = 60;
   var ringtoneConfig = {};
-  var ringtoneReady = false;      // true once canplaythrough has fired
+  var ringtoneReady = false;
 
-  // Fixed audio element from HTML
   var audioElement = document.getElementById('ringtone-audio');
 
   function getAPI() { return window.electronAPI; }
 
-  // ── Preload: called on page load, NOT on call arrival ──
   window.electronAPI.onPreloadRingtone(function(data) {
     if (!data || !data.ringtonePath) return;
     ringtoneConfig = data.ringtoneConfig || {};
-    console.log('[Ringtone] Preloading:', data.ringtonePath);
-
-    // Configure audio element
     audioElement.loop = ringtoneConfig.loop !== undefined ? ringtoneConfig.loop : true;
     audioElement.volume = ringtoneConfig.volume !== undefined ? ringtoneConfig.volume : 0.7;
     audioElement.src = data.ringtonePath;
     audioElement.preload = 'auto';
-
     audioElement.addEventListener('canplaythrough', function() {
       ringtoneReady = true;
-      console.log('[Ringtone] Preload complete, ready to play instantly');
     }, { once: true });
     audioElement.load();
   });
 
   function startRingtone(ringtonePath, config) {
     ringtoneConfig = config || {};
-
-    // Fast path: ringtone already preloaded and decoded — just hit play()
     if (ringtoneReady && ringtonePath === audioElement.src) {
-      console.log('[Ringtone] Playing preloaded ringtone (instant)');
       audioElement.currentTime = ringtoneConfig.startTime || 0;
-      audioElement.play().then(function() {
-        console.log('[Ringtone] Preloaded playback started');
-      }).catch(function(err) {
-        console.warn('[Ringtone] Preloaded play failed, fallback:', err.name);
-        // Fallback: reload and play
+      audioElement.play().catch(function(err) {
         ringtoneReady = false;
         startRingtone(ringtonePath, config);
       });
       return;
     }
-
-    // Slow path: no preload or different ringtone
     if (!ringtonePath) {
       try {
         var ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -247,31 +215,23 @@ document.addEventListener('DOMContentLoaded', function() {
         gain.connect(ctx.destination);
         osc.start();
         osc.stop(ctx.currentTime + 0.8);
-      } catch(e) { console.warn('[Ringtone] Oscillator fallback failed:', e); }
+      } catch(e) {}
       return;
     }
-
-    // Configure and load audio
     audioElement.loop = ringtoneConfig.loop !== undefined ? ringtoneConfig.loop : true;
     audioElement.volume = ringtoneConfig.volume !== undefined ? ringtoneConfig.volume : 0.7;
     audioElement.src = ringtonePath;
     audioElement.preload = 'auto';
-
     audioElement.addEventListener('canplaythrough', function() {
       audioElement.currentTime = ringtoneConfig.startTime || 0;
-      audioElement.play().then(function() {
-        console.log('[Ringtone] Playing from position:', audioElement.currentTime);
-      }).catch(function(err) {
-        console.warn('[Ringtone] Play rejected:', err.name, err.message);
+      audioElement.play().catch(function() {
         setTimeout(function() {
           audioElement.currentTime = ringtoneConfig.startTime || 0;
-          audioElement.play().catch(function(e) { console.warn('[Ringtone] Retry failed:', e); });
+          audioElement.play().catch(function() {});
         }, 100);
       });
     }, { once: true });
-
     audioElement.load();
-
     setTimeout(function() {
       if (audioElement.readyState >= 2) {
         audioElement.currentTime = ringtoneConfig.startTime || 0;
@@ -284,14 +244,11 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
       audioElement.pause();
       audioElement.currentTime = 0;
-      audioElement.src = '';        // Release the audio resource
-      audioElement.load();          // Fully reset the audio element
-    } catch(e) { console.warn('[Ringtone] Stop error:', e); }
-    // Reset preload state so next preload-ringtone can re-decode
+      audioElement.src = '';
+      audioElement.load();
+    } catch(e) {}
     ringtoneReady = false;
-    console.log('[Ringtone] Stopped');
   }
-  // Expose globally so main process can call via executeJavaScript
   window.__stopRingtone = stopRingtone;
 
   window.electronAPI.onCallData(function(data) {
@@ -303,26 +260,16 @@ document.addEventListener('DOMContentLoaded', function() {
     startRingtone(data.ringtonePath, data.ringtoneConfig);
   });
 
-  window.electronAPI.onStopRingtone(function() {
-    stopRingtone();
-  });
-
+  window.electronAPI.onStopRingtone(function() { stopRingtone(); });
   window.electronAPI.onCallClosed(function() {
-    if (timeoutTimer) {
-      clearInterval(timeoutTimer);
-      timeoutTimer = null;
-    }
+    if (timeoutTimer) { clearInterval(timeoutTimer); timeoutTimer = null; }
     elapsed = 0;
-    var fill = document.getElementById('timeout-fill');
-    fill.style.width = '100%';
+    document.getElementById('timeout-fill').style.width = '100%';
   });
 
-  // Safety net: stop ringtone when page is hidden, unloaded, or navigated away
   window.addEventListener('beforeunload', stopRingtone);
   window.addEventListener('pagehide', stopRingtone);
-  document.addEventListener('visibilitychange', function() {
-    if (document.hidden) stopRingtone();
-  });
+  document.addEventListener('visibilitychange', function() { if (document.hidden) stopRingtone(); });
 
   function render(data) {
     var avatarEl = document.getElementById('avatar');
@@ -335,38 +282,36 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (avatarUrl) {
       var img = document.createElement('img');
-      img.src = avatarUrl;
-      img.alt = '';
+      img.src = avatarUrl; img.alt = '';
       img.onerror = function() { this.style.display = 'none'; fallbackEl.style.display = 'flex'; };
       img.onload = function() { fallbackEl.style.display = 'none'; };
       avatarEl.insertBefore(img, fallbackEl);
       fallbackEl.style.display = '';
-    } else {
-      fallbackEl.style.display = 'flex';
-    }
+    } else { fallbackEl.style.display = 'flex'; }
     fallbackEl.textContent = name.charAt(0);
 
     var iconEl = document.getElementById('call-type-icon');
     var tipEl = document.getElementById('tip');
     var typeLabel = document.getElementById('call-type-label');
+    var titleEl = document.getElementById('card-title');
+    var fill = document.getElementById('timeout-fill');
+    var title, color;
 
     if (data.callType === 'video') {
-      iconEl.innerHTML = ICONS.video;
-      typeLabel.textContent = LABELS.video;
-      tipEl.className = 'tip tip-video';
-      document.getElementById('timeout-fill').style.background = '#639922';
+      iconEl.innerHTML = ICONS.video; typeLabel.textContent = LABELS.video;
+      tipEl.className = 'tip tip-video'; fill.style.background = '#639922';
+      title = LABELS.video; color = '#3B6D11';
     } else if (data.callType === 'meeting') {
-      iconEl.innerHTML = ICONS.meeting;
-      typeLabel.textContent = LABELS.meeting;
-      tipEl.className = 'tip tip-meeting';
-      document.getElementById('timeout-fill').style.background = '#BA7517';
+      iconEl.innerHTML = ICONS.meeting; typeLabel.textContent = LABELS.meeting;
+      tipEl.className = 'tip tip-meeting'; fill.style.background = '#BA7517';
+      title = LABELS.meeting; color = '#BA7517';
     } else {
-      iconEl.innerHTML = ICONS.audio;
-      typeLabel.textContent = LABELS.audio;
-      tipEl.className = 'tip tip-audio';
-      document.getElementById('timeout-fill').style.background = '#185FA5';
+      iconEl.innerHTML = ICONS.audio; typeLabel.textContent = LABELS.audio;
+      tipEl.className = 'tip tip-audio'; fill.style.background = '#185FA5';
+      title = LABELS.audio; color = '#185FA5';
     }
-
+    titleEl.textContent = title;
+    titleEl.style.color = color;
     document.getElementById('caller-name').textContent = name;
   }
 
@@ -380,8 +325,7 @@ document.addEventListener('DOMContentLoaded', function() {
       var pct = 100 - (elapsed / TIMEOUT) * 100;
       fill.style.width = Math.max(0, pct) + '%';
       if (elapsed >= TIMEOUT) {
-        clearInterval(timeoutTimer);
-        timeoutTimer = null;
+        clearInterval(timeoutTimer); timeoutTimer = null;
         stopRingtone();
         var api = getAPI();
         if (api) api.sendCallAction('timeout');
@@ -398,7 +342,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   document.getElementById('btn-accept').addEventListener('click', function() { doAction('accept'); });
   document.getElementById('btn-reject').addEventListener('click', function() { doAction('reject'); });
-  document.getElementById('btn-ignore').addEventListener('click', function() { doAction('ignore'); });
+  document.getElementById('btn-close').addEventListener('click', function() { doAction('ignore'); });
 });
 </script>
 </body>

@@ -342,11 +342,9 @@ if (!api) {
     }
   })
 
-  document.getElementById('btn-readall').addEventListener('click', function () { api.markRead('all') })
   document.getElementById('btn-close').addEventListener('click', function () {
-    // 存在常驻系统通知（离线/被踢）时，✕ 不收起窗口，防止误关该提醒
-    if (Object.keys(sysAlerts).length > 0) return
-    api.closeNc()
+    // 强制关闭：始终收起窗口（即使存在常驻系统通知也允许关闭；常驻提醒可由其自身按钮「知道了/关闭」正规消除）
+    api.closeNc(true)
   })
 }
 </script>

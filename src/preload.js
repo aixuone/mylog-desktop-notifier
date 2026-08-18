@@ -61,8 +61,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dismissSysAlert: (id) => ipcRenderer.send('nc-dismiss-sysalert', id),
   /** 重新登录（被踢） */
   reconnect: () => ipcRenderer.send('nc-reconnect'),
-  /** 收起窗口 */
-  closeNc: () => ipcRenderer.send('nc-close'),
+  /** 收起窗口（force=true 时即便存在常驻提醒也强制关闭） */
+  closeNc: (force) => ipcRenderer.send('nc-close', !!force),
   /** 动态调整通知中心高度 */
   resizeNc: (height) => ipcRenderer.send('nc-resize', height),
 
@@ -73,14 +73,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settingsSave: (partial) => ipcRenderer.send('settings-save', partial),
   /** 删除指定联系人的专属铃声设置（真正移除 key，区别于合并式 settingsSave） */
   removeContactRingtone: (cid) => ipcRenderer.send('settings-remove-contact', cid),
+  /** 立即把主页面窗口刷新为指定地址（应用主页地址按钮） */
+  applyMainPage: (url) => ipcRenderer.invoke('navigate-mainpage', url),
   /** 上传自定义铃声（invoke，返回 { path, name }） */
   pickRingtone: () => ipcRenderer.invoke('pick-ringtone'),
   /** 设置开机启动 */
   setAutoStart: (value) => ipcRenderer.send('set-auto-start', value),
+  /** 捕获快捷键期间临时注销(TRUE)/恢复(FALSE)全局显隐快捷键，避免 OS 吞掉组合键 */
+  setHotkeyCapture: (on) => ipcRenderer.send('hotkey-capture', !!on),
   /** 拉取当前在线用户列表（与托盘右键菜单一致） */
   trayUsersGet: () => ipcRenderer.invoke('tray-users-get'),
   /** 订阅在线用户列表实时更新 */
   onTrayUsers: (callback) => ipcRenderer.on('tray-users-update', (_, data) => callback(data)),
+  // 主窗口顶部菜单「设置」子项请求切换面板（仅当设置窗口已打开时）
+  onSwitchTab: (callback) => ipcRenderer.on('settings-switch-tab', (_, tab) => callback(tab)),
 
   // ─── Diagnostics (自检：自动 + 手工) ──────────
   /** 打开诊断测试窗口 */
@@ -119,6 +125,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Screen-share shim 埋点（main world 注入的 shim 调用）──
   /** 上报主页面实际使用的媒体捕获路径，便于定位屏幕共享失败原因 */
   logMedia: (msg) => ipcRenderer.send('page-media-log', msg),
+
+  // ─── Workbench window ─────────────────────────
+  /** 加载工作台任务数据 */
+  workbenchLoad: () => ipcRenderer.invoke('workbench-load'),
+  /** 添加任务 */
+  workbenchAdd: (task) => ipcRenderer.invoke('workbench-add', task),
+  /** 更新任务 */
+  workbenchUpdate: (id, patch) => ipcRenderer.invoke('workbench-update', id, patch),
+  /** 切换任务完成状态 */
+  workbenchToggle: (id) => ipcRenderer.invoke('workbench-toggle', id),
+  /** 删除任务 */
+  workbenchDelete: (id) => ipcRenderer.invoke('workbench-delete', id),
+  /** 选择本地图片文件并保存到工作台目录，返回文件名数组 */
+  workbenchPickImages: () => ipcRenderer.invoke('workbench-pick-images'),
+  /** 从剪贴板读取截图并保存，返回文件名或 null */
+  workbenchPasteScreenshot: () => ipcRenderer.invoke('workbench-paste-screenshot'),
+  /** 读取图片为 dataURL（用于缩略图展示） */
+  workbenchReadImage: (filename) => ipcRenderer.invoke('workbench-read-image', filename),
+  /** 用系统默认程序打开图片 */
+  workbenchOpenImage: (filename) => ipcRenderer.invoke('workbench-open-image', filename),
+  /** 删除图片文件 */
+  workbenchDeleteImage: (filename) => ipcRenderer.invoke('workbench-delete-image', filename),
+  /** 读取通讯录（含拼音字段 py/initials）供模糊搜索 */
+  workbenchContacts: () => ipcRenderer.invoke('workbench-contacts'),
+  /** 保存/读取地图 Key（高德地图 Web 服务） */
+  workbenchSetMapKey: (key) => ipcRenderer.invoke('workbench-set-mapkey', key),
+  /** 日历信息：农历/节日/法定节假日/单双休 */
+  workbenchCalendarInfo: (year, month, restMode) => ipcRenderer.invoke('workbench-calendar-info', year, month, restMode),
+  /** 保存单双休偏好 */
+  workbenchSetRestMode: (mode) => ipcRenderer.invoke('workbench-set-restmode', mode),
 
   // ─── Browser ──────────────────────────────────
   /** Open browser to conversation page */

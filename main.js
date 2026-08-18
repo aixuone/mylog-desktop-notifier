@@ -1,7 +1,7 @@
 // main.js - Electron main process: tray + WS server + HTTP server + notification windows
 process.env.ELECTRON_NO_ATTACH_CONSOLE = '1'
 
-const { app, Tray, Menu, BrowserWindow, ipcMain, shell, nativeImage, dialog, session, desktopCapturer, globalShortcut } = require('electron')
+const { app, Tray, Menu, BrowserWindow, ipcMain, shell, nativeImage, dialog, session, desktopCapturer, globalShortcut, clipboard, Notification } = require('electron')
 const path = require('path')
 const crypto = require('crypto')
 const { WebSocketServer } = require('ws')
@@ -13,6 +13,7 @@ const zlib = require('zlib')
 
 // ─── Feature modules (M1+) ──────────────────────
 const settingsStore = require('./lib/settingsStore')
+const workbenchStore = require('./lib/workbenchStore')
 const { createRingtoneResolver } = require('./lib/ringtoneResolver')
 const { createNotificationCenter } = require('./lib/notificationCenter')
 
@@ -58,6 +59,7 @@ let ringtoneResolver = null
 let notificationCenter = null
 let settingsWindow = null      // 设置面板单例窗口
 let diagnosticsWindow = null   // 诊断测试窗口单例
+let workbenchWindow = null     // 个人工作台窗口单例
 // ─── Tray icon state management ───────────────────────────
 // States: 'default' (connected, normal) | 'gray' (disconnected) | 'ringing' (incoming call) | 'unread' (unread messages)
 let trayIconState = 'gray'    // Start gray (no connections yet)
@@ -654,9 +656,9 @@ function makePopupWindowOpts(w, h) {
     height: h,
     show: false,
     frame: false,
-    ...(supportsAcrylic()
-      ? { backgroundMaterial: 'acrylic' }
-      : { backgroundColor: '#FFFFFF', transparent: false }),
+    // 与通知中心一致的纯色 app 灰底（无 acrylic/透明），白卡浮于其上，视觉统一
+    backgroundColor: '#F5F6F8',
+    transparent: false,
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
@@ -665,7 +667,7 @@ function makePopupWindowOpts(w, h) {
     maximizable: false,
     closable: false,
     focusable: true,
-    hasShadow: false,
+    hasShadow: true,
     webPreferences: makeWebPrefs(),
   }
 }
@@ -920,6 +922,60 @@ function getTrayUsersData() {
 // 用无边框 BrowserWindow 渲染玻璃卡片菜单，替代原生 Menu.buildFromTemplate，
 // 托盘右键菜单：原生 Menu.buildFromTemplate（清晰、可控、与系统风格一致）。
 // 规则：除「开机自启」(checkbox 自带对勾) 与「退出」(左侧退出图标) 外，其余项不显示图标。
+
+// 在线用户菜单项（禁用，纯信息展示）。托盘右键菜单与顶部窗口菜单共用。
+function userMenuItems() {
+  const items = []
+  const connectedUsers = Array.from(connectedClients.values()).filter(u => u.connected)
+  if (connectedUsers.length > 0) {
+    connectedUsers.forEach((u) => {
+      const displayName = u.userName || u.userId || '未知用户'
+      const item = { label: `${displayName} 🟢`, enabled: false }
+      const iconPath = (u.userId && userIconCache.get(u.userId)) || u.localIconPath ||
+        (u.userId === currentUser.userId ? localUserIconPath : '')
+      const ic = loadMenuIcon(iconPath)
+      if (ic) item.icon = ic
+      items.push(item)
+    })
+  } else if (currentUser.userName) {
+    const item = { label: `${currentUser.userName} ⚪（离线）`, enabled: false }
+    const ic = loadMenuIcon(localUserIconPath)
+    if (ic) item.icon = ic
+    items.push(item)
+  }
+  return items
+}
+
+// 主页面窗口顶部菜单栏：在线用户 + 设置（复用托盘逻辑，不碰远程页）
+function buildWindowMenu() {
+  const userItems = userMenuItems()
+  if (userItems.length === 0) userItems.push({ label: '（无在线用户）', enabled: false })
+
+  return Menu.buildFromTemplate([
+    { label: '在线用户', submenu: userItems },
+    {
+      label: '设置',
+      submenu: [
+        { label: '通用', click: () => openSettingsWindow('general') },
+        { label: '铃声', click: () => openSettingsWindow('ringtone') },
+        { label: '特别关注', click: () => openSettingsWindow('contacts') },
+        { label: '自动测试', click: () => { try { openDiagnosticsWindow() } catch (e) { console.error('[Menu] openDiagnostics failed:', e) } } },
+        { label: '调试窗口', click: () => {
+          if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+            mainPageWindow.webContents.openDevTools()
+            mainPageWindow.show(); mainPageWindow.focus()
+          }
+        } },
+        { type: 'separator' },
+        { label: '开机自启', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin,
+          click: (item) => { app.setLoginItemSettings({ openAtLogin: item.checked }); settingsStore.set({ autoStart: item.checked }); updateTrayMenu() } },
+        { label: '退出', click: () => { isQuitting = true; quitApp() } },
+      ],
+    },
+    { label: '工作台', click: () => openWorkbenchWindow() },
+  ])
+}
+
 function updateTrayMenu() {
   if (!tray) return
 
@@ -929,30 +985,12 @@ function updateTrayMenu() {
   menuItems.push({ label: `我的日志（v${version}）`, enabled: false })
   menuItems.push({ type: 'separator' })
 
-  // ── Connected users（显示头像 + 在线状态标识） ──
-  // 仅在线用户项带图标（头像），其余菜单项（设置/版本等）不显示图标，符合统一风格。
-  const connectedUsers = Array.from(connectedClients.values()).filter(u => u.connected)
-  if (connectedUsers.length > 0) {
-    menuItems.push({ label: `在线用户 (${connectedUsers.length})`, enabled: false })
-    connectedUsers.forEach((u) => {
-      const displayName = u.userName || u.userId || '未知用户'
-      const item = {
-        label: `${displayName} 🟢`,
-        enabled: false,
-      }
-      // 头像：优先 userId 缓存（抗重连抖动），其次连接项 localIconPath，再次主用户 legacy 路径
-      const iconPath = (u.userId && userIconCache.get(u.userId)) || u.localIconPath ||
-        (u.userId === currentUser.userId ? localUserIconPath : '')
-      const ic = loadMenuIcon(iconPath)
-      if (ic) item.icon = ic
-      menuItems.push(item)
-    })
-    menuItems.push({ type: 'separator' })
-  } else if (currentUser.userName) {
-    const item = { label: `${currentUser.userName} ⚪（离线）`, enabled: false }
-    const ic = loadMenuIcon(localUserIconPath)
-    if (ic) item.icon = ic
-    menuItems.push(item)
+  // ── Connected users（显示头像 + 在线状态标识，禁用项） ──
+  const userItems = userMenuItems()
+  if (userItems.length) {
+    const connectedCount = Array.from(connectedClients.values()).filter(u => u.connected).length
+    if (connectedCount > 0) menuItems.push({ label: `在线用户 (${connectedCount})`, enabled: false })
+    menuItems.push(...userItems)
     menuItems.push({ type: 'separator' })
   }
 
@@ -988,13 +1026,18 @@ function updateTrayMenu() {
   const contextMenu = Menu.buildFromTemplate(menuItems)
   tray.setContextMenu(contextMenu)
 
+  // 同步刷新主窗口顶部菜单（在线用户列表会随连接状态变动）
+  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+    try { mainPageWindow.setMenu(buildWindowMenu()) } catch (e) {}
+  }
+
   // 实时同步在线用户列表给设置面板「通用」页（与托盘菜单展示完全一致）
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.webContents.send('tray-users-update', getTrayUsersData())
   }
 
   // Tooltip：显示在线数量
-  const onlineCount = connectedUsers.length
+  const onlineCount = Array.from(connectedClients.values()).filter(u => u.connected).length
   if (onlineCount > 0) {
     tray.setToolTip(`我的日志-通知助手 | ${onlineCount} 个用户在线`)
   } else {
@@ -1334,6 +1377,13 @@ app.whenReady().then(() => {
     notificationCenter.preCreate()
     // ─────────────────────────────────────────────
 
+    // 工作台提醒引擎（定时/周期/延期，独立于窗口后台运行）
+    workbenchStore.load()
+    startReminderEngine()
+
+    // 启动即打开主页面窗口（默认展示网页，符合"启动时网页窗口应默认打开"）
+    openMainPage()
+
     startHttpServer((err) => {
       if (err) {
         console.error('[HTTP] Failed to start HTTP server:', err)
@@ -1371,11 +1421,11 @@ app.on('before-quit', () => {
   if (meetingWindow && !meetingWindow.isDestroyed()) { meetingWindow.destroy(); meetingWindow = null }
   if (toastWindow && !toastWindow.isDestroyed()) { toastWindow.destroy(); toastWindow = null }
   if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.destroy(); settingsWindow = null }
+  if (workbenchWindow && !workbenchWindow.isDestroyed()) { workbenchWindow.destroy(); workbenchWindow = null }
 })
 
 // ─── System tray ──────────────────────────────────────────
 let mainPageWindow = null
-let mainPagePendingShow = false   // 首屏加载完成前不显示窗口（避免白屏/假死）
 const MAIN_PAGE_DEFAULT = 'https://data.tygps.com/mylog-pc/'
 
 // 读取/保存主页面窗口尺寸与位置（记忆上次状态，首次才用默认 1300x700）
@@ -1395,6 +1445,37 @@ function saveMainPageBounds() {
 }
 
 // 托盘点击 → 打开主页面网页（默认 1300x700，地址可在设置「关于」中修改）
+// ─── 切换主页面窗口显示/隐藏（Ctrl/⌘+Shift+M）──
+function toggleMainPage() {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) { openMainPage(); return }
+  if (mainPageWindow.isVisible() && mainPageWindow.isFocused()) {
+    mainPageWindow.hide()
+  } else {
+    if (mainPageWindow.isMinimized()) mainPageWindow.restore()
+    mainPageWindow.show()
+    mainPageWindow.focus()
+  }
+}
+
+// ─── 主页面显隐快捷键（默认 Ctrl/⌘+Shift+M，可在「设置-通用」中自定义）───
+let mainPageHotkeyAccel = 'CommandOrControl+Shift+M'
+function registerMainPageHotkey() {
+  const accel = (settingsStore.get() && settingsStore.get().mainPageHotkey) || mainPageHotkeyAccel
+  // 注销旧绑定（用户可能改过，或上一次注册的是默认键）
+  try { globalShortcut.unregister(mainPageHotkeyAccel) } catch (e) {}
+  mainPageHotkeyAccel = accel
+  try {
+    if (!globalShortcut.register(accel, toggleMainPage)) {
+      console.warn('[Shortcut] 注册失败，回退默认快捷键:', accel)
+      mainPageHotkeyAccel = 'CommandOrControl+Shift+M'
+      try { globalShortcut.register(mainPageHotkeyAccel, toggleMainPage) } catch (e2) {}
+    }
+  } catch (e) {
+    console.warn('[Shortcut] 注册异常，回退默认:', e && e.message)
+    mainPageHotkeyAccel = 'CommandOrControl+Shift+M'
+  }
+}
+
 function openMainPage() {
   let url = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
   // 兜底：必须是 http/https，否则回退默认地址（避免 loadURL 加载非法内容）
@@ -1413,16 +1494,17 @@ function openMainPage() {
     ...(b ? { x: b.x, y: b.y, width: b.width, height: b.height } : { width: 1300, height: 700, center: true }),
     minWidth: 800,
     minHeight: 480,
-    show: false,            // 首屏加载完成后再显示，避免白屏/假死
+    show: false,            // 先隐藏，splash 渲染完成后由 ready-to-show 显示
     frame: true,
-    autoHideMenuBar: true,
+    autoHideMenuBar: false, // 顶部菜单栏常显（在线用户 + 设置）
+    backgroundColor: '#F5F6F8', // 与通知中心一致的 app 灰底，杜绝默认白色闪烁
     icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
     webPreferences: makeWebPrefs(),
   })
 
   // 关闭即隐藏到托盘（继续当前页面），而非销毁；真正退出由全局 isQuitting 控制
   mainPageWindow.on('close', (e) => {
-    if (!isQuitting) { e.preventDefault(); mainPagePendingShow = false; mainPageWindow.hide() }
+    if (!isQuitting) { e.preventDefault(); mainPageWindow.hide() }
   })
   // ─── 渲染进程 console 桥接到主进程 ───
   // 用户无法直接查看主页面窗口的 console 日志（TRTC SDK 的报错、调用路径全藏在渲染进程）。
@@ -1449,10 +1531,17 @@ function openMainPage() {
     console.warn('[DevTools] 快捷键注册失败:', e && e.message)
   }
 
+  // 主页面显隐快捷键（默认 Ctrl/⌘+Shift+M，可在「设置-通用」中自定义，修改后即时生效）
+  registerMainPageHotkey()
+
   mainPageWindow.on('closed', () => {
     mainPageWindow = null
     try { globalShortcut.unregister('CommandOrControl+Shift+I') } catch (e) {}
+    try { globalShortcut.unregister(mainPageHotkeyAccel) } catch (e) {}
   })
+
+  // 顶部菜单栏（在线用户 + 设置），复用托盘菜单逻辑；在线用户列表会随连接状态刷新
+  try { mainPageWindow.setMenu(buildWindowMenu()) } catch (e) { console.warn('[Menu] 顶部菜单设置失败:', e && e.message) }
 
   // 主页面 shim 注入时机：优先 dom-ready（比 did-finish-load 更早，在 SDK 脚本执行前包裹），
   // did-finish-load 作为备用（全页重载时 JS 上下文重建，__SCREEN_SHARE_SHIM_INSTALLED__ 重置，
@@ -1461,28 +1550,37 @@ function openMainPage() {
   mainPageWindow.webContents.on('dom-ready', () => injectScreenShareShim(mainPageWindow))
   mainPageWindow.webContents.on('did-finish-load', () => injectScreenShareShim(mainPageWindow))
 
-  // 加载状态：任务栏不确定进度；首屏完成才显示；失败进入本地兜底错误页
+  // 加载状态：任务栏不确定进度
   mainPageWindow.webContents.on('did-start-loading', () => {
     mainPageWindow.setProgressBar(-1, { mode: 'indeterminate' })
   })
   mainPageWindow.webContents.on('did-stop-loading', () => {
     mainPageWindow.setProgressBar(-1)
-    if (mainPagePendingShow) { mainPagePendingShow = false; mainPageWindow.show(); mainPageWindow.focus() }
   })
   mainPageWindow.webContents.on('did-fail-load', (e, errorCode, errorDescription, validatedURL) => {
     console.warn('[MainPage] load failed:', errorCode, errorDescription, validatedURL)
     mainPageWindow.setProgressBar(-1)
     const errPage = 'file://' + path.join(__dirname, 'src', 'mainpage-error.html') + '?url=' + encodeURIComponent(validatedURL || url)
     if (mainPageWindow.getURL() !== errPage) mainPageWindow.loadURL(errPage)
-    if (mainPagePendingShow) { mainPagePendingShow = false; mainPageWindow.show() }
   })
 
   // 记忆窗口尺寸/位置
   mainPageWindow.on('resize', saveMainPageBounds)
   mainPageWindow.on('move', saveMainPageBounds)
 
-  mainPagePendingShow = true
-  mainPageWindow.loadURL(url)
+  // 先加载本地 splash（瞬时、零网络），splash 渲染完成即用 ready-to-show 显示窗口，
+  // 随后在后台加载远程主页，完成即替换内容。这样：① 窗口即时可见、无"隐藏后突然弹出"；
+  // ② 底色为 app 灰（backgroundColor）而非默认白，消除白屏闪烁；③ 远程 SPA 慢加载期间有品牌加载页兜底。
+  mainPageWindow.once('ready-to-show', () => {
+    try { mainPageWindow.show(); mainPageWindow.focus() } catch (e) {}
+  })
+  mainPageWindow.loadFile(path.join(__dirname, 'src', 'splash.html'))
+  mainPageWindow.webContents.once('did-finish-load', () => {
+    // splash 已就绪，转去加载真正的远程主页（后台加载，完成即替换内容，无白屏）
+    if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+      mainPageWindow.loadURL(url)
+    }
+  })
 }
 
 function createTray() {
@@ -1769,12 +1867,12 @@ function isDuplicateToast(convId, content) {
 
 // ─── Incoming call window (pre-created for instant show) ─
 function preCreateCallWindow() {
-  const wa = getActiveDisplay().workArea
+  const rect = getNcRect(CALL_W, CALL_H)
 
   callWindow = new BrowserWindow({
     ...makePopupWindowOpts(CALL_W, CALL_H),
-    x: Math.round(wa.x + (wa.width - CALL_W) / 2),
-    y: Math.round(wa.y + (wa.height - CALL_H) / 2),
+    x: rect.x,
+    y: rect.y,
   })
   callWindow.setAlwaysOnTop(true, 'screen-saver')
   callWindow.setVisibleOnAllWorkspaces(true)
@@ -1798,8 +1896,8 @@ function showCallWindow(payload, ws) {
     callWindow._timer = null
   }
 
-  const wa = getActiveDisplay().workArea
-  callWindow.setPosition(Math.round(wa.x + (wa.width - CALL_W) / 2), Math.round(wa.y + (wa.height - CALL_H) / 2))
+  const rect = getNcRect(CALL_W, CALL_H)
+  callWindow.setPosition(rect.x, rect.y)
   callWindow.webContents.setAudioMuted(false)   // Unmute in case previously muted
   callWindow.show()
   callWindow.focus()
@@ -1856,12 +1954,12 @@ function closeCallWindow() {
 
 // ─── Meeting window (screen center, dedicated to meeting invites) ─
 function preCreateMeetingWindow() {
-  const wa = getActiveDisplay().workArea
+  const rect = getNcRect(MEETING_W, MEETING_H)
 
   meetingWindow = new BrowserWindow({
     ...makePopupWindowOpts(MEETING_W, MEETING_H),
-    x: Math.round(wa.x + (wa.width - MEETING_W) / 2),
-    y: Math.round(wa.y + (wa.height - MEETING_H) / 2),
+    x: rect.x,
+    y: rect.y,
   })
   meetingWindow.setAlwaysOnTop(true, 'screen-saver')
   meetingWindow.setVisibleOnAllWorkspaces(true)
@@ -1885,8 +1983,8 @@ function showMeetingWindow(payload, ws) {
     meetingWindow._timer = null
   }
 
-  const wa = getActiveDisplay().workArea
-  meetingWindow.setPosition(Math.round(wa.x + (wa.width - MEETING_W) / 2), Math.round(wa.y + (wa.height - MEETING_H) / 2))
+  const rect = getNcRect(MEETING_W, MEETING_H)
+  meetingWindow.setPosition(rect.x, rect.y)
   meetingWindow.webContents.setAudioMuted(false)   // Unmute in case previously muted
   meetingWindow.show()
   meetingWindow.focus()
@@ -2011,7 +2109,16 @@ ipcMain.handle('settings-load', () => {
 ipcMain.on('settings-save', (event, partial) => {
   if (!partial || typeof partial !== 'object') return
   settingsStore.set(partial)
+  if (partial && typeof partial.mainPageHotkey === 'string') registerMainPageHotkey()
   if (notificationCenter) notificationCenter.notifySettingsChanged()
+})
+
+// 捕获快捷键期间：临时注销全局显隐快捷键（避免 OS 在捕获时吞掉组合键），结束后恢复
+ipcMain.on('hotkey-capture', (event, on) => {
+  try {
+    if (on) globalShortcut.unregister(mainPageHotkeyAccel)
+    else registerMainPageHotkey()
+  } catch (e) {}
 })
 
 // 删除指定联系人的专属铃声设置（真正移除 key，避免 deepMerge 把删除的 key 保留下来）
@@ -2052,14 +2159,33 @@ ipcMain.on('set-auto-start', (event, value) => {
   updateTrayMenu()
 })
 
+// 设置-关于「应用」按钮：立即把主页面窗口刷新为新地址（即时生效）
+ipcMain.handle('navigate-mainpage', (event, url) => {
+  const u = (url || '').trim()
+  if (!/^https?:\/\//i.test(u)) return { ok: false, error: 'invalid-url' }
+  settingsStore.set({ mainPageUrl: u })
+  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+    mainPageWindow.loadURL(u)
+    if (!mainPageWindow.isVisible()) mainPageWindow.show()
+    mainPageWindow.focus()
+    return { ok: true }
+  }
+  // 主页面窗口尚未创建：下次打开会用新地址，此处主动打开以满足"即时"需求
+  openMainPage()
+  return { ok: true }
+})
+
 // 设置面板「通用」页拉取当前在线用户列表（与托盘菜单一致）
 ipcMain.handle('tray-users-get', () => getTrayUsersData())
 
 // ─── Settings window singleton ────────────────────
-function openSettingsWindow() {
+// tab: 可选，传入则打开后直接跳转到对应面板（general/ringtone/contacts）
+function openSettingsWindow(tab) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     if (settingsWindow.isVisible()) settingsWindow.focus()
     else settingsWindow.show()
+    // 已打开时若指定了面板，直接切换
+    if (tab) settingsWindow.webContents.send('settings-switch-tab', tab)
     return
   }
   const { screen } = require('electron')
@@ -2077,7 +2203,8 @@ function openSettingsWindow() {
     icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
     webPreferences: makeWebPrefs(),
   })
-  settingsWindow.loadFile(path.join(__dirname, 'src', 'settings-window.html'))
+  const loadOpts = tab ? { query: { tab: tab } } : {}
+  settingsWindow.loadFile(path.join(__dirname, 'src', 'settings-window.html'), loadOpts)
   settingsWindow.webContents.once('did-finish-load', () => {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       settingsWindow.webContents.send('tray-users-update', getTrayUsersData())
@@ -2110,6 +2237,25 @@ function openDiagnosticsWindow() {
   )
   diagnosticsWindow.loadFile(path.join(__dirname, 'src', 'diagnostics.html'))
   diagnosticsWindow.on('closed', () => { diagnosticsWindow = null })
+}
+
+// ─── Workbench window (个人工作台：四象限 + 日历) ──────
+function openWorkbenchWindow() {
+  if (workbenchWindow && !workbenchWindow.isDestroyed()) {
+    if (workbenchWindow.isVisible()) workbenchWindow.focus()
+    else workbenchWindow.show()
+    return
+  }
+  workbenchWindow = new BrowserWindow({
+    width: 1100, height: 760,
+    show: true, frame: true, autoHideMenuBar: true,
+    center: true, resizable: true, minimizable: true, maximizable: true,
+    backgroundColor: '#F6F8FA',
+    icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
+    webPreferences: makeWebPrefs(),
+  })
+  workbenchWindow.loadFile(path.join(__dirname, 'src', 'workbench-window.html'))
+  workbenchWindow.on('closed', () => { workbenchWindow = null })
 }
 
 // 纯环境信息（无副作用）：供诊断窗「多显示器环境」面板使用
@@ -2287,10 +2433,148 @@ ipcMain.handle('diag:mode-linkage', () => {
   return { origMode, dndBlockedPopup, dndMuted, restored: settingsStore.getMerged().notifyMode === origMode }
 })
 
+// ─── Workbench window IPC ──────────────────────────
+ipcMain.handle('workbench-load', () => {
+  return { tasks: workbenchStore.list(), tasksPath: workbenchStore.getTasksPath(), mapKey: settingsStore.getMerged().mapKey || '', restMode: settingsStore.getMerged().restMode || 'double' }
+})
+ipcMain.handle('workbench-add', (e, task) => workbenchStore.add(task))
+ipcMain.handle('workbench-update', (e, id, patch) => workbenchStore.update(id, patch))
+ipcMain.handle('workbench-toggle', (e, id) => workbenchStore.toggle(id))
+ipcMain.handle('workbench-delete', (e, id) => workbenchStore.remove(id))
+
+// 通讯录（来自网页 SYNC_CONTACTS 缓存，桌面端只读）：附 py/initials 供拼音模糊搜索
+ipcMain.handle('workbench-contacts', async () => {
+  try {
+    const list = workbenchStore.loadContacts() || []
+    let pinyin = null
+    try { pinyin = require('pinyin-pro') } catch (e) { pinyin = null }
+    return list.map((c) => {
+      const name = String(c.name || '')
+      let py = ''
+      let initials = ''
+      if (pinyin && name) {
+        try {
+          const full = pinyin.pinyin(name, { toneType: 'none', type: 'array' })
+          py = (Array.isArray(full) ? full.join('') : String(full || '')).toLowerCase()
+          const firsts = pinyin.pinyin(name, { pattern: 'first', toneType: 'none', type: 'array' })
+          initials = (Array.isArray(firsts) ? firsts.join('') : '').toLowerCase()
+        } catch (e) { /* ignore */ }
+      }
+      return { id: String(c.id || c.imUserId || ''), name, avatar: String(c.avatar || ''), py, initials }
+    })
+  } catch (e) {
+    console.error('[Workbench] contacts failed:', e && e.message)
+    return []
+  }
+})
+
+// 地图 Key（高德地图 Web 服务）：本地保存，不随任务数据上传
+ipcMain.handle('workbench-set-mapkey', (e, key) => {
+  settingsStore.set({ mapKey: String(key || '').trim() })
+  return settingsStore.getMerged().mapKey || ''
+})
+
+// 单双休偏好（本地保存，影响日历周末显示）
+ipcMain.handle('workbench-set-restmode', (e, mode) => {
+  const m = mode === 'single' ? 'single' : 'double'
+  settingsStore.set({ restMode: m })
+  return m
+})
+
+// 日历信息：农历 / 节日 / 法定节假日 / 单双休（由主进程 solarlunar 计算，避免浏览器端脆弱实现）
+ipcMain.handle('workbench-calendar-info', (e, year, month, restMode) => {
+  try { return workbenchStore.calendarInfo(year, month, restMode || settingsStore.getMerged().restMode || 'double') }
+  catch (err) { console.error('[Workbench] calendar-info failed:', err && err.message); return { year, month, restMode: restMode || 'double', days: [] } }
+})
+
+// 图片/截图：选择本地文件、剪贴板截图、读取、打开、删除
+ipcMain.handle('workbench-pick-images', async () => {
+  try {
+    const res = await dialog.showOpenDialog({
+      title: '选择图片',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
+    })
+    if (res.canceled || !res.filePaths || !res.filePaths.length) return []
+    return res.filePaths.map((fp) => {
+      const ext = (fp.split('.').pop() || 'png').toLowerCase()
+      const buf = fs.readFileSync(fp)
+      return workbenchStore.saveImage(buf, ext)
+    })
+  } catch (e) {
+    console.error('[Workbench] pick-images failed:', e && e.message)
+    return []
+  }
+})
+
+ipcMain.handle('workbench-paste-screenshot', () => {
+  try {
+    const img = clipboard.readImage()
+    if (img.isEmpty()) return null
+    const png = img.toPNG()
+    return workbenchStore.saveImage(png, 'png')
+  } catch (e) {
+    console.error('[Workbench] paste-screenshot failed:', e && e.message)
+    return null
+  }
+})
+
+ipcMain.handle('workbench-read-image', (e, filename) => workbenchStore.readImageDataUrl(filename))
+ipcMain.handle('workbench-open-image', (e, filename) => {
+  try { shell.openPath(workbenchStore.imageFullPath(filename)) } catch (e) { /* ignore */ }
+})
+ipcMain.handle('workbench-delete-image', (e, filename) => workbenchStore.deleteImage(filename))
+
+// ─── Workbench 提醒引擎（独立于窗口，后台轮询）──
+let reminderTimer = null
+function checkReminders() {
+  try {
+    // 免打扰模式：不弹任何工作台提醒（DND 结束后下次轮询自然补触发，不会丢）
+    if (settingsStore.getMerged().notifyMode === 'dnd') return
+    const pending = workbenchStore.getPendingReminders(Date.now())
+    for (const p of pending) {
+      const t = p.task
+      let title = '提醒'
+      let body = t.title
+      if (p.kind === 'overdue') {
+        title = '⏰ 待办已延期'
+        const endStr = t.schedule && t.schedule.single ? (t.schedule.single.end || '').replace('T', ' ').slice(5) : ''
+        body = `${t.title}\n原定 ${endStr || '执行时间'} 未完成`
+      } else {
+        const rem = t.reminder
+        if (p.kind === 'repeat') title = '🔁 周期提醒'
+        else title = '⏰ 时间提醒'
+        if (rem && rem.mode === '5min') body += '\n（提前5分钟）'
+        else if (rem && rem.mode === '30min') body += '\n（提前30分钟）'
+        else if (rem && rem.mode === '1day') body += `\n（提前1天 ${rem.dayTime || '09:00'}）`
+      }
+      if (t.note) body += (body.indexOf('\n') >= 0 ? '\n' : '\n') + t.note
+      try {
+        if (Notification.isSupported && Notification.isSupported()) {
+          const n = new Notification({ title, body, silent: false })
+          n.show()
+        }
+      } catch (e) { /* ignore notification errors */ }
+      workbenchStore.markReminderFired(t.id, p.kind, p.schedAt)
+    }
+  } catch (e) {
+    console.error('[Workbench] checkReminders failed:', e && e.message)
+  }
+}
+function startReminderEngine() {
+  if (reminderTimer) return
+  checkReminders() // 启动时先扫一次（处理错过/延期）
+  reminderTimer = setInterval(checkReminders, 30 * 1000)
+}
+function stopReminderEngine() {
+  if (reminderTimer) { clearInterval(reminderTimer); reminderTimer = null }
+}
+
 // 真正退出应用（被托盘菜单「退出」与潜在其他入口复用）
 function quitApp() {
   isQuitting = true
   stopStaleCleanup()
+  stopReminderEngine()
   if (blinkInterval) { clearInterval(blinkInterval); blinkInterval = null }
 
   // Force-close all WebSocket connections immediately
@@ -2310,6 +2594,7 @@ function quitApp() {
   if (meetingWindow && !meetingWindow.isDestroyed()) { meetingWindow.destroy(); meetingWindow = null }
   if (toastWindow && !toastWindow.isDestroyed()) { toastWindow.destroy(); toastWindow = null }
   if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.destroy(); settingsWindow = null }
+  if (workbenchWindow && !workbenchWindow.isDestroyed()) { workbenchWindow.destroy(); workbenchWindow = null }
 
   // Destroy tray
   if (tray) { tray.destroy(); tray = null }
