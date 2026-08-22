@@ -32,7 +32,7 @@ body {
 
 /* 头部：标题 + ✕ */
 .header {
-  height: 46px; flex-shrink: 0;
+  height: 24px; flex-shrink: 0;
   display: flex; align-items: center; gap: 8px;
   padding: 0 12px 0 16px;
   background: #fff;
@@ -88,9 +88,9 @@ body {
 <div id="app">
   <div id="tip" class="tip"></div>
   <div class="header">
-    <span class="title" id="card-title">多人会议</span>
-    <span class="spacer"></span>
-    <button class="btn-close" id="btn-close" title="忽略">✕</button>
+    <span class="title" id="card-title">视频会议</span>
+    <!-- <span class="spacer"></span> -->
+    <!-- <button class="btn-close" id="btn-close" title="忽略">✕</button> -->
   </div>
   <div class="body">
     <div class="avatar" id="avatar"><div class="fallback" id="avatar-fallback"></div></div>
@@ -285,7 +285,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (api) api.sendMeetingAction(action);
   }
 
-  document.getElementById('btn-close').addEventListener('click', function() { doAction('ignore'); });
+  // document.getElementById('btn-close').addEventListener('click', function() { doAction('ignore'); });
   document.getElementById('btn-join').addEventListener('click', function() { doAction('accept'); });
   document.getElementById('btn-decline').addEventListener('click', function() { doAction('reject'); });
 });

@@ -37,7 +37,7 @@ body {
 
 /* 头部：标题 + ✕（与通知中心 .header 风格一致） */
 .header {
-  height: 46px; flex-shrink: 0;
+  height: 24px; flex-shrink: 0;
   display: flex; align-items: center; gap: 8px;
   padding: 0 12px 0 16px;
   background: #fff;
@@ -106,8 +106,8 @@ body {
   <div id="tip" class="tip tip-audio"></div>
   <div class="header">
     <span class="title" id="card-title">语音通话</span>
-    <span class="spacer"></span>
-    <button class="btn-close" id="btn-close" title="忽略">✕</button>
+    <!-- <span class="spacer"></span>
+    <button class="btn-close" id="btn-close" title="忽略">✕</button> -->
   </div>
   <div class="body">
     <div class="avatar" id="avatar"><div class="fallback" id="avatar-fallback"></div></div>
@@ -342,7 +342,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   document.getElementById('btn-accept').addEventListener('click', function() { doAction('accept'); });
   document.getElementById('btn-reject').addEventListener('click', function() { doAction('reject'); });
-  document.getElementById('btn-close').addEventListener('click', function() { doAction('ignore'); });
+  // document.getElementById('btn-close').addEventListener('click', function() { doAction('ignore'); });
 });
 </script>
 </body>

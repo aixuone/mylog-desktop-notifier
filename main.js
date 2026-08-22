@@ -361,7 +361,7 @@ function makeWebPrefs() {
 // 可信来源：官方域名 / 本地回环 / 本机内置页面(file://，仅我们自己的 UI)。
 // 仅对可信来源放行一组"安全"Web API；危险权限(camera 等)即便可信也默认拒绝。
 var TRUSTED_RE = /^https?:\/\/(?:[^\/]+\.)?tygps\.com|^https?:\/\/(localhost|127\.0\.0\.1)(?::\d+)?(?:\/|$)|^file:\/\//i
-var SAFE_PERMISSIONS = ['media', 'display-capture', 'fullscreen', 'clipboard-read', 'clipboard-write', 'pointerLock', 'notifications']
+var SAFE_PERMISSIONS = ['media', 'display-capture', 'fullscreen', 'clipboard-read', 'clipboard-write', 'pointerLock', 'notifications', 'geolocation']
 function permissionAllowed(url, permission) {
   return TRUSTED_RE.test(url || '') && SAFE_PERMISSIONS.indexOf(permission) !== -1
 }
@@ -1380,6 +1380,7 @@ app.whenReady().then(() => {
     // 工作台提醒引擎（定时/周期/延期，独立于窗口后台运行）
     workbenchStore.load()
     startReminderEngine()
+    registerWorkbenchHotkey() // 工作台显隐全局快捷键（默认 Ctrl/⌘+Shift+B，可自定义）
 
     // 启动即打开主页面窗口（默认展示网页，符合"启动时网页窗口应默认打开"）
     openMainPage()
@@ -1476,10 +1477,46 @@ function registerMainPageHotkey() {
   }
 }
 
+// ─── 工作台显隐快捷键（默认 Ctrl/⌘+Shift+B，可在「设置-通用」中自定义）───
+let workbenchHotkeyAccel = 'CommandOrControl+Shift+B'
+function registerWorkbenchHotkey() {
+  const accel = (settingsStore.get() && settingsStore.get().workbenchHotkey) || workbenchHotkeyAccel
+  try { globalShortcut.unregister(workbenchHotkeyAccel) } catch (e) {}
+  workbenchHotkeyAccel = accel
+  try {
+    if (!globalShortcut.register(accel, openWorkbenchWindow)) {
+      console.warn('[Shortcut] 工作台快捷键注册失败，回退默认:', accel)
+      workbenchHotkeyAccel = 'CommandOrControl+Shift+B'
+      try { globalShortcut.register(workbenchHotkeyAccel, openWorkbenchWindow) } catch (e2) {}
+    }
+  } catch (e) {
+    console.warn('[Shortcut] 工作台快捷键注册异常:', e && e.message)
+    workbenchHotkeyAccel = 'CommandOrControl+Shift+B'
+  }
+}
+
 function openMainPage() {
-  let url = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
-  // 兜底：必须是 http/https，否则回退默认地址（避免 loadURL 加载非法内容）
-  if (!/^https?:\/\//i.test(url || '')) url = MAIN_PAGE_DEFAULT
+  const rawUrl = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
+  // 规范化 + 安全上下文升级：
+  // 网页被叫/音视频通话依赖 WebRTC，必须在安全上下文（https 或 localhost）下运行；
+  // 且同源策略要求页面与子资源同 scheme——若页面是 http:// 而子资源是 https://，
+  // 浏览器会按跨源拦截所有 JS/CSS（CORS 报错），导致 SPA 白屏。
+  // 故：http:// 一律升级为 https:// 加载，原 http 地址留存为 https 失败时的回退（仅一次）。
+  let url = MAIN_PAGE_DEFAULT
+  let fallbackUrl = null
+  if (/^https?:\/\//i.test(rawUrl || '')) {
+    try {
+      const u = new URL(rawUrl)
+      const isLocalhost = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(u.hostname)
+      if (u.protocol === 'http:' && !isLocalhost) {
+        const httpsU = new URL(rawUrl); httpsU.protocol = 'https:'
+        fallbackUrl = u.toString()      // 原 http，作为 https 加载失败回退
+        url = httpsU.toString()         // 优先用 https 加载
+      } else {
+        url = u.toString()
+      }
+    } catch (e) { url = MAIN_PAGE_DEFAULT }
+  }
 
   if (mainPageWindow && !mainPageWindow.isDestroyed()) {
     // 点击切换语义：最小化则恢复；可见且聚焦则隐藏（类 IM）；其余置顶显示
@@ -1490,6 +1527,7 @@ function openMainPage() {
   }
 
   const b = loadMainPageBounds()
+  let mainLoadTimer = null
   mainPageWindow = new BrowserWindow({
     ...(b ? { x: b.x, y: b.y, width: b.width, height: b.height } : { width: 1300, height: 700, center: true }),
     minWidth: 800,
@@ -1560,8 +1598,25 @@ function openMainPage() {
   mainPageWindow.webContents.on('did-fail-load', (e, errorCode, errorDescription, validatedURL) => {
     console.warn('[MainPage] load failed:', errorCode, errorDescription, validatedURL)
     mainPageWindow.setProgressBar(-1)
+    // https 升级回退：https 加载失败（如站点不支持 https）时回退原 http（仅一次），避免 http 站点直接白屏
+    if (fallbackUrl && validatedURL && validatedURL.indexOf('https://') === 0 && fallbackUrl.indexOf('http://') === 0) {
+      const fu = fallbackUrl; fallbackUrl = null
+      console.warn('[MainPage] https 加载失败，回退 http:', fu)
+      if (mainPageWindow.getURL() !== fu) mainPageWindow.loadURL(fu)
+      return
+    }
     const errPage = 'file://' + path.join(__dirname, 'src', 'mainpage-error.html') + '?url=' + encodeURIComponent(validatedURL || url)
+    // 防递归：错误页自身加载失败时不再二次 load（避免无限循环空白）
     if (mainPageWindow.getURL() !== errPage) mainPageWindow.loadURL(errPage)
+  })
+  // 渲染进程崩溃（如网页端 JS 致命错误导致 renderer 挂掉）→ 显示错误页而非空白
+  mainPageWindow.webContents.on('render-process-gone', (e, details) => {
+    console.error('[MainPage] 渲染进程崩溃:', details && details.reason)
+    if (mainLoadTimer) { clearTimeout(mainLoadTimer); mainLoadTimer = null }
+    if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+      const errPage = 'file://' + path.join(__dirname, 'src', 'mainpage-error.html') + '?url=' + encodeURIComponent(url) + '&reason=crash'
+      if (mainPageWindow.getURL() !== errPage) mainPageWindow.loadURL(errPage)
+    }
   })
 
   // 记忆窗口尺寸/位置
@@ -1579,6 +1634,16 @@ function openMainPage() {
     // splash 已就绪，转去加载真正的远程主页（后台加载，完成即替换内容，无白屏）
     if (mainPageWindow && !mainPageWindow.isDestroyed()) {
       mainPageWindow.loadURL(url)
+      // 加载超时兜底：远程主页 20s 内未完成（卡死/超慢/挂起）则显示错误页，避免无限空白
+      if (mainLoadTimer) clearTimeout(mainLoadTimer)
+      mainLoadTimer = setTimeout(() => {
+        if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+        const cur = mainPageWindow.webContents.getURL() || ''
+        if (cur.indexOf('mainpage-error') !== -1) return
+        console.warn('[MainPage] 远程主页加载超时，显示错误页')
+        mainPageWindow.loadURL('file://' + path.join(__dirname, 'src', 'mainpage-error.html') + '?url=' + encodeURIComponent(url) + '&reason=timeout')
+      }, 20000)
+      mainPageWindow.webContents.once('did-stop-loading', () => { if (mainLoadTimer) { clearTimeout(mainLoadTimer); mainLoadTimer = null } })
     }
   })
 }
@@ -1736,6 +1801,14 @@ function handleBrowserMessage(ws, msg) {
       if (notificationCenter && Array.isArray(msg.payload?.items)) {
         notificationCenter.syncUnread(msg.payload.items)
         console.log('[WS] Synced unread from web:', msg.payload.items.length, 'items')
+      }
+      break
+
+    // 网页端下发的审批待办列表（payload = { approvals: [...] }），桌面端只读聚合展示
+    case 'SYNC_APPROVALS':
+      if (notificationCenter && Array.isArray(msg.payload?.approvals)) {
+        const n = notificationCenter.syncApprovals(msg.payload.approvals)
+        console.log('[WS] Synced approvals from web:', n.length, 'items')
       }
       break
 
@@ -2043,9 +2116,31 @@ function closeMeetingWindow() {
 // 已被通知中心（notificationCenter）取代：SHOW_MESSAGE_NOTIFICATION → notificationCenter.pushMessage
 // 保留 toastWindow 变量仅用于退出清理（恒为 null）。
 
+// 强制将主页面窗口（网页）置顶显示——用于桌面被叫弹窗"接听"后把网页窗口拉到最前。
+// 不能直接用 openMainPage()：其内部对"已可见且聚焦"的窗口会执行隐藏（类 IM 切换语义），
+// 接听场景必须强制置顶而非切换，否则在网页窗口恰好聚焦时会误隐藏。
+function focusMainPage() {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) {
+    openMainPage()
+    return
+  }
+  if (mainPageWindow.isMinimized()) mainPageWindow.restore()
+  mainPageWindow.show()
+  mainPageWindow.focus()
+  // 短暂置顶，确保从被叫弹窗切换到网页窗口时一定能到最前（规避 Windows 前台锁限制）
+  try {
+    mainPageWindow.setAlwaysOnTop(true)
+    setTimeout(() => {
+      try { if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.setAlwaysOnTop(false) } catch (_) {}
+    }, 1200)
+  } catch (_) {}
+}
+
 // ─── IPC handlers ─────────────────────────────────────
 ipcMain.on('call-action', (event, action) => {
   console.log('[IPC] Call action:', action)
+  // 接听：把网页窗口拉到最前（拒绝/超时无需处理）
+  if (action === 'accept') focusMainPage()
   const callId = (callWindow && callWindow._callId) ? callWindow._callId : ''
 
   if (wsServer) {
@@ -2064,6 +2159,8 @@ ipcMain.on('call-action', (event, action) => {
 
 ipcMain.on('meeting-action', (event, action) => {
   console.log('[IPC] Meeting action:', action)
+  // 接听：把网页窗口拉到最前（拒绝/超时无需处理）
+  if (action === 'accept') focusMainPage()
   const callId = (meetingWindow && meetingWindow._callId) ? meetingWindow._callId : ''
 
   if (wsServer) {
@@ -2110,14 +2207,15 @@ ipcMain.on('settings-save', (event, partial) => {
   if (!partial || typeof partial !== 'object') return
   settingsStore.set(partial)
   if (partial && typeof partial.mainPageHotkey === 'string') registerMainPageHotkey()
+  if (partial && typeof partial.workbenchHotkey === 'string') registerWorkbenchHotkey()
   if (notificationCenter) notificationCenter.notifySettingsChanged()
 })
 
 // 捕获快捷键期间：临时注销全局显隐快捷键（避免 OS 在捕获时吞掉组合键），结束后恢复
 ipcMain.on('hotkey-capture', (event, on) => {
   try {
-    if (on) globalShortcut.unregister(mainPageHotkeyAccel)
-    else registerMainPageHotkey()
+    if (on) { globalShortcut.unregister(mainPageHotkeyAccel); globalShortcut.unregister(workbenchHotkeyAccel) }
+    else { registerMainPageHotkey(); registerWorkbenchHotkey() }
   } catch (e) {}
 })
 
@@ -2437,6 +2535,17 @@ ipcMain.handle('diag:mode-linkage', () => {
 ipcMain.handle('workbench-load', () => {
   return { tasks: workbenchStore.list(), tasksPath: workbenchStore.getTasksPath(), mapKey: settingsStore.getMerged().mapKey || '', restMode: settingsStore.getMerged().restMode || 'double' }
 })
+
+// 工作台侧栏聚合数据：系统通知(sysAlerts) / 未读消息(unread) / 审批(approvals) / 在线状态
+ipcMain.handle('workbench-nc-data', () => {
+  if (!notificationCenter) return { unread: [], sysAlerts: [], approvals: [], online: false }
+  return {
+    unread: notificationCenter.getUnread(),
+    sysAlerts: notificationCenter.getSysAlerts(),
+    approvals: notificationCenter.getApprovals(),
+    online: !!(hasConnectedClients && hasConnectedClients()),
+  }
+})
 ipcMain.handle('workbench-add', (e, task) => workbenchStore.add(task))
 ipcMain.handle('workbench-update', (e, id, patch) => workbenchStore.update(id, patch))
 ipcMain.handle('workbench-toggle', (e, id) => workbenchStore.toggle(id))
@@ -2547,6 +2656,7 @@ function checkReminders() {
         if (rem && rem.mode === '5min') body += '\n（提前5分钟）'
         else if (rem && rem.mode === '30min') body += '\n（提前30分钟）'
         else if (rem && rem.mode === '1day') body += `\n（提前1天 ${rem.dayTime || '09:00'}）`
+        else if (rem && rem.mode === 'custom') body += `\n（提前${rem.leadDays || 1}天 ${rem.leadTime || '09:00'}）`
       }
       if (t.note) body += (body.indexOf('\n') >= 0 ? '\n' : '\n') + t.note
       try {

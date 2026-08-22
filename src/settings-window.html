@@ -343,6 +343,14 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
         <div class="hint-line">点击输入框后按下组合键（如 Ctrl+Shift+M）。保存后立即生效，无需重启。</div>
       </div>
       <div class="row" style="flex-direction:column; align-items:stretch;">
+        <div class="label" style="margin-bottom:6px;">显示/隐藏个人工作台快捷键</div>
+        <div class="hk-wrap">
+          <button class="hk-input" id="hk-workbench" type="button">点击设置</button>
+          <button class="hk-reset" id="hk-wb-reset" type="button">恢复默认</button>
+        </div>
+        <div class="hint-line">点击输入框后按下组合键（如 Ctrl+Shift+B）。保存后立即生效，可单独呼出个人工作台。</div>
+      </div>
+      <div class="row" style="flex-direction:column; align-items:stretch;">
         <div class="label" style="margin-bottom:6px;">已登录用户</div>
         <div id="tray-users" class="tray-users"></div>
         <!-- <div class="hint-line">与右键托盘菜单中的「在线用户」列表实时同步一致。</div> -->
@@ -575,6 +583,7 @@ function renderGeneral() {
   })
   refreshLinkage()
   renderHotkeyInput()
+  renderWorkbenchHotkeyInput()
 }
 
 // 将按键事件规范化为 Electron accelerator 键名
@@ -635,6 +644,57 @@ function renderHotkeyInput() {
     btn.textContent = 'CommandOrControl+Shift+M'
   }
   btn.textContent = S.mainPageHotkey || 'CommandOrControl+Shift+M'
+  btn.classList.remove('capturing')
+}
+
+// 个人工作台显隐快捷键：与网页快捷键同样的捕获式输入，存 workbenchHotkey
+function renderWorkbenchHotkeyInput() {
+  var btn = document.getElementById('hk-workbench')
+  var reset = document.getElementById('hk-wb-reset')
+  if (!btn) return
+  var capturing = false
+  var DEFAULT = 'CommandOrControl+Shift+B'
+  function cancelCapture() {
+    if (!capturing) return
+    capturing = false
+    try { document.removeEventListener('keydown', onKey, true) } catch (e) {}
+    btn.classList.remove('capturing')
+    btn.textContent = S.workbenchHotkey || DEFAULT
+    try { api.setHotkeyCapture(false) } catch (e) {}
+  }
+  function onKey(e) {
+    e.preventDefault(); e.stopPropagation()
+    if (e.key === 'Escape') { cancelCapture(); return }
+    var mods = []
+    if (e.ctrlKey || e.metaKey) mods.push('CommandOrControl')
+    if (e.altKey) mods.push('Alt')
+    if (e.shiftKey) mods.push('Shift')
+    var key = normalizeAccelKey(e)
+    if (!key) return
+    if (mods.length === 0) { btn.textContent = '请包含 Ctrl/Alt/Shift'; return }
+    var combo = mods.join('+') + '+' + key
+    try { document.removeEventListener('keydown', onKey, true) } catch (e2) {}
+    capturing = false
+    btn.classList.remove('capturing')
+    try { api.setHotkeyCapture(false) } catch (e2) {}
+    save({ workbenchHotkey: combo })
+    btn.textContent = combo
+  }
+  btn.onclick = function () {
+    if (capturing) { cancelCapture(); return }
+    capturing = true
+    btn.classList.add('capturing')
+    btn.textContent = '按下快捷键… (Esc 取消)'
+    try { api.setHotkeyCapture(true) } catch (e) {}
+    document.addEventListener('keydown', onKey, true)
+  }
+  btn.onblur = cancelCapture
+  reset.onclick = function () {
+    cancelCapture()
+    save({ workbenchHotkey: DEFAULT })
+    btn.textContent = DEFAULT
+  }
+  btn.textContent = S.workbenchHotkey || DEFAULT
   btn.classList.remove('capturing')
 }
 

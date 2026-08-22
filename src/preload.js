@@ -155,6 +155,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   workbenchCalendarInfo: (year, month, restMode) => ipcRenderer.invoke('workbench-calendar-info', year, month, restMode),
   /** 保存单双休偏好 */
   workbenchSetRestMode: (mode) => ipcRenderer.invoke('workbench-set-restmode', mode),
+  /** 侧栏聚合数据：通知(sysAlerts) / 未读消息(unread) / 审批(approvals) / 在线状态 */
+  workbenchNcData: () => ipcRenderer.invoke('workbench-nc-data'),
+  /** 标记某会话未读已读（供工作台侧栏点开未读消息后清计数） */
+  ncMarkRead: (id) => ipcRenderer.send('nc-mark-read', id),
 
   // ─── Browser ──────────────────────────────────
   /** Open browser to conversation page */
