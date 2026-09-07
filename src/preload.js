@@ -75,8 +75,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeContactRingtone: (cid) => ipcRenderer.send('settings-remove-contact', cid),
   /** 立即把主页面窗口刷新为指定地址（应用主页地址按钮） */
   applyMainPage: (url) => ipcRenderer.invoke('navigate-mainpage', url),
-  /** 上传自定义铃声（invoke，返回 { path, name }） */
+  /** 上传自定义铃声（invoke，返回 { path, name }，name=文件名去扩展名） */
   pickRingtone: () => ipcRenderer.invoke('pick-ringtone'),
+  /** 重命名/清除铃声展示名（name 空白则清除自定义名），返回最新 names 映射 */
+  ringtoneRename: (rel, name) => ipcRenderer.invoke('ringtone-rename', rel, name),
+  /** 删除上传铃声（解除所有引用 + 物理删文件），返回最新候选数据 { names, localRingtones, urls } */
+  ringtoneDelete: (rel) => ipcRenderer.invoke('ringtone-delete', rel),
   /** 设置开机启动 */
   setAutoStart: (value) => ipcRenderer.send('set-auto-start', value),
   /** 捕获快捷键期间临时注销(TRUE)/恢复(FALSE)全局显隐快捷键，避免 OS 吞掉组合键 */
@@ -111,8 +115,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   diagSetScreenShareAudio: (mode) => ipcRenderer.invoke('diag:set-screenshare-audio', mode),
   /** 通知点击聚焦验证（FOCUS_CONVERSATION / 回退 openExternal） */
   diagFocus: (data) => ipcRenderer.invoke('diag:focus', data),
-  /** 网页端离线/被踢常驻通知验证 */
+  /** 网页端离线/被踢常驻通知验证（自校验版，跑完即清理） */
   diagSysAlert: () => ipcRenderer.invoke('diag:sysalert'),
+  /** 网页端离线/被踢常驻通知模拟（保持可见，供手工确认） */
+  diagSysAlertSimulate: () => ipcRenderer.invoke('diag:sysalert-simulate'),
+  /** 清除手工模拟的常驻通知 */
+  diagSysAlertClear: () => ipcRenderer.invoke('diag:sysalert-clear'),
   /** 铃声多场景解析（message/call/meeting/联系人专属） */
   diagRingtoneScenes: () => ipcRenderer.invoke('diag:ringtone-scenes'),
   /** 来电浮窗弹出验证 */
@@ -125,6 +133,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Screen-share shim 埋点（main world 注入的 shim 调用）──
   /** 上报主页面实际使用的媒体捕获路径，便于定位屏幕共享失败原因 */
   logMedia: (msg) => ipcRenderer.send('page-media-log', msg),
+
+  // ─── Downloads (下载中心：任务列表 / 打开文件 / 打开所在目录) ──
+  /** 拉取下载任务列表 */
+  downloadsList: () => ipcRenderer.invoke('downloads:list'),
+  /** 用系统默认程序打开已下载文件 */
+  downloadsOpen: (id) => ipcRenderer.invoke('downloads:open', id),
+  /** 打开文件所在目录并选中该文件 */
+  downloadsOpenFolder: (id) => ipcRenderer.invoke('downloads:open-folder', id),
+  /** 取消进行中的下载 */
+  downloadsCancel: (id) => ipcRenderer.invoke('downloads:cancel', id),
+  /** 清空已完成/失败/取消的任务记录 */
+  downloadsClear: () => ipcRenderer.invoke('downloads:clear'),
+  /** 订阅下载列表实时变化（进度/状态） */
+  onDownloadsChanged: (callback) => ipcRenderer.on('downloads-changed', (_, list) => callback(list)),
+
+  // ─── Titlebar (自绘标题栏：头像/状态/快捷区/窗口控制) ──
+  /** 窗口控制（minimize / maximize / close） */
+  titlebarWin: (action) => ipcRenderer.send('titlebar:win', action),
+  /** 手动拖拽兜底（begin/end）：app-region 原生拖拽失效时由主进程接管移动窗口 */
+  titlebarDrag: (action) => ipcRenderer.send('titlebar:drag', action),
+  /** 快捷操作（quick-action:*，转发给主页面网页） */
+  titlebarQuickAction: (action) => ipcRenderer.send('titlebar:quick-action', action),
+  /** 头像菜单（settings/ringtone/contacts/downloads/diagnostics/devtools/logout/search） */
+  titlebarMenu: (key) => ipcRenderer.send('titlebar:menu', key),
+  /** 订阅连接状态（offline/reconnecting） */
+  onTitlebarStatus: (callback) => ipcRenderer.on('titlebar-status', (_, data) => callback(data)),
+  /** 订阅窗口最大化/全屏状态（{ maximized: boolean }），供标题栏"最大化/恢复"图标切换 */
+  onTitlebarState: (callback) => ipcRenderer.on('titlebar-state', (_, data) => callback(data)),
+  /** 订阅审批待办数（角标） */
+  onTitlebarApproval: (callback) => ipcRenderer.on('titlebar-approval', (_, count) => callback(count)),
+  /** 订阅用户信息 { name, avatar }（avatar 为空时 fallback 姓名首字） */
+  onTitlebarUser: (callback) => ipcRenderer.on('titlebar-user', (_, data) => callback(data)),
+  /** 接收主进程转发的桌面标题栏快捷操作（网页侧 desktop-notifier.ts 需注册处理） */
+  onQuickAction: (callback) => ipcRenderer.on('quick-action', (_, action) => callback(action)),
 
   // ─── Workbench window ─────────────────────────
   /** 加载工作台任务数据 */

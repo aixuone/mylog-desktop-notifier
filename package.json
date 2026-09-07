@@ -9,11 +9,14 @@
     "dev:mac": "bash scripts/start.sh",
     "build": "node build.js",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --win && rm -rf dist-installer-new/win-unpacked",
+    "dist": "electron-builder --win --publish never && rm -rf dist-installer-new/win-unpacked",
     "dist:mac": "electron-builder --mac",
     "dist:all": "electron-builder --win --mac"
   },
   "build": {
+    "electronDownload": {
+      "mirror": "https://npmmirror.com/mirrors/electron/"
+    },
     "appId": "com.tianyuan.mylog.desktop-notifier",
     "productName": "我的日志_桌面通知",
     "artifactName": "${productName} 安装包 ${version}.${ext}",

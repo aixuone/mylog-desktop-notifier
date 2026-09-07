@@ -101,6 +101,21 @@ td .detail { color: #9A9893; font-size: 12px; margin-top: 3px; line-height: 1.5;
 .badge.active { color: #15803D; background: #E7F6EC; }
 .kv { font-size: 12px; color: #5F5E5A; margin-top: 8px; line-height: 1.7; }
 .kv b { color: #2C2C2A; }
+/* 设备自检卡片 */
+.device-result { margin-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+.ditem { border: 1px solid rgba(0,0,0,0.08); border-radius: 12px; padding: 12px 14px; background: rgba(255,255,255,0.5); }
+.ditem .dhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ditem .dname { font-weight: 700; font-size: 13px; }
+.ditem .dstate { font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.dstate.ok { color: #15803D; background: #E7F6EC; }
+.dstate.warn { color: #B45309; background: #FEF3E2; }
+.dstate.bad { color: #B91C1C; background: #FDE8E8; }
+.ditem .ddetail { font-size: 12px; color: #6B6A65; margin-top: 8px; line-height: 1.6; }
+.ditem .dguide { font-size: 12px; color: #2C2C2A; margin-top: 8px; padding: 8px 10px; background: #F2F6FC; border-radius: 8px; line-height: 1.75; }
+.ditem .dguide b { color: #185FA5; }
+.ditem .dmeter { height: 8px; border-radius: 999px; background: #ECECEC; margin-top: 8px; overflow: hidden; }
+.ditem .dmeter > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg,#16A34A,#185FA5); transition: width .08s linear; }
+.ditem video { width: 100%; border-radius: 8px; margin-top: 8px; background: #000; aspect-ratio: 16/9; object-fit: cover; }
 </style>
 </head>
 <body>
@@ -135,7 +150,7 @@ td .detail { color: #9A9893; font-size: 12px; margin-top: 3px; line-height: 1.5;
     <div class="manual-grid">
       <div class="mtest">
         <div class="mt-title">① 弹窗可见性</div>
-        <div class="mt-desc">触发一条测试通知卡，确认小白窗出现在你正在看的屏幕上。</div>
+        <div class="mt-desc">触发一条测试通知卡，确认小白窗出现在主屏幕右下角。</div>
         <button class="btn" id="m-popup">触发弹窗</button>
         <button class="btn" id="m-popup-close">关闭弹窗</button>
         <div class="confirm" id="c-popup">✓ 我看到了弹窗</div>
@@ -182,17 +197,31 @@ td .detail { color: #9A9893; font-size: 12px; margin-top: 3px; line-height: 1.5;
       </div>
       <div class="mtest">
         <div class="mt-title">⑦ 离线/被踢通知</div>
-        <div class="mt-desc">模拟离线/被踢常驻通知，确认卡片出现且 ✕ 不收起。</div>
-        <button class="btn" id="m-sa">模拟常驻通知</button>
+        <div class="mt-desc">模拟离线/被踢常驻通知，确认卡片出现且 ✕ 不收起；验证完点「清除模拟」。</div>
+        <div class="btn-row" style="gap:6px;">
+          <button class="btn" id="m-sa">模拟常驻通知</button>
+          <button class="btn" id="m-sa-clear">清除模拟</button>
+        </div>
         <div class="confirm" id="c-sa">✓ 看到常驻通知且未误关</div>
       </div>
     </div>
   </section>
 
+  <!-- 设备自检（麦克风 / 摄像头 / 扬声器） -->
+  <section class="card">
+    <h2>设备自检</h2>
+    <div class="hint">一键检测麦克风、摄像头、扬声器是否可用，并给出对症处理建议。遇到“没声音 / 没画面 / 点了没反应”时，先跑这个，按卡片里的引导逐步处理即可。</div>
+    <div class="btn-row">
+      <button class="btn primary" id="btn-device">▶ 运行设备检测</button>
+      <span id="device-status" style="font-size:12px;color:#9A9893;"></span>
+    </div>
+    <div id="device-result" class="device-result" hidden></div>
+  </section>
+
   <!-- 多显示器环境 -->
   <section class="card">
     <h2>多显示器环境</h2>
-    <div class="hint">辅助排查「有声无窗」：弹窗现在会落在光标所在屏幕的右下角。若你正用多屏，请确认主屏/光标屏设置。</div>
+    <div class="hint">辅助排查「有声无窗」：弹窗固定在主屏幕（主显示器）右下角。若你正用多屏，确认主屏就是你想看弹窗的那块。</div>
     <div class="kv" id="env-kv">加载中…</div>
     <div class="disp-list" id="disp-list"></div>
   </section>
@@ -216,6 +245,9 @@ if (!api) {
 function init() {
   // ── 自动测试 ──
   document.getElementById('btn-auto').onclick = runAuto
+
+  // ── 设备自检（麦克风 / 摄像头 / 扬声器）──
+  document.getElementById('btn-device').onclick = runDeviceCheck
 
   // ── 手工：弹窗 ──
   document.getElementById('m-popup').onclick = function () { api.diagPushTest(); mark('c-popup', false) }
@@ -263,9 +295,12 @@ function init() {
   document.getElementById('m-meet').onclick = async function () {
     try { var r = await api.diagShowMeeting(); if (r && r.visible) mark('c-meet', false) } catch (e) {}
   }
-  // ── 手工：离线/被踢常驻通知（P0-3）──
+  // ── 手工：离线/被踢常驻通知（P0-3）：模拟后保持可见，供用户肉眼确认 ──
   document.getElementById('m-sa').onclick = async function () {
-    try { var r = await api.diagSysAlert(); if (r && r.pushed && r.pushed.indexOf('offline') >= 0) mark('c-sa', false) } catch (e) {}
+    try { var r = await api.diagSysAlertSimulate(); if (r && r.pushed && r.pushed.indexOf('offline') >= 0) mark('c-sa', false) } catch (e) {}
+  }
+  document.getElementById('m-sa-clear').onclick = async function () {
+    try { await api.diagSysAlertClear() } catch (e) {}
   }
 
   // 初始加载环境信息
@@ -293,6 +328,205 @@ function addRow(tbody, i, name, pass, detail, skip) {
     '<td>' + tag + '</td>' +
     '<td><div class="detail">' + (detail || '') + '</div></td>'
   tbody.appendChild(tr)
+}
+
+// ── 设备自检（麦克风 / 摄像头 / 扬声器）──
+// 目标：用户遇到“没声音 / 没画面 / 点了没反应”时，打开诊断测试跑一遍即可自行定位并处理。
+// 每一项都会给出「状态 + 实测细节 + 怎么处理」三段式引导。
+
+// 媒体采集错误分类 → 状态 + 引导文案（覆盖：权限被拒 / 无设备 / 被占用 / 参数不支持 / 功能不支持）
+function classifyMediaErr(e, label) {
+  var n = (e && e.name) || ''
+  label = label || '设备'
+  if (n === 'NotAllowedError' || n === 'SecurityError')
+    return { state: 'warn', title: '权限被拒', guide: '请在系统/浏览器弹窗中允许本应用使用<b>' + label + '</b>；或在系统“隐私和安全性”设置里为“我的日志通知助手”开启对应权限后重试。' }
+  if (n === 'NotFoundError' || n === 'DevicesNotFoundError')
+    return { state: 'bad', title: '没有可用设备', guide: '未检测到<b>' + label + '</b>。请检查设备是否已连接并通电；USB 设备请重新插拔；在“设备管理器/系统信息”中确认设备已启用、驱动正常。' }
+  if (n === 'NotReadableError' || n === 'TrackStartError')
+    return { state: 'warn', title: '设备被占用或未就绪', guide: '<b>' + label + '</b>可能正被其他程序占用（如微信、腾讯会议、浏览器网页），或物理开关/隐私挡板未打开。请关闭占用程序、打开设备后重试。' }
+  if (n === 'OverconstrainedError' || n === 'ConstraintNotSatisfiedError')
+    return { state: 'warn', title: '参数不支持', guide: '当前设备不满足采集参数，通常不影响基础通话；如持续异常可在系统中切换默认设备。' }
+  if (n === 'TypeError')
+    return { state: 'bad', title: '功能不支持', guide: '当前系统/客户端不支持<b>媒体采集(WebRTC)</b>。建议升级系统或重新安装“我的日志通知助手”客户端。' }
+  return { state: 'bad', title: (n || '未知错误'), guide: '请重试；若仍失败，把上方提示反馈给管理员。' }
+}
+
+function mkItem(name, status, state) {
+  var el = document.createElement('div')
+  el.className = 'ditem'
+  el.innerHTML = '<div class="dhead"><span class="dname">' + name + '</span>' +
+    '<span class="dstate ' + (state || '') + '">' + status + '</span></div>' +
+    '<div class="dbody"></div>'
+  return el
+}
+
+// 填充某设备卡片：state(ok|warn|bad) / status / detail / meter / video+stream / guide
+function fillItem(el, view) {
+  if (!el) return
+  var head = el.querySelector('.dstate')
+  if (head) { head.className = 'dstate ' + (view.state || ''); head.textContent = view.status || '' }
+  var body = el.querySelector('.dbody')
+  if (!body) return
+  var html = ''
+  if (view.detail) html += '<div class="ddetail">' + view.detail + '</div>'
+  if (view.meter) html += '<div class="dmeter"><i></i></div>'
+  if (view.video) html += '<video autoplay playsinline muted></video>'
+  if (view.guide) html += '<div class="dguide">🛠 怎么处理：' + view.guide + '</div>'
+  body.innerHTML = html
+  if (view.meter) el._meter = body.querySelector('.dmeter > i')
+  if (view.video && view.stream) {
+    var v = body.querySelector('video')
+    try { v.srcObject = view.stream } catch (e) {}
+    el._video = v
+  }
+}
+
+// ── 麦克风：采集 + 实时音量（RMS）峰值检测 ──
+async function testMic(el) {
+  var devices = []
+  try { devices = await navigator.mediaDevices.enumerateDevices() } catch (e) {}
+  var mics = devices.filter(function (d) { return d.kind === 'audioinput' })
+  var stream
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }) }
+  catch (e) { return { error: e, mics: mics } }
+  var AC = window.AudioContext || window.webkitAudioContext
+  var peak = 0
+  try {
+    var ac = new AC()
+    var src = ac.createMediaStreamSource(stream)
+    var an = ac.createAnalyser(); an.fftSize = 512; src.connect(an)
+    var buf = new Float32Array(an.fftSize)
+    await new Promise(function (resolve) {
+      var t0 = Date.now()
+      var tick = function () {
+        an.getFloatTimeDomainData(buf)
+        var s = 0
+        for (var i = 0; i < buf.length; i++) s += buf[i] * buf[i]
+        var rms = Math.sqrt(s / buf.length)
+        peak = Math.max(peak, rms)
+        if (el && el._meter) el._meter.style.width = Math.min(100, rms * 300) + '%'
+        if (Date.now() - t0 < 1600) requestAnimationFrame(tick)
+        else resolve()
+      }
+      tick()
+    })
+    ac.close().catch(function () {})
+  } catch (e) {}
+  stream.getTracks().forEach(function (t) { t.stop() })
+  return { mics: mics, peak: peak }
+}
+function micResultView(mr) {
+  if (mr.error) {
+    var c = classifyMediaErr(mr.error, '麦克风')
+    var dev = (mr.mics && mr.mics.length) ? ('（已识别 ' + mr.mics.length + ' 个麦克风设备）') : ''
+    return { state: c.state, status: c.title, detail: '采集失败' + dev, guide: c.guide }
+  }
+  var pct = Math.round(Math.min(1, mr.peak) * 100)
+  if (mr.peak > 0.02) {
+    return { state: 'ok', status: '正常',
+      detail: '已采集到麦克风输入，实测最大音量约 ' + pct + '%。对着麦克风说话即可被识别。' +
+        ((mr.mics && mr.mics.length) ? (' 设备数：' + mr.mics.length) : '') }
+  }
+  return { state: 'warn', status: '几乎无声',
+    detail: '已采集到麦克风，但几乎检测不到声音（最大音量 ' + pct + '%）。',
+    guide: '请检查麦克风是否被系统静音、音量过低，或正被其他程序独占；对着麦克风清晰说话，并在系统“声音→录制”里把该设备设为<b>默认设备</b>并调高音量。' }
+}
+
+// ── 摄像头：采集 + 预览 ──
+async function testCam(el) {
+  var devices = []
+  try { devices = await navigator.mediaDevices.enumerateDevices() } catch (e) {}
+  var cams = devices.filter(function (d) { return d.kind === 'videoinput' })
+  var stream
+  try { stream = await navigator.mediaDevices.getUserMedia({ video: true }) }
+  catch (e) { return { error: e, cams: cams } }
+  return { cams: cams, stream: stream }
+}
+function camResultView(cr) {
+  if (cr.error) {
+    var c = classifyMediaErr(cr.error, '摄像头')
+    var dev = (cr.cams && cr.cams.length) ? ('（已识别 ' + cr.cams.length + ' 个摄像头）') : ''
+    return { state: c.state, status: c.title, detail: '采集失败' + dev, guide: c.guide }
+  }
+  return { state: 'ok', status: '正常',
+    detail: '摄像头已打开并出图。' + ((cr.cams && cr.cams.length) ? (' 设备数：' + cr.cams.length) : ''),
+    video: true, stream: cr.stream }
+}
+
+// ── 扬声器：播放测试音（660Hz 短音），让用户确认是否听到 ──
+async function testSpeaker(el) {
+  var devices = []
+  try { devices = await navigator.mediaDevices.enumerateDevices() } catch (e) {}
+  var outs = devices.filter(function (d) { return d.kind === 'audiooutput' })
+  var AC = window.AudioContext || window.webkitAudioContext
+  if (!AC) return { error: { name: 'TypeError' }, outs: outs }
+  var ac
+  try {
+    ac = new AC()
+    var osc = ac.createOscillator(), g = ac.createGain()
+    osc.type = 'sine'; osc.frequency.value = 660
+    osc.connect(g); g.connect(ac.destination)
+    var t = ac.currentTime
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.exponentialRampToValueAtTime(0.3, t + 0.05)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6)
+    osc.start(t); osc.stop(t + 0.65)
+    await new Promise(function (r) { setTimeout(r, 750) })
+    ac.close().catch(function () {})
+  } catch (e) { return { error: e, outs: outs } }
+  return { outs: outs }
+}
+function spkResultView(sr) {
+  if (sr.error) {
+    var n = (sr.error && sr.error.name) || ''
+    if (n === 'TypeError') return { state: 'bad', status: '功能不支持', detail: '系统/客户端不支持音频播放。',
+      guide: '当前环境不支持<b>音频输出(Web Audio)</b>，建议升级系统或重新安装“我的日志通知助手”客户端。' }
+    return { state: 'bad', status: '播放失败', detail: '测试音播放失败。',
+      guide: '请在系统“声音→播放”里确认扬声器已通电/连接、未静音，并把正确的输出设备设为<b>默认设备</b>；若插了多个音箱/耳机，确认当前用的是默认那一个。' }
+  }
+  var dev = (sr.outs && sr.outs.length)
+    ? ('系统识别到 ' + sr.outs.length + ' 个输出设备' + (sr.outs[0] && sr.outs[0].label ? '（' + escapeHtml(sr.outs[0].label) + ' 等）' : ''))
+    : '（未列出设备名，通常需先授权）'
+  return { state: 'ok', status: '已播放',
+    detail: dev + '。请确认是否听到“嘟”声。',
+    guide: '若没听到：① 检查系统音量未静音、扬声器已通电/连接；② 若你插了多个音箱/耳机，请在系统“声音→播放”里把正确的设备设为<b>默认设备</b>——本应用使用系统默认输出设备，选错设备就会“没声音”。' }
+}
+
+// ── 一键设备检测：逐项运行并渲染 ──
+async function runDeviceCheck() {
+  var box = document.getElementById('device-result')
+  var status = document.getElementById('device-status')
+  var btn = document.getElementById('btn-device')
+  btn.disabled = true
+  box.hidden = false
+  box.innerHTML = ''
+  status.textContent = '检测中…'
+
+  var micEl = mkItem('🎤 麦克风', '检测中…', '')
+  var camEl = mkItem('📷 摄像头', '检测中…', '')
+  var spkEl = mkItem('🔊 扬声器', '检测中…', '')
+  box.appendChild(micEl); box.appendChild(camEl); box.appendChild(spkEl)
+
+  // 麦克风
+  fillItem(micEl, { status: '检测中…', state: '', meter: true, detail: '请对着麦克风说句话…' })
+  var mr
+  try { mr = await testMic(micEl) } catch (e) { mr = { error: e, mics: [] } }
+  fillItem(micEl, micResultView(mr))
+
+  // 摄像头
+  fillItem(camEl, { status: '检测中…', state: '' })
+  var cr
+  try { cr = await testCam(camEl) } catch (e) { cr = { error: e, cams: [] } }
+  fillItem(camEl, camResultView(cr))
+
+  // 扬声器
+  fillItem(spkEl, { status: '检测中…', state: '' })
+  var sr
+  try { sr = await testSpeaker(spkEl) } catch (e) { sr = { error: e, outs: [] } }
+  fillItem(spkEl, spkResultView(sr))
+
+  status.textContent = '检测完成，请按卡片里的「怎么处理」逐步解决异常项。'
+  btn.disabled = false
 }
 
 async function runAuto() {
@@ -392,12 +626,18 @@ async function runAuto() {
   rows.push(['屏幕共享源获取', scPass, scDetail])
 
   // R7 通知点击聚焦（P0-2）
-  var focusExpected = (fo && fo.webConnected) ? 'focus' : 'external'
+  // 判定以「应用窗口是否连接(appConnected)」为准（与 focusConversation 实际分流一致）：
+  //   有应用窗口连接 → 预期动作 appFocus（置前网页 + 广播 FOCUS_CONVERSATION）
+  //   无应用窗口连接 → 预期动作 none（仅标记已读、不打开任何窗口，属正确行为）
+  var focusExpected = (fo && fo.appConnected) ? 'appFocus' : 'none'
   var focusOk = !!(fo && fo.action === focusExpected)
-  rows.push(['通知点击聚焦', focusOk,
-    fo ? ('网页在线=' + fo.webConnected + '；实际动作=' + fo.action + '；预期=' + focusExpected +
-          (fo.action === 'focus' ? '（已向网页广播 FOCUS_CONVERSATION）' : '（已回退 openExternal）'))
-        : '未返回数据'])
+  var focusDesc = fo
+    ? ('应用窗口连接=' + fo.appConnected + '；实际动作=' + fo.action + '；预期=' + focusExpected +
+       (fo.action === 'appFocus'
+         ? '（已置前网页窗口并向其广播 FOCUS_CONVERSATION，点击通知即可跳转到对应会话）'
+         : (fo.action === 'none' ? '（无应用窗口时仅标记已读、不弹窗，符合预期）' : '')))
+    : '未返回数据'
+  rows.push(['通知点击聚焦', focusOk, focusDesc])
 
   // R8 离线/被踢常驻通知（P0-3）：sticky 常驻、✕ 不收起、dismiss 后清零
   var saPushedOk = !!(sa && sa.pushed && sa.pushed.indexOf('offline') >= 0 && sa.pushed.indexOf('kick') >= 0)
@@ -520,7 +760,7 @@ async function loadEnv() {
     kv.innerHTML =
       '主页地址：<b>' + escapeHtml(d.mainUrl) + '</b><br>' +
       '显示器数量：<b>' + d.displayCount + '</b> ｜ 主屏：<b>#' + d.primaryId + '</b> ｜ 光标所在屏：<b>#' + d.activeId + '</b><br>' +
-      '通知窗将落点（光标屏右下角）：<b>(' + d.ncRect.x + ', ' + d.ncRect.y + ')</b>'
+      '通知窗将落点（主屏右下角）：<b>(' + d.ncRect.x + ', ' + d.ncRect.y + ')</b>'
     var list = document.getElementById('disp-list')
     list.innerHTML = (d.displays || []).map(function (ds) {
       var badges = ''

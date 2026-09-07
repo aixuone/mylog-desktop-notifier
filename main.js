@@ -60,6 +60,9 @@ let notificationCenter = null
 let settingsWindow = null      // 设置面板单例窗口
 let diagnosticsWindow = null   // 诊断测试窗口单例
 let workbenchWindow = null     // 个人工作台窗口单例
+let downloadsWindow = null     // 下载中心面板窗口单例
+let downloads = []             // 下载任务：[{ id, filename, savePath, url, state, receivedBytes, totalBytes, item }]
+let downloadSeq = 0            // 自增 id
 // ─── Tray icon state management ───────────────────────────
 // States: 'default' (connected, normal) | 'gray' (disconnected) | 'ringing' (incoming call) | 'unread' (unread messages)
 let trayIconState = 'gray'    // Start gray (no connections yet)
@@ -249,12 +252,10 @@ function setTrayState(state) {
       break
 
     case 'unread':
-      // Alternate: default (color) ↔ transparent (blink effect)
+      // 不闪烁：始终显示静态彩色图标（按需求：托盘图标关闭闪烁、保持一直显示）。
+      // 仅靠图标无法表达"有未读"，未读数改由 UPDATE_UNREAD_COUNT 文案(托盘 tooltip)体现。
+      if (blinkInterval) { clearInterval(blinkInterval); blinkInterval = null }
       tray.setImage(trayIcon(iconCache.default))
-      blinkInterval = setInterval(() => {
-        blinkPhase = !blinkPhase
-        tray.setImage(trayIcon(blinkPhase ? iconCache.transparent : iconCache.default))
-      }, 500)
       break
 
     default:
@@ -265,6 +266,8 @@ function setTrayState(state) {
   if (prevState !== state) {
     console.log('[Tray] Icon state:', prevState, '→', state)
   }
+  // 标题栏连接状态与托盘图标同源
+  try { pushTitlebarStatus() } catch (e) {}
 }
 
 /** 来电/会议提醒结束后，显式清除响铃瞬态并恢复真实图标状态 */
@@ -678,9 +681,11 @@ function getActiveDisplay() {
   return screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
 }
 
-// ─── Notification center window rect (bottom-right of active display) ──
+// ─── Notification center window rect (bottom-right of PRIMARY display) ──
+// 稳定版要求：消息弹窗固定落在主屏右下角，不再跟随鼠标所在显示器。
 function getNcRect(w, h) {
-  const wa = getActiveDisplay().workArea
+  const { screen } = require('electron')
+  const wa = screen.getPrimaryDisplay().workArea
   const margin = 20
   return { x: wa.x + wa.width - w - margin, y: wa.y + wa.height - h - margin }
 }
@@ -972,8 +977,35 @@ function buildWindowMenu() {
         { label: '退出', click: () => { isQuitting = true; quitApp() } },
       ],
     },
-    { label: '工作台', click: () => openWorkbenchWindow() },
+    { label: '刷新', click: () => reloadMainPage() },
+    (() => {
+      const n = downloads.filter(d => d.state === 'progressing').length
+      return { label: n > 0 ? `下载 (${n})` : '下载', submenu: buildDownloadsMenu() }
+    })(),
   ])
+}
+
+// 下载菜单：进行中任务快速入口 + 下载中心（每次 setMenu 重建，保持最新状态）
+function buildDownloadsMenu() {
+  const items = []
+  const active = downloads.filter(d => d.state === 'progressing')
+  if (active.length > 0) {
+    active.slice(0, 8).forEach((d) => {
+      const pct = d.totalBytes > 0 ? Math.round((d.receivedBytes / d.totalBytes) * 100) : 0
+      items.push({
+        label: `${d.filename}  ${pct}%`,
+        click: () => openDownloadsWindow(),
+      })
+    })
+    items.push({ type: 'separator' })
+  }
+  items.push({ label: '下载中心', click: () => openDownloadsWindow() })
+  const finished = downloads.filter(d => d.state === 'completed')
+  if (finished.length > 0) {
+    items.push({ type: 'separator' })
+    items.push({ label: `清空已完成 (${finished.length})`, click: () => clearDownloads() })
+  }
+  return items
 }
 
 function updateTrayMenu() {
@@ -996,6 +1028,8 @@ function updateTrayMenu() {
 
   // ── Actions ──
   menuItems.push({ label: '设置', click: () => openSettingsWindow() })
+  // 下载中心：查看网页下载任务，打开文件 / 打开所在目录
+  menuItems.push({ label: '下载中心', click: () => openDownloadsWindow() })
   // 调试窗口：打开主页面窗口的 Chrome DevTools，查看 TRTC SDK 内部日志（或用 Ctrl+Shift+I）
   menuItems.push({ label: '调试窗口', click: () => {
     if (mainPageWindow && !mainPageWindow.isDestroyed()) {
@@ -1028,13 +1062,15 @@ function updateTrayMenu() {
 
   // 同步刷新主窗口顶部菜单（在线用户列表会随连接状态变动）
   if (mainPageWindow && !mainPageWindow.isDestroyed()) {
-    try { mainPageWindow.setMenu(buildWindowMenu()) } catch (e) {}
+    try { mainPageWindow.setMenu(null) } catch (e) {}
   }
 
   // 实时同步在线用户列表给设置面板「通用」页（与托盘菜单展示完全一致）
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.webContents.send('tray-users-update', getTrayUsersData())
   }
+  // 标题栏头像首字与在线用户同源
+  try { pushTitlebarUser() } catch (e) {}
 
   // Tooltip：显示在线数量
   const onlineCount = Array.from(connectedClients.values()).filter(u => u.connected).length
@@ -1323,6 +1359,9 @@ if (process.platform === 'darwin') {
 }
 
 app.whenReady().then(() => {
+  // Windows 系统通知（下载完成等）必须设置 AppUserModelId，否则 Notification 不显示
+  try { app.setAppUserModelId('com.tianyuan.mylog.desktop-notifier') } catch (e) {}
+
   // 覆盖 UA，移除 Electron 字样，让 TRTC Web SDK 认为是标准 Chrome 浏览器
   // TRTC 在 startScreenCapture 内部检测到 Electron 环境后直接报 -1005 not supported
   try {
@@ -1365,7 +1404,9 @@ app.whenReady().then(() => {
       getWindowRect: getNcRect,
       settingsStore,
       ringtoneResolver,
-      onUnreadChange: updateUnreadCount,
+      // 托盘闪烁的未读来源改为「网页端消息页真实未读数」：由网页经 UPDATE_UNREAD_COUNT 下发
+      // （layout.vue 监听 filteredUnReadCount 实时推送），不再由 SYNC_UNREAD 聚合（易残留陈旧项）。
+      onUnreadChange: () => {},
       openExternal: safeOpenExternal,
       broadcast,
       isWebConnected: hasConnectedClients,
@@ -1377,10 +1418,16 @@ app.whenReady().then(() => {
     notificationCenter.preCreate()
     // ─────────────────────────────────────────────
 
-    // 工作台提醒引擎（定时/周期/延期，独立于窗口后台运行）
+    // 工作台数据加载（供快捷键呼出窗口使用）。稳定版不再启动后台提醒引擎，
+    // 避免无预期的系统通知弹窗（工作台属待稳定功能，仅保留快捷键唤出窗口）。
     workbenchStore.load()
-    startReminderEngine()
     registerWorkbenchHotkey() // 工作台显隐全局快捷键（默认 Ctrl/⌘+Shift+B，可自定义）
+
+    // 首开提速①：提前预热到主页的 DNS/TCP/TLS（省去渲染进程发起首个请求时的建连 RTT）
+    try {
+      const preUrl = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
+      if (typeof session.defaultSession.preconnect === 'function') session.defaultSession.preconnect({ url: preUrl })
+    } catch (e) { /* 老版本 Electron 无此 API 时静默跳过 */ }
 
     // 启动即打开主页面窗口（默认展示网页，符合"启动时网页窗口应默认打开"）
     openMainPage()
@@ -1458,6 +1505,15 @@ function toggleMainPage() {
   }
 }
 
+// ─── 刷新主页面网页（顶部菜单「刷新」：点一下即刷新当前加载的网页）──
+function reloadMainPage() {
+  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+    try { mainPageWindow.reload() } catch (e) { console.warn('[Reload] failed:', e && e.message) }
+  } else {
+    openMainPage()   // 窗口不存在则打开
+  }
+}
+
 // ─── 主页面显隐快捷键（默认 Ctrl/⌘+Shift+M，可在「设置-通用」中自定义）───
 let mainPageHotkeyAccel = 'CommandOrControl+Shift+M'
 function registerMainPageHotkey() {
@@ -1478,16 +1534,28 @@ function registerMainPageHotkey() {
 }
 
 // ─── 工作台显隐快捷键（默认 Ctrl/⌘+Shift+B，可在「设置-通用」中自定义）───
+// 显示/隐藏切换：按一次呼出（聚焦）工作台窗口，再按一次隐藏。
+// 稳定版不把工作台放入菜单，仅以快捷键唤起，避免暴露不稳定功能入口。
+function toggleWorkbenchWindow() {
+  if (!workbenchWindow || workbenchWindow.isDestroyed()) { openWorkbenchWindow(); return }
+  if (workbenchWindow.isVisible() && workbenchWindow.isFocused()) {
+    workbenchWindow.hide()
+  } else {
+    if (workbenchWindow.isMinimized()) workbenchWindow.restore()
+    workbenchWindow.show()
+    workbenchWindow.focus()
+  }
+}
 let workbenchHotkeyAccel = 'CommandOrControl+Shift+B'
 function registerWorkbenchHotkey() {
   const accel = (settingsStore.get() && settingsStore.get().workbenchHotkey) || workbenchHotkeyAccel
   try { globalShortcut.unregister(workbenchHotkeyAccel) } catch (e) {}
   workbenchHotkeyAccel = accel
   try {
-    if (!globalShortcut.register(accel, openWorkbenchWindow)) {
+    if (!globalShortcut.register(accel, toggleWorkbenchWindow)) {
       console.warn('[Shortcut] 工作台快捷键注册失败，回退默认:', accel)
       workbenchHotkeyAccel = 'CommandOrControl+Shift+B'
-      try { globalShortcut.register(workbenchHotkeyAccel, openWorkbenchWindow) } catch (e2) {}
+      try { globalShortcut.register(workbenchHotkeyAccel, toggleWorkbenchWindow) } catch (e2) {}
     }
   } catch (e) {
     console.warn('[Shortcut] 工作台快捷键注册异常:', e && e.message)
@@ -1532,12 +1600,19 @@ function openMainPage() {
     ...(b ? { x: b.x, y: b.y, width: b.width, height: b.height } : { width: 1300, height: 700, center: true }),
     minWidth: 800,
     minHeight: 480,
-    show: false,            // 先隐藏，splash 渲染完成后由 ready-to-show 显示
-    frame: true,
-    autoHideMenuBar: false, // 顶部菜单栏常显（在线用户 + 设置）
-    backgroundColor: '#F5F6F8', // 与通知中心一致的 app 灰底，杜绝默认白色闪烁
+    show: false,                 // 先隐藏，splash 渲染完成后由 ready-to-show 显示
+    title: '我的日志',           // 系统标题栏显示文本（与设置/诊断/工作台窗口一致）
+    frame: true,                 // 使用系统默认标题栏（最小化/最大化/关闭由 OS 提供），与设置/诊断/工作台窗口风格统一
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    autoHideMenuBar: true,       // 原生菜单栏默认隐藏（在线用户/设置菜单，按 Alt 唤出）
+    backgroundColor: '#F5F6F8',  // 与通知中心一致的 app 灰底，杜绝默认白色闪烁
     icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
-    webPreferences: makeWebPrefs(),
+    // 首开提速②③（仅主页面窗口，不影响通知等常驻窗口功耗）：
+    //   backgroundThrottling:false —— 窗口隐藏到托盘/失焦时，网络与定时器仍全速（否则节流到 1 次/秒，后台加载明显变慢）
+    //   v8CacheOptions:'bypassHeatCheck' —— V8 代码缓存跳过"热度检查"，二次启动直接命中字节码缓存，SPA 大包体（Vue+TRTC+TUIKit）编译提速明显
+    webPreferences: { ...makeWebPrefs(), backgroundThrottling: false, v8CacheOptions: 'bypassHeatCheck' },
   })
 
   // 关闭即隐藏到托盘（继续当前页面），而非销毁；真正退出由全局 isQuitting 控制
@@ -1579,7 +1654,44 @@ function openMainPage() {
   })
 
   // 顶部菜单栏（在线用户 + 设置），复用托盘菜单逻辑；在线用户列表会随连接状态刷新
-  try { mainPageWindow.setMenu(buildWindowMenu()) } catch (e) { console.warn('[Menu] 顶部菜单设置失败:', e && e.message) }
+  try { mainPageWindow.setMenu(null) } catch (e) { console.warn('[Menu] 顶部菜单设置失败:', e && e.message) }
+
+  // ─── 下载 / 新窗口拦截：<a> 下载直接下载不弹新窗；外链用系统浏览器打开 ───
+  // 文件扩展名白名单：命中则视为"下载链接"直接下载（进下载中心），否则视为普通外链走系统浏览器
+  const DOWNLOAD_EXT_RE = /\.(zip|rar|7z|tar|gz|bz2|xz|pdf|docx?|xlsx?|pptx?|mp3|wav|m4a|aac|flac|ogg|mp4|mkv|avi|mov|wmv|flv|webm|apk|exe|msi|dmg|iso|csv|json|xml|txt|png|jpe?g|gif|webp|bmp|svg|psd|dwg)(\?|$)/i
+  function looksLikeDownload(url) {
+    if (!url) return false
+    try { return DOWNLOAD_EXT_RE.test(new URL(url).pathname) } catch (e) { return DOWNLOAD_EXT_RE.test(url) }
+  }
+  try {
+    mainPageWindow.webContents.setWindowOpenHandler(({ url, disposition }) => {
+      if (disposition === 'download' || disposition === 'saveToDisk' || looksLikeDownload(url)) {
+        // 直接触发下载（进 will-download → 下载中心），不再弹新窗 / 打开浏览器
+        try { mainPageWindow.webContents.downloadURL(url) } catch (e) { console.warn('[Download] 触发失败:', e && e.message) }
+        return { action: 'deny' }
+      }
+      if (disposition === 'new-window' || disposition === 'foreground-tab' || disposition === 'background-tab') {
+        // 普通外链（_blank 等）用系统默认浏览器打开，不在应用内开新窗
+        if (url && /^https?:\/\//i.test(url)) { try { require('electron').shell.openExternal(url) } catch (e) {} }
+        return { action: 'deny' }
+      }
+      return { action: 'allow' } // 同窗口导航
+    })
+    // 实际落盘 + 任务跟踪：默认存到用户下载目录，进度/状态实时推给下载中心
+    // 命名 handler + 防重标志：openMainPage 在窗口销毁重建时会再次执行，避免重复注册导致任务双记
+    if (!global.__dlSessionBound) {
+      global.__dlSessionBound = true
+      mainPageWindow.webContents.session.on('will-download', handleWillDownload)
+    }
+  } catch (e) { console.warn('[WebContents] 下载/新窗口拦截设置失败:', e && e.message) }
+
+  // ─── 全屏时隐藏顶部菜单栏（窗口全屏 + 页面 DOM 全屏都覆盖）──
+  const _hideMenuOnFs = () => { try { mainPageWindow.setMenuBarVisibility(false) } catch (e) {} }
+  const _showMenuOnFs = () => { try { mainPageWindow.setMenuBarVisibility(true) } catch (e) {} }
+  mainPageWindow.on('enter-full-screen', _hideMenuOnFs)
+  mainPageWindow.on('leave-full-screen', _showMenuOnFs)
+  mainPageWindow.on('enter-html-full-screen', _hideMenuOnFs)
+  mainPageWindow.on('leave-html-full-screen', _showMenuOnFs)
 
   // 主页面 shim 注入时机：优先 dom-ready（比 did-finish-load 更早，在 SDK 脚本执行前包裹），
   // did-finish-load 作为备用（全页重载时 JS 上下文重建，__SCREEN_SHARE_SHIM_INSTALLED__ 重置，
@@ -1623,11 +1735,20 @@ function openMainPage() {
   mainPageWindow.on('resize', saveMainPageBounds)
   mainPageWindow.on('move', saveMainPageBounds)
 
+  // 窗口最大化/还原/全屏态变化时，实时推送标题栏（供"恢复"图标切换）
+  const _onWinState = () => pushTitlebarState()
+  mainPageWindow.on('maximize', _onWinState)
+  mainPageWindow.on('unmaximize', _onWinState)
+  mainPageWindow.on('enter-full-screen', _onWinState)
+  mainPageWindow.on('leave-full-screen', _onWinState)
+
   // 先加载本地 splash（瞬时、零网络），splash 渲染完成即用 ready-to-show 显示窗口，
   // 随后在后台加载远程主页，完成即替换内容。这样：① 窗口即时可见、无"隐藏后突然弹出"；
   // ② 底色为 app 灰（backgroundColor）而非默认白，消除白屏闪烁；③ 远程 SPA 慢加载期间有品牌加载页兜底。
   mainPageWindow.once('ready-to-show', () => {
     try { mainPageWindow.show(); mainPageWindow.focus() } catch (e) {}
+    // 初始推送一次窗口状态（非最大化），保证标题栏图标初始为"最大化"
+    pushTitlebarState()
   })
   mainPageWindow.loadFile(path.join(__dirname, 'src', 'splash.html'))
   mainPageWindow.webContents.once('did-finish-load', () => {
@@ -1650,7 +1771,6 @@ function openMainPage() {
 
 function createTray() {
   loadIconCache()
-
   // Start with gray icon (no WS connections yet)
   const startIcon = trayIcon(iconCache.gray || iconCache.default)
   tray = new Tray(startIcon)
@@ -2194,7 +2314,8 @@ ipcMain.handle('settings-load', () => {
     settings: s,
     version: version,
     presets: config.ringtonePresets,
-    names: config.ringtoneNames,
+    // 展示名合并：内置名（config）为底，用户自定义（settings.ringtoneNames）覆盖
+    names: Object.assign({}, config.ringtoneNames, (s.ringtoneNames || {})),
     builtin: config.ringtonePresets.builtin || [],
     localRingtones: s.localRingtones || [],
     contacts: settingsStore.loadContacts(),
@@ -2236,6 +2357,9 @@ ipcMain.handle('pick-ringtone', async () => {
     if (result.canceled || !result.filePaths || result.filePaths.length === 0) return null
     const src = result.filePaths[0]
     const ext = (path.extname(src).toLowerCase().replace(/^\./, '') || 'mp3')
+    // 默认展示名 = 源文件名去掉扩展名（如 "我的铃声.mp3" → "我的铃声"）
+    const base = path.basename(src)
+    const name = base.replace(/\.[^.]+$/, '')
     const stat = fs.statSync(src)
     const hash = crypto.createHash('sha1').update(src + stat.size + Date.now()).digest('hex').slice(0, 16)
     const dir = settingsStore.getRingtoneDir()
@@ -2243,9 +2367,55 @@ ipcMain.handle('pick-ringtone', async () => {
     const rel = `ringtones/${hash}.${ext}`
     fs.copyFileSync(src, path.join(dir, `${hash}.${ext}`))   // 主进程直接 copy，不限大小
     settingsStore.addLocalRingtone(rel)
-    return { path: rel, name: path.basename(src) }
+    return { path: rel, name }
   } catch (e) {
     console.error('[Ringtone] pick failed:', e && e.message)
+    return null
+  }
+})
+
+// 重命名/清除某铃声的展示名（name 为空白则清除自定义名，回退为文件名显示）
+ipcMain.handle('ringtone-rename', (event, rel, name) => {
+  try {
+    if (!rel || typeof rel !== 'string') return { names: {} }
+    settingsStore.setRingtoneName(rel, name)
+    const s = settingsStore.getMerged()
+    return { names: Object.assign({}, config.ringtoneNames, s.ringtoneNames || {}) }
+  } catch (e) {
+    console.error('[Ringtone] rename failed:', e && e.message)
+    return { names: {} }
+  }
+})
+
+// 删除用户上传的铃声：解除所有引用（场景回退默认、联系人专属移除）→ 移除候选/映射 → 物理删文件。
+// rel 必须以 'ringtones/' 开头且取 basename，杜绝路径穿越误删其它文件。
+ipcMain.handle('ringtone-delete', (event, rel) => {
+  try {
+    if (!rel || typeof rel !== 'string' || !rel.startsWith('ringtones/')) {
+      console.error('[Ringtone] delete rejected: bad rel', rel)
+      return null
+    }
+    settingsStore.removeLocalRingtone(rel)
+    // 物理删除（文件可能已不存在，忽略 ENOENT）
+    const dir = settingsStore.getRingtoneDir()
+    const file = path.join(dir, path.basename(rel))
+    try { if (fs.existsSync(file)) fs.unlinkSync(file) } catch (e) { /* 忽略 */ }
+    if (notificationCenter) notificationCenter.notifySettingsChanged()
+    // 返回最新候选数据，供渲染层无痛刷新
+    const s = settingsStore.getMerged()
+    const allRels = ['assets/ringtone.m4a'].concat(config.ringtonePresets.builtin || [], s.localRingtones || [])
+    const urls = {}
+    allRels.forEach((r) => {
+      const u = ringtoneResolver ? ringtoneResolver.toFile(r) : null
+      if (u) urls[r] = u
+    })
+    return {
+      names: Object.assign({}, config.ringtoneNames, s.ringtoneNames || {}),
+      localRingtones: s.localRingtones || [],
+      urls,
+    }
+  } catch (e) {
+    console.error('[Ringtone] delete failed:', e && e.message)
     return null
   }
 })
@@ -2336,6 +2506,259 @@ function openDiagnosticsWindow() {
   diagnosticsWindow.loadFile(path.join(__dirname, 'src', 'diagnostics.html'))
   diagnosticsWindow.on('closed', () => { diagnosticsWindow = null })
 }
+
+
+// 推送标题栏状态（连接状态/离线重连），与托盘图标状态同源
+function pushTitlebarStatus() {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+  try {
+    const offline = trayIconState === 'gray' || !hasConnectedClients()
+    const reconnecting = offline && !!httpServer
+    mainPageWindow.webContents.send('titlebar-status', { offline, reconnecting })
+  } catch (e) {}
+}
+
+// 推送标题栏用户信息（姓名 + 头像 URL；头像失败时 fallback 姓名首字）
+function pushTitlebarUser() {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+  try {
+    const first = Array.from(connectedClients.values()).find(u => u && u.userName)
+    if (first && first.userName) {
+      mainPageWindow.webContents.send('titlebar-user', { name: first.userName, avatar: first.userIcon || '' })
+    }
+  } catch (e) {}
+}
+
+// 推送审批待办数（标题栏角标）——后续可由网页 WS 推送，当前先置 0
+function pushTitlebarApproval(count) {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+  try { mainPageWindow.webContents.send('titlebar-approval', count || 0) } catch (e) {}
+}
+
+// ─── Titlebar IPC ─────────────────────────────
+// 向网页推送窗口最大化/全屏状态，供标题栏"最大化/恢复"图标切换
+function pushTitlebarState() {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+  try {
+    const maximized = mainPageWindow.isMaximized() || mainPageWindow.isFullScreen()
+    mainPageWindow.webContents.send('titlebar-state', { maximized })
+  } catch (e) {}
+}
+ipcMain.on('titlebar:win', (e, action) => {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+  if (action === 'minimize') mainPageWindow.minimize()
+  else if (action === 'maximize') {
+    if (mainPageWindow.isMaximized()) mainPageWindow.unmaximize()
+    else mainPageWindow.maximize()
+    // 窗口最大化态变更可能由系统动画延迟，下一帧再推送（此时 isMaximized 已是最新值）
+    pushTitlebarState()
+  }
+  else if (action === 'close') { mainPageWindow.close() } // close 事件已拦截为隐藏到托盘
+})
+
+// ─── 手动拖拽兜底（titlebar:drag）──
+// 背景：-webkit-app-region:drag 在部分远程页环境（注入样式/页面合成层影响）下可能失效，
+//       表现为"标题栏空白处按住拖不动"。原生拖拽生效时，mousedown 会被系统吞掉、根本到不了
+//       网页 JS —— 所以该兜底与原生拖拽天然互斥共存：原生失效才有事件漏进来，兜底自动接管。
+// 实现：渲染层在标题栏空白区 mousedown → 'begin'；主进程轮询 screen.getCursorScreenPoint
+//       以 16ms 步进 setBounds 跟随鼠标；mouseup/窗口失焦 → 'end'。
+//       最大化态先还原窗口（水平居中到鼠标下方）再拖，行为对齐系统标题栏"拖拽即还原"。
+let _tbDrag = null
+ipcMain.on('titlebar:drag', (e, action) => {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) { _tbDrag = null; return }
+  const { screen } = require('electron')
+  if (action === 'begin') {
+    if (_tbDrag) return
+    const win = mainPageWindow
+    // 最大化/全屏时先还原，让标题栏跟回鼠标下方
+    try {
+      if (win.isMaximized() || win.isFullScreen()) {
+        const nb = win.getNormalBounds()
+        win.unmaximize()
+        if (win.isFullScreen()) win.setFullScreen(false)
+        const cur0 = screen.getCursorScreenPoint()
+        win.setBounds({ x: Math.round(cur0.x - nb.width / 2), y: Math.max(0, cur0.y - 20), width: nb.width, height: nb.height })
+      }
+    } catch (err) {}
+    const cur = screen.getCursorScreenPoint()
+    const b = win.getBounds()
+    _tbDrag = { dx: cur.x - b.x, dy: cur.y - b.y, w: b.width, h: b.height, timer: null, startAt: Date.now() }
+    const tick = () => {
+      if (!_tbDrag || !mainPageWindow || mainPageWindow.isDestroyed()) { _tbDrag = null; return }
+      // 安全上限：渲染层 mouseup 丢失（如拖拽中页面重载）时防无限轮询
+      if (Date.now() - _tbDrag.startAt > 15000) {
+        if (_tbDrag.timer) { clearTimeout(_tbDrag.timer); _tbDrag.timer = null }
+        _tbDrag = null
+        return
+      }
+      try {
+        const c = screen.getCursorScreenPoint()
+        mainPageWindow.setBounds({ x: c.x - _tbDrag.dx, y: c.y - _tbDrag.dy, width: _tbDrag.w, height: _tbDrag.h })
+      } catch (err) {}
+      _tbDrag.timer = setTimeout(tick, 16)
+    }
+    tick()
+  } else if (action === 'end') {
+    if (_tbDrag && _tbDrag.timer) { clearTimeout(_tbDrag.timer); _tbDrag.timer = null }
+    _tbDrag = null
+  }
+})
+
+// 快捷操作：转发给主页面网页执行（网页侧 desktop-notifier.ts 需 onQuickAction 分发）
+ipcMain.on('titlebar:quick-action', (e, action) => {
+  if (mainPageWindow && !mainPageWindow.isDestroyed() && action) {
+    mainPageWindow.webContents.send('quick-action', String(action))
+    console.log('[Titlebar] quick-action →', action)
+  }
+})
+
+// 头像下拉菜单：设置/下载/诊断/调试/退出登录
+ipcMain.on('titlebar:menu', (e, key) => {
+  if (key === 'settings') openSettingsWindow('general')
+  else if (key === 'ringtone') openSettingsWindow('ringtone')
+  else if (key === 'contacts') openSettingsWindow('contacts')
+  else if (key === 'downloads') openDownloadsWindow()
+  else if (key === 'diagnostics') { try { openDiagnosticsWindow() } catch (err) {} }
+  else if (key === 'devtools') {
+    if (mainPageWindow && !mainPageWindow.isDestroyed()) { mainPageWindow.webContents.openDevTools(); mainPageWindow.show(); mainPageWindow.focus() }
+  }
+  else if (key === 'logout') {
+    if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.webContents.send('quick-action', 'logout')
+  }
+  else if (key === 'search') {
+    if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.webContents.send('quick-action', 'open-search')
+  }
+})
+
+// ─── Downloads window (下载中心：任务列表 + 打开文件/所在目录) ──────
+// will-download 处理：落盘到用户下载目录 + 记录任务 + 广播进度/状态
+// 注意 fs/path 已在文件顶部 require（这里可直接使用）
+function handleWillDownload(event, item) {
+  const downDir = app.getPath('downloads')
+  try { if (!fs.existsSync(downDir)) fs.mkdirSync(downDir, { recursive: true }) } catch (e) {}
+  // 同名文件自动加序号 (1)/(2)…，避免覆盖已有文件
+  let name = item.getFilename() || 'download'
+  const extIdx = name.lastIndexOf('.')
+  const base = extIdx > 0 ? name.slice(0, extIdx) : name
+  const ext = extIdx > 0 ? name.slice(extIdx) : ''
+  let target = path.join(downDir, name), n = 1
+  while (fs.existsSync(target)) { target = path.join(downDir, `${base} (${n})${ext}`); n++ }
+  item.setSavePath(target)
+
+  const rec = {
+    id: 'dl-' + (++downloadSeq),
+    filename: path.basename(target),
+    savePath: target,
+    url: item.getURL() || '',
+    state: 'progressing',
+    receivedBytes: 0,
+    totalBytes: item.getTotalBytes() || 0,
+    item: item, // 引用保留用于取消（广播前剥离）
+  }
+  downloads.unshift(rec)
+  broadcastDownloads()
+  // 下载开始：菜单角标 + 自动弹出下载面板，让用户立即看到进度（可手动关闭，下次下载再次弹出）
+  try { if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.setMenu(buildWindowMenu()) } catch (e2) {}
+  openDownloadsWindow()
+  item.on('updated', (e, state) => {
+    if (state === 'progressing') {
+      rec.receivedBytes = item.getReceivedBytes()
+      rec.totalBytes = item.getTotalBytes()
+    }
+    broadcastDownloads()
+  })
+  item.on('done', (e, state) => {
+    rec.state = state === 'completed' ? 'completed' : (state === 'cancelled' ? 'cancelled' : 'interrupted')
+    rec.receivedBytes = item.getReceivedBytes()
+    rec.totalBytes = item.getTotalBytes()
+    broadcastDownloads()
+    try { if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.setMenu(buildWindowMenu()) } catch (e2) {}
+    // 下载完成/失败系统通知（点击通知打开文件）
+    try {
+      if (Notification.isSupported && Notification.isSupported()) {
+        const doneTitle = rec.state === 'completed' ? '✅ 下载完成' : (rec.state === 'interrupted' ? '⚠️ 下载失败' : null)
+        if (doneTitle) {
+          const n = new Notification({
+            title: doneTitle,
+            body: rec.filename + (rec.state === 'completed' ? ' 已保存到下载文件夹' : '，请检查网络后重试'),
+            silent: false,
+          })
+          n.on('click', () => {
+            if (fs.existsSync(rec.savePath)) shell.openPath(rec.savePath)
+            else if (mainPageWindow && !mainPageWindow.isDestroyed()) { mainPageWindow.show(); mainPageWindow.focus() }
+          })
+          n.show()
+        }
+      }
+    } catch (e3) { /* 通知失败忽略 */ }
+  })
+  broadcastDownloads()
+  try { if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.setMenu(buildWindowMenu()) } catch (e2) {}
+}
+
+function openDownloadsWindow() {
+  if (downloadsWindow && !downloadsWindow.isDestroyed()) {
+    if (downloadsWindow.isVisible()) downloadsWindow.focus()
+    else downloadsWindow.show()
+    return
+  }
+  const { screen } = require('electron')
+  const wa = screen.getPrimaryDisplay().workArea
+  downloadsWindow = new BrowserWindow({
+    width: 400, height: 480,
+    show: true, frame: false, resizable: false, minimizable: false, maximizable: false,
+    alwaysOnTop: true, skipTaskbar: true,
+    backgroundColor: '#F2F5FA', // 与页面渐变底色一致，避免圆角四角露白
+    icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
+    webPreferences: makeWebPrefs(),
+  })
+  // 锚定到主页面窗口右上角（菜单栏下方），主窗口隐藏时退回主屏右上角
+  try {
+    if (mainPageWindow && !mainPageWindow.isDestroyed() && mainPageWindow.isVisible()) {
+      const b = mainPageWindow.getBounds()
+      downloadsWindow.setPosition(Math.round(b.x + b.width - 400 - 8), Math.round(b.y + 34))
+    } else {
+      downloadsWindow.setPosition(Math.round(wa.x + wa.width - 400 - 8), Math.round(wa.y + 8))
+    }
+  } catch (e) {}
+  downloadsWindow.loadFile(path.join(__dirname, 'src', 'downloads-window.html'))
+  downloadsWindow.on('closed', () => { downloadsWindow = null })
+  // 打开即推送一次最新列表
+  downloadsWindow.webContents.once('did-finish-load', () => {
+    if (downloadsWindow && !downloadsWindow.isDestroyed()) downloadsWindow.webContents.send('downloads-changed', publicDownloads())
+  })
+}
+
+// 广播下载列表给面板（剥离 item 引用，只发可序列化字段）
+function publicDownloads() {
+  return downloads.map(({ item, ...rest }) => rest)
+}
+function broadcastDownloads() {
+  if (downloadsWindow && !downloadsWindow.isDestroyed()) {
+    try { downloadsWindow.webContents.send('downloads-changed', publicDownloads()) } catch (e) {}
+  }
+}
+function clearDownloads() {
+  downloads = downloads.filter(d => d.state === 'progressing')
+  broadcastDownloads()
+  try { if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.setMenu(buildWindowMenu()) } catch (e) {}
+}
+
+// ─── Downloads IPC ─────────────────────────────
+ipcMain.handle('downloads:list', () => publicDownloads())
+ipcMain.handle('downloads:open', (e, id) => {
+  const d = downloads.find(x => x.id === id)
+  if (d && fs.existsSync(d.savePath)) shell.openPath(d.savePath)
+})
+ipcMain.handle('downloads:open-folder', (e, id) => {
+  const d = downloads.find(x => x.id === id)
+  if (d && fs.existsSync(d.savePath)) shell.showItemInFolder(d.savePath)
+})
+ipcMain.handle('downloads:cancel', (e, id) => {
+  const d = downloads.find(x => x.id === id)
+  if (d && d.item && typeof d.item.cancel === 'function') { try { d.item.cancel() } catch (err) {} }
+})
+ipcMain.handle('downloads:clear', () => { clearDownloads() })
 
 // ─── Workbench window (个人工作台：四象限 + 日历) ──────
 function openWorkbenchWindow() {
@@ -2469,6 +2892,14 @@ ipcMain.handle('diag:focus', (e, data) => {
 // P0-3 网页端离线/被踢常驻通知（sticky 不随 ✕ 收起）
 ipcMain.handle('diag:sysalert', () => {
   return notificationCenter ? notificationCenter.diagSysAlertTest() : null
+})
+// 手工「模拟常驻通知」：推送后保持可见，供用户在通知中心肉眼确认（与自校验版 diag:sysalert 区分）
+ipcMain.handle('diag:sysalert-simulate', () => {
+  return notificationCenter ? notificationCenter.diagSysAlertSimulate() : null
+})
+// 清除手工模拟的常驻通知
+ipcMain.handle('diag:sysalert-clear', () => {
+  return notificationCenter ? notificationCenter.diagSysAlertClear() : null
 })
 
 // P1-4 铃声多场景解析（message/call/meeting/联系人专属，silent 不试播）

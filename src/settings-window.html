@@ -113,48 +113,95 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
 
 /* Scene ringtone row */
 .scene-icon { font-size: 18px; width: 24px; text-align: center; }
-.picker-wrap { width: 200px; flex-shrink: 0; position: relative; overflow: visible; }
+.picker-wrap { width: 210px; flex-shrink: 0; position: relative; overflow: visible; }
 
-/* Picker component */
-.picker-trigger {
-  width: 100%; display: flex; align-items: center; justify-content: space-between;
-  border: 1px solid #E0DED9; border-radius: 8px; background: #fff; cursor: pointer;
-  font-family: inherit; font-size: 13px; color: #2C2C2A; padding: 8px 10px;
-  transition: border-color 0.15s;
+/* Picker v3：触发器 = 当前铃声名 + 「更改」按钮 */
+.rp-trigger {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  border: 1px solid #E0DED9; border-radius: 9px; background: #fff; cursor: pointer;
+  font-family: inherit; padding: 5px 6px 5px 10px;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.picker-trigger:hover { border-color: #B9D4F0; }
-.picker-chev { color: #9A9893; font-size: 11px; }
-.picker-panel {
-  position: fixed; z-index: 9999; width: 240px;
-  background: #fff; border: 1px solid #E0DED9; border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.15); padding: 6px; max-height: 280px; overflow-y: auto;
+.rp-trigger:hover { border-color: #B9D4F0; box-shadow: 0 0 0 3px rgba(24,95,165,0.08); }
+.rp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: #2C2C2A; }
+.rp-change {
+  flex-shrink: 0; border: none; background: #E8F1FB; color: #185FA5; border-radius: 7px;
+  font-family: inherit; font-size: 12px; font-weight: 600; padding: 5px 12px; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
 }
-.picker-group { font-size: 11px; color: #9A9893; padding: 6px 8px 4px; }
-.picker-row {
-  display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px;
-  cursor: pointer; font-size: 13px;
+.rp-change:hover { background: #185FA5; color: #fff; }
+
+/* 铃声弹窗 */
+.rp-overlay {
+  position: fixed; inset: 0; z-index: 9999; background: rgba(15,23,42,0.45);
+  display: flex; align-items: center; justify-content: center;
+  animation: rp-fade 0.16s ease-out;
 }
-.picker-row:hover { background: #F2F6FB; }
-.picker-row.sel { background: #E2EFFB; }
-.picker-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.picker-prev {
-  border: none; background: #F1EFE8; border-radius: 6px; cursor: pointer;
-  font-size: 11px; padding: 2px 7px; color: #5F5E5A; flex-shrink: 0;
+.rp-modal {
+  width: 330px; max-height: 540px; background: #fff; border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(10,20,40,0.3); overflow: hidden;
+  display: flex; flex-direction: column;
+  animation: rp-pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
-.picker-prev:hover { background: #E0DDD6; }
-.picker-check { color: #185FA5; font-weight: 700; flex-shrink: 0; }
-.picker-upload {
-  width: 100%; margin-top: 6px; border: none; border-radius: 8px; cursor: pointer;
-  background: #185FA5; color: #fff; font-family: inherit; font-size: 13px; padding: 9px;
-  transition: background 0.15s;
+.rp-head { padding: 15px 18px 12px; border-bottom: 1px solid #F0EFEB; display: flex; align-items: center; gap: 11px; }
+.rp-head-ic {
+  width: 36px; height: 36px; border-radius: 11px; flex-shrink: 0;
+  background: linear-gradient(135deg, #1D6FD1, #5B8FF9); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 15px;
+  box-shadow: 0 4px 10px rgba(29,111,209,0.28);
 }
-.picker-upload:hover { background: #15508C; }
+.rp-tt { font-size: 14px; font-weight: 700; color: #2C2C2A; line-height: 1.2; }
+.rp-st { font-size: 11.5px; color: #9A9893; margin-top: 2px; }
+.rp-close {
+  margin-left: auto; border: none; background: #F5F4F0; color: #8A8780;
+  width: 26px; height: 26px; border-radius: 8px; cursor: pointer; font-size: 12px;
+  display: flex; align-items: center; justify-content: center; transition: background 0.15s, color 0.15s;
+}
+.rp-close:hover { background: #EAE7E0; color: #2C2C2A; }
+.rp-body-wrap { overflow-y: auto; min-height: 120px; }
+.rp-body { padding: 4px 10px 10px; }
+.rp-group { font-size: 11px; color: #9A9893; padding: 10px 8px 4px; }
+.rp-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 9px;
+  cursor: pointer; font-size: 13px; transition: background 0.12s;
+}
+.rp-row:hover { background: #F2F6FB; }
+.rp-row.sel { background: #E8F1FB; }
+.rp-radio {
+  width: 16px; height: 16px; border-radius: 50%; border: 2px solid #D5D2CB;
+  flex-shrink: 0; position: relative; transition: border-color 0.15s;
+}
+.rp-row.sel .rp-radio { border-color: #185FA5; }
+.rp-row.sel .rp-radio::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: #185FA5; }
+.rp-name2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-upload {
+  width: 100%; margin: 10px 0 2px; border: 1px dashed #C9C6BF; border-radius: 10px; background: #FBFAF7;
+  color: #5F5E5A; font-family: inherit; font-size: 12.5px; padding: 10px; cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.rp-upload:hover { border-color: #185FA5; color: #185FA5; background: #F2F7FC; }
+.rp-foot { padding: 12px 18px; border-top: 1px solid #F0EFEB; display: flex; justify-content: flex-end; gap: 10px; }
+.rp-btn {
+  height: 32px; padding: 0 18px; border-radius: 9px; font-family: inherit; font-size: 13px;
+  cursor: pointer; border: 1px solid transparent; transition: background 0.15s, border-color 0.15s;
+}
+.rp-cancel { background: #fff; border-color: #D8D5CF; color: #5F5E5A; }
+.rp-cancel:hover { background: #F5F4F0; }
+.rp-ok { background: #185FA5; color: #fff; font-weight: 600; }
+.rp-ok:hover { background: #15508C; }
+@keyframes rp-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rp-pop { from { opacity: 0; transform: scale(0.95) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
 
 /* 候选铃声时长 */
 .picker-dur {
   font-size: 11px; color: #9A9893; flex-shrink: 0; min-width: 32px; text-align: right;
 }
-/* 试听中：均衡器动画（替代 ▶） */
+/* 试听按钮 + 试听中：均衡器动画（替代 ▶） */
+.picker-prev {
+  border: none; background: #F1EFE8; border-radius: 6px; cursor: pointer;
+  font-size: 11px; padding: 2px 7px; color: #5F5E5A; flex-shrink: 0;
+}
+.picker-prev:hover { background: #E0DDD6; }
 .picker-prev.playing {
   background: #185FA5; color: #fff; padding: 3px 6px;
 }
@@ -182,6 +229,8 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
 .contact .c-name { font-size: 14px; font-weight: 600; }
 .contact .c-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .contact .c-col .c-col-label { font-size: 12px; color: #9A9893; margin-bottom: 6px; }
+/* 联系人卡片内为两列网格，选择器占满列宽 */
+.contact .picker-wrap { width: 100%; }
 
 .empty-hint {
   color: #9A9893; font-size: 13px; text-align: center; padding: 40px 20px; line-height: 1.7;
@@ -194,8 +243,9 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
   background: #F8FBFE; cursor: pointer;
   font-family: inherit; font-size: 13px; color: #185FA5;
   padding: 10px 18px; transition: background 0.15s, border-color 0.15s;
+  margin-bottom: 12px;
 }
-.btn-add-contact:hover { background: #E2EFFB; border-color: #185FA5; }
+.btn-add-contact:hover { background: #E2EFFB; border-color: #185FA5; margin-bottom: 12px; }
 
 /* 联系人选择浮层 */
 .contact-picker-overlay {
@@ -308,6 +358,11 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
 .tu-status.on { color: #15803D; }
 .tu-status.off { color: #9A9893; }
 .tu-empty { font-size: 13px; color: #9A9893; padding: 4px 0; }
+/* 关于页敏感信息默认隐藏，三击标题后显示 */
+.secret-hidden { display: none; }
+.about-secret-title { font-size: 15px; font-weight: 700; cursor: pointer; user-select: none; margin: 2px 0 6px; }
+.about-secret-title:active { opacity: .7; }
+.secret-tip { font-size: 12px; color: #9A9893; margin: 6px 0; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -340,16 +395,16 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
           <button class="hk-input" id="hk-mainpage" type="button">点击设置</button>
           <button class="hk-reset" id="hk-reset" type="button">恢复默认</button>
         </div>
-        <div class="hint-line">点击输入框后按下组合键（如 Ctrl+Shift+M）。保存后立即生效，无需重启。</div>
+        <!-- <div class="hint-line">点击输入框后按下组合键（如 Ctrl+Shift+M）。保存后立即生效，无需重启。</div> -->
       </div>
-      <div class="row" style="flex-direction:column; align-items:stretch;">
+      <!-- <div class="row" style="flex-direction:column; align-items:stretch;">
         <div class="label" style="margin-bottom:6px;">显示/隐藏个人工作台快捷键</div>
         <div class="hk-wrap">
           <button class="hk-input" id="hk-workbench" type="button">点击设置</button>
           <button class="hk-reset" id="hk-wb-reset" type="button">恢复默认</button>
         </div>
         <div class="hint-line">点击输入框后按下组合键（如 Ctrl+Shift+B）。保存后立即生效，可单独呼出个人工作台。</div>
-      </div>
+      </div> -->
       <div class="row" style="flex-direction:column; align-items:stretch;">
         <div class="label" style="margin-bottom:6px;">已登录用户</div>
         <div id="tray-users" class="tray-users"></div>
@@ -395,17 +450,18 @@ input[type=range] { width: 220px; accent-color: #185FA5; }
     <!-- 关于 -->
     <section data-panel="about" hidden>
       <div class="panel-hint">版本与存储信息</div>
-      <div class="mp-row">
+      <h2 class="about-secret-title" id="about-secret-title">关于</h2>
+      <div class="mp-row secret-hidden" id="mp-block">
         <span class="mp-label">主页地址</span>
         <input class="mp-input" id="mp-url" type="text" spellcheck="false"
                placeholder="https://data.tygps.com/mylog-pc/" autocomplete="off">
         <button class="mp-apply" id="mp-apply" type="button">应用</button>
         <button class="mp-reset" id="mp-reset" type="button">恢复默认</button>
       </div>
-      <div class="mp-hint" id="mp-hint">托盘点击 / 主入口打开的网页地址，仅支持 http(s)。</div>
+      <div class="mp-hint secret-hidden" id="mp-hint">托盘点击 / 主入口打开的网页地址，仅支持 http(s)。</div>
       <div class="about-line">应用版本：<b id="about-version"></b></div>
       <div class="about-line">铃声存储目录：<b id="about-ringtone-dir"></b></div>
-      <div class="about-line">设置文件：<b id="about-settings-path"></b></div>
+      <div class="about-line secret-hidden" id="about-settings-line">设置文件：<b id="about-settings-path"></b></div>
     </section>
   </main>
 </div>
@@ -464,6 +520,30 @@ function onUpload() {
       return res
     })
   })
+}
+
+// 命名/重命名铃声展示名（上传后命名、列表内重命名共用）：写回主进程并刷新候选数据，名字立即生效
+function onRename(rel, name) {
+  return api.ringtoneRename(rel, name).then(function (d) {
+    if (d && d.names) C.names = d.names
+    refreshPickers()
+  }).catch(function () {})
+}
+
+// 删除上传铃声：主进程解除所有引用（场景回退默认/联系人专属移除）并物理删文件；
+// 随后重拉设置刷新本地缓存 S（否则界面仍显示已删铃声），并重建场景/联系人选择器。
+// 返回 true=成功（调用方关闭弹窗）；false=失败（保持弹窗）。
+function onDelete(rel) {
+  return api.ringtoneDelete(rel).then(function (d) {
+    if (!d) return false
+    return api.settingsLoad().then(function (dd) {
+      S = dd.settings || S
+      C = { names: dd.names || {}, localRingtones: dd.localRingtones || [], urls: dd.urls || {}, presets: dd.presets || {}, builtin: dd.builtin || [] }
+      renderRingtone()
+      renderContacts()
+      return true
+    })
+  }).catch(function () { return false })
 }
 
 function refreshPickers() { pickers.forEach(function (p) { try { p.refresh() } catch (e) {} }) }
@@ -736,12 +816,12 @@ function renderRingtone() {
       box.appendChild(rowEl)
 
       var p = window.RingtonePicker.create({
-        mount: pickMount, _scene: true,
+        mount: pickMount, _scene: true, title: sc.label,
         getValue: function () {
           var sc2 = (S.ringtones && S.ringtones[sc.key]) || {}
           return sc2.file || (sc.key === 'message' ? 'assets/ringtones/default.mp3' : 'default')
         },
-        getCandidates: getCandidates, toFile: toFile, onUpload: onUpload,
+        getCandidates: getCandidates, toFile: toFile, onUpload: onUpload, onRename: onRename, onDelete: onDelete,
         onChange: function (rel) {
           // 选择器仅设置 file；enabled 一并置 true（已无独立开关，交互即表示该场景启用声音）
           save({ ringtones: { [sc.key]: { file: rel, enabled: true } } })
@@ -813,8 +893,7 @@ function renderContacts() {
       '<div class="c-grid">' +
         '<div class="c-col"><div class="c-col-label">消息提醒</div><div class="picker-wrap msg"></div></div>' +
         '<div class="c-col"><div class="c-col-label">语音提醒类</div><div class="picker-wrap voice"></div></div>' +
-      '</div>' +
-      '<div class="hint-line">专属铃声仅替换声音；是否发声仍由「通用」模式与铃声总开关决定。</div>'
+      '</div>'
     box.appendChild(card)
 
     // 删除按钮：移除该联系人的专属设置
@@ -830,18 +909,18 @@ function renderContacts() {
     var msgMount = card.querySelector('.picker-wrap.msg')
     var voiceMount = card.querySelector('.picker-wrap.voice')
     var p1 = window.RingtonePicker.create({
-      mount: msgMount, _contact: true,
+      mount: msgMount, _contact: true, title: escapeHtml(ct.name || ct.id) + ' · 消息提醒',
       getValue: function () { return (S.contactRingtones[cid] || {}).message || 'default' },
-      getCandidates: getCandidates, toFile: toFile, onUpload: onUpload,
+      getCandidates: getCandidates, toFile: toFile, onUpload: onUpload, onRename: onRename, onDelete: onDelete,
       onChange: function (rel) {
         save({ contactRingtones: { [cid]: { message: rel } } })
         refreshPickers()
       },
     })
     var p2 = window.RingtonePicker.create({
-      mount: voiceMount, _contact: true,
+      mount: voiceMount, _contact: true, title: escapeHtml(ct.name || ct.id) + ' · 语音提醒类',
       getValue: function () { return (S.contactRingtones[cid] || {}).voice || 'default' },
-      getCandidates: getCandidates, toFile: toFile, onUpload: onUpload,
+      getCandidates: getCandidates, toFile: toFile, onUpload: onUpload, onRename: onRename, onDelete: onDelete,
       onChange: function (rel) {
         save({ contactRingtones: { [cid]: { voice: rel } } })
         refreshPickers()
@@ -1046,6 +1125,27 @@ function renderAbout(d) {
     hint.classList.remove('err')
     hint.textContent = '已恢复默认地址，下次托盘点击将打开该地址。'
     save({ mainPageUrl: MP_DEFAULT })
+  }
+
+  // 三击「关于」标题：揭开默认隐藏的主页地址与设置文件路径
+  setupSecretReveal()
+}
+
+// 关于页敏感信息（主页地址 / 设置文件）默认隐藏，连续点击标题 3 下揭晓
+let _secretClicks = 0
+let _secretTimer = null
+function setupSecretReveal() {
+  var title = document.getElementById('about-secret-title')
+  if (!title) return
+  title.onclick = function () {
+    _secretClicks++
+    if (_secretTimer) clearTimeout(_secretTimer)
+    _secretTimer = setTimeout(function () { _secretClicks = 0 }, 1500)
+    if (_secretClicks >= 3) {
+      _secretClicks = 0
+      var els = document.querySelectorAll('.secret-hidden')
+      for (var i = 0; i < els.length; i++) els[i].classList.remove('secret-hidden')
+    }
   }
 }
 
