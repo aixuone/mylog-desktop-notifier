@@ -155,7 +155,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   titlebarDrag: (action) => ipcRenderer.send('titlebar:drag', action),
   /** 快捷操作（quick-action:*，转发给主页面网页） */
   titlebarQuickAction: (action) => ipcRenderer.send('titlebar:quick-action', action),
-  /** 头像菜单（settings/ringtone/contacts/downloads/diagnostics/devtools/logout/search） */
+  /** 头像菜单（settings/ringtone/contacts/downloads/notify/diagnostics/devtools/logout/search） */
   titlebarMenu: (key) => ipcRenderer.send('titlebar:menu', key),
   /** 订阅连接状态（offline/reconnecting） */
   onTitlebarStatus: (callback) => ipcRenderer.on('titlebar-status', (_, data) => callback(data)),

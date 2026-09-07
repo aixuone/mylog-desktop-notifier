@@ -1418,10 +1418,8 @@ app.whenReady().then(() => {
     notificationCenter.preCreate()
     // ─────────────────────────────────────────────
 
-    // 工作台数据加载（供快捷键呼出窗口使用）。稳定版不再启动后台提醒引擎，
-    // 避免无预期的系统通知弹窗（工作台属待稳定功能，仅保留快捷键唤出窗口）。
+    // 工作台数据预载（功能入口已移除，仅保留数据层以备后续复用）
     workbenchStore.load()
-    registerWorkbenchHotkey() // 工作台显隐全局快捷键（默认 Ctrl/⌘+Shift+B，可自定义）
 
     // 首开提速①：提前预热到主页的 DNS/TCP/TLS（省去渲染进程发起首个请求时的建连 RTT）
     try {
@@ -1533,35 +1531,7 @@ function registerMainPageHotkey() {
   }
 }
 
-// ─── 工作台显隐快捷键（默认 Ctrl/⌘+Shift+B，可在「设置-通用」中自定义）───
-// 显示/隐藏切换：按一次呼出（聚焦）工作台窗口，再按一次隐藏。
-// 稳定版不把工作台放入菜单，仅以快捷键唤起，避免暴露不稳定功能入口。
-function toggleWorkbenchWindow() {
-  if (!workbenchWindow || workbenchWindow.isDestroyed()) { openWorkbenchWindow(); return }
-  if (workbenchWindow.isVisible() && workbenchWindow.isFocused()) {
-    workbenchWindow.hide()
-  } else {
-    if (workbenchWindow.isMinimized()) workbenchWindow.restore()
-    workbenchWindow.show()
-    workbenchWindow.focus()
-  }
-}
-let workbenchHotkeyAccel = 'CommandOrControl+Shift+B'
-function registerWorkbenchHotkey() {
-  const accel = (settingsStore.get() && settingsStore.get().workbenchHotkey) || workbenchHotkeyAccel
-  try { globalShortcut.unregister(workbenchHotkeyAccel) } catch (e) {}
-  workbenchHotkeyAccel = accel
-  try {
-    if (!globalShortcut.register(accel, toggleWorkbenchWindow)) {
-      console.warn('[Shortcut] 工作台快捷键注册失败，回退默认:', accel)
-      workbenchHotkeyAccel = 'CommandOrControl+Shift+B'
-      try { globalShortcut.register(workbenchHotkeyAccel, toggleWorkbenchWindow) } catch (e2) {}
-    }
-  } catch (e) {
-    console.warn('[Shortcut] 工作台快捷键注册异常:', e && e.message)
-    workbenchHotkeyAccel = 'CommandOrControl+Shift+B'
-  }
-}
+// ─── 工作台全局快捷键（已移除：功能入口关闭，Ctrl/⌘+Shift+B 不再唤起工作台）───
 
 function openMainPage() {
   const rawUrl = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
@@ -2328,15 +2298,14 @@ ipcMain.on('settings-save', (event, partial) => {
   if (!partial || typeof partial !== 'object') return
   settingsStore.set(partial)
   if (partial && typeof partial.mainPageHotkey === 'string') registerMainPageHotkey()
-  if (partial && typeof partial.workbenchHotkey === 'string') registerWorkbenchHotkey()
   if (notificationCenter) notificationCenter.notifySettingsChanged()
 })
 
 // 捕获快捷键期间：临时注销全局显隐快捷键（避免 OS 在捕获时吞掉组合键），结束后恢复
 ipcMain.on('hotkey-capture', (event, on) => {
   try {
-    if (on) { globalShortcut.unregister(mainPageHotkeyAccel); globalShortcut.unregister(workbenchHotkeyAccel) }
-    else { registerMainPageHotkey(); registerWorkbenchHotkey() }
+    if (on) { globalShortcut.unregister(mainPageHotkeyAccel) }
+    else { registerMainPageHotkey() }
   } catch (e) {}
 })
 
@@ -2618,6 +2587,8 @@ ipcMain.on('titlebar:menu', (e, key) => {
   else if (key === 'ringtone') openSettingsWindow('ringtone')
   else if (key === 'contacts') openSettingsWindow('contacts')
   else if (key === 'downloads') openDownloadsWindow()
+  // 通知模式快捷入口：打开设置面板的「通用」页（通知模式四态卡片即位于该页）
+  else if (key === 'notify') openSettingsWindow('general')
   else if (key === 'diagnostics') { try { openDiagnosticsWindow() } catch (err) {} }
   else if (key === 'devtools') {
     if (mainPageWindow && !mainPageWindow.isDestroyed()) { mainPageWindow.webContents.openDevTools(); mainPageWindow.show(); mainPageWindow.focus() }
