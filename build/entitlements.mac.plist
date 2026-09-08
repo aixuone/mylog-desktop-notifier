@@ -14,5 +14,12 @@
     <true/>
     <key>com.apple.security.network.server</key>
     <true/>
+    <!-- 摄像头/麦克风：Hardened Runtime 下访问媒体设备的二进制级硬性前提；
+         Info.plist 的 NSCameraUsageDescription/NSMicrophoneUsageDescription 只是用户文案，
+         不补这两条 entitlement 会被系统在内核层静默拒绝（表现：黑屏/无声音，绿灯可能仍亮）。 -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
 </dict>
 </plist>

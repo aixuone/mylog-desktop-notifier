@@ -3,7 +3,7 @@
 <head data-page-node-id="Hxoz9NFP03VXYpbKI4Mt7E">
 <meta charset="UTF-8" data-page-node-id="WgdG8AXFZHvjsBoWYHnj7F">
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" data-page-node-id="R2cAtVB9amvnoZSIPJfq8V">
-<title>诊断测试 · 我的日志通知助手</title>
+<title>诊断测试</title>
 <style>
 @font-face {
   font-family: 'System UI';
@@ -381,7 +381,7 @@ function classifyMediaErr(e, label) {
   var n = (e && e.name) || ''
   label = label || '设备'
   if (n === 'NotAllowedError' || n === 'SecurityError')
-    return { state: 'warn', title: '权限被拒', guide: '请在系统/浏览器弹窗中允许本应用使用<b>' + label + '</b>；或在系统“隐私和安全性”设置里为“我的日志通知助手”开启对应权限后重试。' }
+    return { state: 'warn', title: '权限被拒', guide: '请在系统/浏览器弹窗中允许本应用使用<b>' + label + '</b>；或在系统“隐私和安全性”设置里为“e的日志”开启对应权限后重试。' }
   if (n === 'NotFoundError' || n === 'DevicesNotFoundError')
     return { state: 'bad', title: '没有可用设备', guide: '未检测到<b>' + label + '</b>。请检查设备是否已连接并通电；USB 设备请重新插拔；在“设备管理器/系统信息”中确认设备已启用、驱动正常。' }
   if (n === 'NotReadableError' || n === 'TrackStartError')
@@ -389,7 +389,7 @@ function classifyMediaErr(e, label) {
   if (n === 'OverconstrainedError' || n === 'ConstraintNotSatisfiedError')
     return { state: 'warn', title: '参数不支持', guide: '当前设备不满足采集参数，通常不影响基础通话；如持续异常可在系统中切换默认设备。' }
   if (n === 'TypeError')
-    return { state: 'bad', title: '功能不支持', guide: '当前系统/客户端不支持<b>媒体采集(WebRTC)</b>。建议升级系统或重新安装“我的日志通知助手”客户端。' }
+    return { state: 'bad', title: '功能不支持', guide: '当前系统/客户端不支持<b>媒体采集(WebRTC)</b>。建议升级系统或重新安装“e的日志”客户端。' }
   return { state: 'bad', title: (n || '未知错误'), guide: '请重试；若仍失败，把上方提示反馈给管理员。' }
 }
 
@@ -522,7 +522,7 @@ function spkResultView(sr) {
   if (sr.error) {
     var n = (sr.error && sr.error.name) || ''
     if (n === 'TypeError') return { state: 'bad', status: '功能不支持', detail: '系统/客户端不支持音频播放。',
-      guide: '当前环境不支持<b>音频输出(Web Audio)</b>，建议升级系统或重新安装“我的日志通知助手”客户端。' }
+      guide: '当前环境不支持<b>音频输出(Web Audio)</b>，建议升级系统或重新安装“e的日志”客户端。' }
     return { state: 'bad', status: '播放失败', detail: '测试音播放失败。',
       guide: '请在系统“声音→播放”里确认扬声器已通电/连接、未静音，并把正确的输出设备设为<b>默认设备</b>；若插了多个音箱/耳机，确认当前用的是默认那一个。' }
   }
