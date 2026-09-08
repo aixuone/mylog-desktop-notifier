@@ -1353,10 +1353,9 @@ function startHttpServer(callback) {
 }
 
 // ─── App lifecycle ────────────────────────────────────────
-// ─── macOS: hide from Dock (pure tray app) ────────────────
-if (process.platform === 'darwin') {
-  app.dock && app.dock.hide()
-}
+// 注意：保持 app 出现在 macOS Dock / Windows 任务栏（与钉钉/微信一致），
+// 点 × 走 close 拦截 + hide() 隐藏窗口，状态保留在 renderer 进程里；
+// 真退出由菜单「退出」或 Cmd+Q 触发 isQuitting 控制。
 
 app.whenReady().then(() => {
   // Windows 系统通知（下载完成等）必须设置 AppUserModelId，否则 Notification 不显示
@@ -1444,8 +1443,11 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  // Tray-only app: closing all windows should NOT quit
-  // Quit only happens via tray menu "退出"
+  // 普通应用 + close 拦截：所有窗口都关时仍驻留后台（与钉钉/微信一致）。
+  // 仅在用户主动「退出」（菜单 / Cmd+Q）触发 isQuitting 后才真退。
+  if (isQuitting) {
+    app.quit()
+  }
 })
 
 app.on('before-quit', () => {
@@ -1490,14 +1492,17 @@ function saveMainPageBounds() {
   }, 300)
 }
 
-// 托盘点击 → 打开主页面网页（默认 1300x700，地址可在设置「关于」中修改）
-// ─── 切换主页面窗口显示/隐藏（Ctrl/⌘+Shift+M）──
+// 托盘点击 → 切换主页面窗口显示/隐藏（Ctrl/⌘+Shift+M）
 function toggleMainPage() {
-  if (!mainPageWindow || mainPageWindow.isDestroyed()) { openMainPage(); return }
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) {
+    if (process.platform === 'darwin') app.focus({ steal: true })
+    return openMainPage()
+  }
   if (mainPageWindow.isVisible() && mainPageWindow.isFocused()) {
     mainPageWindow.hide()
   } else {
     if (mainPageWindow.isMinimized()) mainPageWindow.restore()
+    if (process.platform === 'darwin') app.focus({ steal: true })
     mainPageWindow.show()
     mainPageWindow.focus()
   }
@@ -1560,6 +1565,7 @@ function openMainPage() {
     // 点击切换语义：最小化则恢复；可见且聚焦则隐藏（类 IM）；其余置顶显示
     if (mainPageWindow.isMinimized()) { mainPageWindow.restore(); mainPageWindow.focus(); return }
     if (mainPageWindow.isVisible() && mainPageWindow.isFocused()) { mainPageWindow.hide(); return }
+    if (process.platform === 'darwin') app.focus({ steal: true })
     mainPageWindow.show(); mainPageWindow.focus()
     return
   }
@@ -1748,8 +1754,10 @@ function createTray() {
   updateTrayMenu()
 
   tray.on('click', () => {
-    // 左键点击 → 打开主页面网页（默认 1300x700，地址见「关于」设置）
-    openMainPage()
+    // 左键点击 → toggle 显隐（与钉钉/微信一致）。
+    // macOS 上纯托盘应用需要显式 app.focus({steal:true})，否则窗口 show() 后不会激活到前台
+    if (process.platform === 'darwin') app.focus({ steal: true })
+    toggleMainPage()
   })
 }
 
