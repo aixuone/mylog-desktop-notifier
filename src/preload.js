@@ -131,6 +131,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   diagShowMeeting: () => ipcRenderer.invoke('diag:show-meeting'),
   /** 通知模式联动验证（dnd 下弹窗抑制 + 铃声静音） */
   diagModeLinkage: () => ipcRenderer.invoke('diag:mode-linkage'),
+  /** 手动激活媒体权限（麦克风/摄像头兜底）：在主页面 origin 内 getUserMedia 并立即关闭，返回 { ok, audio:{ok,label}, video:{ok,label} } */
+  mediaActivate: () => ipcRenderer.invoke('media:activate'),
 
   // ─── Screen-share shim 埋点（main world 注入的 shim 调用）──
   /** 上报主页面实际使用的媒体捕获路径，便于定位屏幕共享失败原因 */

@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<html lang="zh-CN" data-page-node-id="OL50F41rACTLYCWmO4w9xo">
+<head data-page-node-id="Hxoz9NFP03VXYpbKI4Mt7E">
+<meta charset="UTF-8" data-page-node-id="WgdG8AXFZHvjsBoWYHnj7F">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" data-page-node-id="R2cAtVB9amvnoZSIPJfq8V">
 <title>诊断测试 · 我的日志通知助手</title>
 <style>
 @font-face {
@@ -118,120 +118,126 @@ td .detail { color: #9A9893; font-size: 12px; margin-top: 3px; line-height: 1.5;
 .ditem video { width: 100%; border-radius: 8px; margin-top: 8px; background: #000; aspect-ratio: 16/9; object-fit: cover; }
 </style>
 </head>
-<body>
-<div class="wrap">
-  <header>
-    <span class="logo">🩺</span>
-    <div>
-      <h1>诊断测试</h1>
-      <div class="sub">自动检测 + 手工确认：弹窗、铃声、全屏、权限与多显示器环境</div>
+<body data-page-node-id="N16IapuI5KX6VkW5Z0iAaE">
+<div class="wrap" data-page-node-id="iukdpL45gF4gixuT9cG362">
+  <header data-page-node-id="oHnePKQq0ekST2jH5sCl0E">
+    <span class="logo" data-page-node-id="zX81t0D4bSBQd72o0vvmud">🩺</span>
+    <div data-page-node-id="ymdVCqVGKmdpT8M266mL7g">
+      <h1 data-page-node-id="pHE9AL0mx0SnFXUWfxrKz7">诊断测试</h1>
+      <div class="sub" data-page-node-id="rIhygNFPDx54VBSBCq0REf">自动检测 + 手工确认：弹窗、铃声、全屏、权限与多显示器环境</div>
     </div>
   </header>
 
   <!-- 自动测试 -->
-  <section class="card">
-    <h2>自动测试</h2>
-    <div class="hint">一键运行程序化检查。窗口可见性 / 铃声路径 / 全屏 API / 权限矩阵由主进程与当前页面协同验证；无需人工介入。</div>
-    <div class="btn-row">
-      <button class="btn primary" id="btn-auto">▶ 运行自动测试</button>
-      <span id="auto-status" style="font-size:12px;color:#9A9893;"></span>
+  <section class="card" data-page-node-id="KkDYBgFsWVfUH7gHtDcks9">
+    <h2 data-page-node-id="UDa8IBjHxaKBDhQpqSi2H6">自动测试</h2>
+    <div class="hint" data-page-node-id="Y3pLjn86Nrg7iMdD6JZHkv">一键运行程序化检查。窗口可见性 / 铃声路径 / 全屏 API / 权限矩阵由主进程与当前页面协同验证；无需人工介入。</div>
+    <div class="btn-row" data-page-node-id="8JLJw95cASc0bwzpO5v0EC">
+      <button class="btn primary" id="btn-auto" data-page-node-id="VGKoNtxL7oHvgI9Y3U24lc">▶ 运行自动测试</button>
+      <span id="auto-status" style="font-size:12px;color:#9A9893;" data-page-node-id="CQBKAAzW8jKwviY0h0ancD"></span>
     </div>
-    <div id="verdict" class="verdict idle">尚未运行。点击「运行自动测试」开始。</div>
-    <table id="report" hidden>
-      <thead><tr><th style="width:30px;">#</th><th>检查项</th><th>结果</th><th>说明</th></tr></thead>
-      <tbody></tbody>
+    <div id="verdict" class="verdict idle" data-page-node-id="ExAs8vlHQAxpvE6sWtmO7y">尚未运行。点击「运行自动测试」开始。</div>
+    <table id="report" hidden data-page-node-id="1GeLDxgmCSaqGoSpoLQaCg">
+      <thead data-page-node-id="3me3evEVLdnu89nLMxoeR3"><tr data-page-node-id="KXDK5zHQ8HGlyk8dzqe17m"><th style="width:30px;" data-page-node-id="cs4OAiaNIhOXnmiCWIfrpx">#</th><th data-page-node-id="UFr2tn4eUJBSHMx1CtsimD">检查项</th><th data-page-node-id="UcnEjZoD9gL48bZrdqhJ8E">结果</th><th data-page-node-id="UTn4FRHKIiLrvZtetXXQBh">说明</th></tr></thead>
+      <tbody data-page-node-id="bW78VTG7dPl0ASgeWHrC3G"></tbody>
     </table>
   </section>
 
   <!-- 手工测试 -->
-  <section class="card">
-    <h2>手工测试</h2>
-    <div class="hint">触发真实场景，由你/客户肉眼确认后勾选。适合验证「有声无窗」「点了没反应」这类需人确认的体验问题。</div>
-    <div class="manual-grid">
-      <div class="mtest">
-        <div class="mt-title">① 弹窗可见性</div>
-        <div class="mt-desc">触发一条测试通知卡，确认小白窗出现在主屏幕右下角。</div>
-        <button class="btn" id="m-popup">触发弹窗</button>
-        <button class="btn" id="m-popup-close">关闭弹窗</button>
-        <div class="confirm" id="c-popup">✓ 我看到了弹窗</div>
+  <section class="card" data-page-node-id="BtVRWgwSi744p4hOIubbJb">
+    <h2 data-page-node-id="if2o0RSNljWgJwl7IqmJvj">手工测试</h2>
+    <div class="hint" data-page-node-id="MIaGnbq8GN993F6dzXqY4x">触发真实场景，由你/客户肉眼确认后勾选。适合验证「有声无窗」「点了没反应」这类需人确认的体验问题。</div>
+    <div class="manual-grid" data-page-node-id="sjRnPvp97jXaUgZMZONHad">
+      <div class="mtest" data-page-node-id="iTONop8z7NS1hHydAlX5Db">
+        <div class="mt-title" data-page-node-id="ldxwQJdWnNcdQAFLWnWOlA">① 弹窗可见性</div>
+        <div class="mt-desc" data-page-node-id="JttqmYMslgHD4JlW2Hxa8R">触发一条测试通知卡，确认小白窗出现在主屏幕右下角。</div>
+        <button class="btn" id="m-popup" data-page-node-id="UPC4iSAjMwf8c5JQcATYP3">触发弹窗</button>
+        <button class="btn" id="m-popup-close" data-page-node-id="AeYleIvCEXkcqXKyD4mrqb">关闭弹窗</button>
+        <div class="confirm" id="c-popup" data-page-node-id="vvULVHDqvflanPwvh2gkQg">✓ 我看到了弹窗</div>
       </div>
-      <div class="mtest">
-        <div class="mt-title">② 铃声播放</div>
-        <div class="mt-desc">播放消息铃声，确认能听到声音（静音/勿扰模式下应无声音）。</div>
-        <button class="btn" id="m-ring">播放铃声</button>
-        <div class="confirm" id="c-ring">✓ 我听到了声音</div>
+      <div class="mtest" data-page-node-id="Scb57Yzh9PYwhvGzk9tLpR">
+        <div class="mt-title" data-page-node-id="fwJS3nh56iolW6uMDFDmTQ">② 铃声播放</div>
+        <div class="mt-desc" data-page-node-id="2UTWO2XglX8tdwwkhh8GRN">播放消息铃声，确认能听到声音（静音/勿扰模式下应无声音）。</div>
+        <button class="btn" id="m-ring" data-page-node-id="PcR93qVcGpYwwXCGDtVMGF">播放铃声</button>
+        <div class="confirm" id="c-ring" data-page-node-id="Hi1gnSIVoxZcMcXbPTLh3P">✓ 我听到了声音</div>
       </div>
-      <div class="mtest">
-        <div class="mt-title">③ 全屏能力</div>
-        <div class="mt-desc">进入全屏演示页，确认会议页全屏能正常工作。</div>
-        <button class="btn" id="m-fs">全屏演示</button>
-        <button class="btn" id="m-fs-exit">退出全屏</button>
-        <div class="confirm" id="c-fs">✓ 已进入全屏</div>
+      <div class="mtest" data-page-node-id="ckkOWHYXbK9yS9hfMzJvTW">
+        <div class="mt-title" data-page-node-id="KCrD9EnLKz8zPoVlz4SF3h">③ 全屏能力</div>
+        <div class="mt-desc" data-page-node-id="P13nuEqunBYjFUUHZQ9XAr">进入全屏演示页，确认会议页全屏能正常工作。</div>
+        <button class="btn" id="m-fs" data-page-node-id="UdG8bBTqEi5LEl4HyzRFqe">全屏演示</button>
+        <button class="btn" id="m-fs-exit" data-page-node-id="1oGshYur9uE7HhEeqISaoz">退出全屏</button>
+        <div class="confirm" id="c-fs" data-page-node-id="ONdE06BSYTSEGDg03FAZFv">✓ 已进入全屏</div>
       </div>
-      <div class="mtest">
-        <div class="mt-title">④ 屏幕共享源 / 真实共享</div>
-        <div class="mt-desc">取本机源 + 跑真实 getDisplayMedia（与腾讯会议同一条 Electron 路径）。分别测“音视频同求”和“纯视频”两种，定位是音频路径还是视频路径失败。</div>
-        <div class="btn-row" style="gap:6px;">
-          <select id="sc-audio" style="font-family:inherit;font-size:12px;padding:7px 8px;border:1px solid #D8D5CF;border-radius:8px;background:#fff;color:#2C2C2A;">
-            <option value="mute">仅视频 (mute)</option>
-            <option value="loopback">系统循环音频 (loopback)</option>
-            <option value="loopbackWithMute">循环音频可静音</option>
+      <div class="mtest" data-page-node-id="Gx0SalG8jZ7EElONisUGD0">
+        <div class="mt-title" data-page-node-id="XLAxzbyHejjRceFYr3Q4ty">④ 屏幕共享源 / 真实共享</div>
+        <div class="mt-desc" data-page-node-id="OPK1HDtJQ1TvQ2yHFeZZyy">取本机源 + 跑真实 getDisplayMedia（与腾讯会议同一条 Electron 路径）。分别测“音视频同求”和“纯视频”两种，定位是音频路径还是视频路径失败。</div>
+        <div class="btn-row" style="gap:6px;" data-page-node-id="xe6Jy8iHs4BP7xVhhVYpXH">
+          <select id="sc-audio" style="font-family:inherit;font-size:12px;padding:7px 8px;border:1px solid #D8D5CF;border-radius:8px;background:#fff;color:#2C2C2A;" data-page-node-id="I2OaBgwVRGF4Vys0wAP6E3">
+            <option value="mute" data-page-node-id="5AWaQiKtF67CzIjEqGpe42">仅视频 (mute)</option>
+            <option value="loopback" data-page-node-id="ISzM3jgAEHavnfYNmCB9mA">系统循环音频 (loopback)</option>
+            <option value="loopbackWithMute" data-page-node-id="okRbD6lIj5XnvaDab9YY4x">循环音频可静音</option>
           </select>
-          <button class="btn" id="sc-audio-apply">应用</button>
+          <button class="btn" id="sc-audio-apply" data-page-node-id="DmvtoQfZLkQHlAACrwsCyu">应用</button>
         </div>
-        <button class="btn" id="m-sc">获取源 + 真实共享测试</button>
-        <div class="kv" id="sc-e2e" style="font-size:12px;white-space:pre-wrap;">—</div>
-        <div class="confirm" id="c-sc">✓ 环境层与端到端均成功</div>
+        <button class="btn" id="m-sc" data-page-node-id="QLmFXtEpqRDRebYwg0nWwy">获取源 + 真实共享测试</button>
+        <div class="kv" id="sc-e2e" style="font-size:12px;white-space:pre-wrap;" data-page-node-id="fsiKoBDu8zH0azweitG47h">—</div>
+        <div class="confirm" id="c-sc" data-page-node-id="EIhNmO9tuml29DLIHXfn2p">✓ 环境层与端到端均成功</div>
       </div>
-      <div class="mtest">
-        <div class="mt-title">⑤ 来电浮窗</div>
-        <div class="mt-desc">触发来电浮窗，确认能正常弹出（2.5s 自动关闭）。</div>
-        <button class="btn" id="m-call">触发来电浮窗</button>
-        <div class="confirm" id="c-call">✓ 看到了来电浮窗</div>
+      <div class="mtest" data-page-node-id="EJxjf5N7WrcdKnpfc2qrju">
+        <div class="mt-title" data-page-node-id="ZMidvpXXWWIfF5CmhgYoUT">⑤ 来电浮窗</div>
+        <div class="mt-desc" data-page-node-id="v5QPdDgySMNf3XxoJQjhFc">触发来电浮窗，确认能正常弹出（2.5s 自动关闭）。</div>
+        <button class="btn" id="m-call" data-page-node-id="qFC71Fm5R8rwGoXweTXc3G">触发来电浮窗</button>
+        <div class="confirm" id="c-call" data-page-node-id="sLp8vcD0y33QBxxZBQbOTe">✓ 看到了来电浮窗</div>
       </div>
-      <div class="mtest">
-        <div class="mt-title">⑥ 会议浮窗</div>
-        <div class="mt-desc">触发会议邀请浮窗，确认能正常弹出（2.5s 自动关闭）。</div>
-        <button class="btn" id="m-meet">触发会议浮窗</button>
-        <div class="confirm" id="c-meet">✓ 看到了会议浮窗</div>
+      <div class="mtest" data-page-node-id="OeWcaC6umufaeocV5xXfdP">
+        <div class="mt-title" data-page-node-id="Huj1Ur1Lsd3hWR5B8CNJha">⑥ 会议浮窗</div>
+        <div class="mt-desc" data-page-node-id="AYx4Hd5xECiNXBD6yomJAU">触发会议邀请浮窗，确认能正常弹出（2.5s 自动关闭）。</div>
+        <button class="btn" id="m-meet" data-page-node-id="gjlbEh6ldTxJ2cgqlegPK2">触发会议浮窗</button>
+        <div class="confirm" id="c-meet" data-page-node-id="zzFvKY1PPLv32y9EJ3vaF2">✓ 看到了会议浮窗</div>
       </div>
-      <div class="mtest">
-        <div class="mt-title">⑦ 离线/被踢通知</div>
-        <div class="mt-desc">模拟离线/被踢常驻通知，确认卡片出现且 ✕ 不收起；验证完点「清除模拟」。</div>
-        <div class="btn-row" style="gap:6px;">
-          <button class="btn" id="m-sa">模拟常驻通知</button>
-          <button class="btn" id="m-sa-clear">清除模拟</button>
+      <div class="mtest" data-page-node-id="I9WkhDsUdMFwt7oLZIlJr2">
+        <div class="mt-title" data-page-node-id="U5pkKKwGuBacC3bADlf9dI">⑦ 离线/被踢通知</div>
+        <div class="mt-desc" data-page-node-id="KXUWe2rNQXFwyTHJjEuiq6">模拟离线/被踢常驻通知，确认卡片出现且 ✕ 不收起；验证完点「清除模拟」。</div>
+        <div class="btn-row" style="gap:6px;" data-page-node-id="3UcU1nNbcwNJ5YXIuURWwD">
+          <button class="btn" id="m-sa" data-page-node-id="4wg3ybNCVgkg5NZvnY35FF">模拟常驻通知</button>
+          <button class="btn" id="m-sa-clear" data-page-node-id="sRpD4mSMBeAIIsQl94TfqB">清除模拟</button>
         </div>
-        <div class="confirm" id="c-sa">✓ 看到常驻通知且未误关</div>
+        <div class="confirm" id="c-sa" data-page-node-id="rWJ9q3C8FnmXyqhjyAzbGO">✓ 看到常驻通知且未误关</div>
       </div>
     </div>
   </section>
 
   <!-- 设备自检（麦克风 / 摄像头 / 扬声器） -->
-  <section class="card">
-    <h2>设备自检</h2>
-    <div class="hint">一键检测麦克风、摄像头、扬声器是否可用，并给出对症处理建议。遇到“没声音 / 没画面 / 点了没反应”时，先跑这个，按卡片里的引导逐步处理即可。</div>
-    <div class="btn-row">
-      <button class="btn primary" id="btn-device">▶ 运行设备检测</button>
-      <span id="device-status" style="font-size:12px;color:#9A9893;"></span>
+  <section class="card" data-page-node-id="w8Oeol4fEnD5PjuGf6Cskj">
+    <h2 data-page-node-id="XnrgtPXAeYpnSsnSS0WFa9">设备自检</h2>
+    <div class="hint" data-page-node-id="PyaR1dcGD6GFiXM6NvzUmI">一键检测麦克风、摄像头、扬声器是否可用，并给出对症处理建议。遇到“没声音 / 没画面 / 点了没反应”时，先跑这个，按卡片里的引导逐步处理即可。</div>
+    <div class="btn-row" data-page-node-id="MpoZDUNjypNB7A11XG45Ve">
+      <button class="btn primary" id="btn-device" data-page-node-id="VxrggXF3GO3wOCu4NO23BI">▶ 运行设备检测</button>
+      <span id="device-status" style="font-size:12px;color:#9A9893;" data-page-node-id="rdFhLccqR4w1FVXd3JEx9W"></span>
     </div>
-    <div id="device-result" class="device-result" hidden></div>
+    <!-- 手动授权兜底：在主页面域名下重新授权一次，覆盖被缓存的拒绝状态 -->
+    <div class="btn-row" style="margin-top:10px;" data-page-node-id="DL6e45q5ZVb6DCkRH93ZJb">
+      <button class="btn" id="btn-mic-activate" data-page-node-id="WfjFH2bcUwReP4CL9NCNaU">🔓 手动授予麦克风/摄像头权限</button>
+      <span id="mic-activate-status" style="font-size:12px;color:#9A9893;" data-page-node-id="zkzaL5kGIV5uCQHSXjHCnB"></span>
+    </div>
+    <div class="hint" style="margin-top:6px;" data-page-node-id="U1IuVlr5QRS2QHvtfmh4cK">若上方检测仍报「权限被拒」，点此在<b data-page-node-id="CYgUjbUJ89kMa2wGCX8BTP">主页面域名</b>下重新授权一次（覆盖被缓存的拒绝状态）。授权成功即代表通话能正常开麦/开摄像头。授权过程麦克风指示灯会闪一下，属正常。</div>
+    <div id="device-result" class="device-result" hidden data-page-node-id="Gip7foaHclgNDkxie3ymho"></div>
   </section>
 
   <!-- 多显示器环境 -->
-  <section class="card">
-    <h2>多显示器环境</h2>
-    <div class="hint">辅助排查「有声无窗」：弹窗固定在主屏幕（主显示器）右下角。若你正用多屏，确认主屏就是你想看弹窗的那块。</div>
-    <div class="kv" id="env-kv">加载中…</div>
-    <div class="disp-list" id="disp-list"></div>
+  <section class="card" data-page-node-id="EC35IjMUdCZOD6VTjnwthH">
+    <h2 data-page-node-id="e84b5BSlNqdS07z7pM202R">多显示器环境</h2>
+    <div class="hint" data-page-node-id="yZnF2NcoI3z8WiFcNex4Pu">辅助排查「有声无窗」：弹窗固定在主屏幕（主显示器）右下角。若你正用多屏，确认主屏就是你想看弹窗的那块。</div>
+    <div class="kv" id="env-kv" data-page-node-id="R0zDdp4vz8TeArcas0uyLp">加载中…</div>
+    <div class="disp-list" id="disp-list" data-page-node-id="MrvmRa9OcSWkYAz7boDRiw"></div>
   </section>
 </div>
 
 <!-- 全屏演示覆盖层 -->
-<div id="fs-demo">
-  <div class="big">全屏演示中 🖥️</div>
-  <div class="small">这是一个全屏页面，证明 requestFullscreen() 在当前环境可用。</div>
-  <button class="btn" id="fs-demo-exit" style="background:#fff;color:#185FA5;">退出全屏</button>
+<div id="fs-demo" data-page-node-id="6sDt14KkrUQpz537yuBn0y">
+  <div class="big" data-page-node-id="KwD94hIhNyyvhjviAKiPYZ">全屏演示中 🖥️</div>
+  <div class="small" data-page-node-id="HDTT0CitKO6xorL4kSrsyb">这是一个全屏页面，证明 requestFullscreen() 在当前环境可用。</div>
+  <button class="btn" id="fs-demo-exit" style="background:#fff;color:#185FA5;" data-page-node-id="yUjJYS0GJ9NkJUvPHfafbJ">退出全屏</button>
 </div>
 
 <script>
@@ -248,6 +254,42 @@ function init() {
 
   // ── 设备自检（麦克风 / 摄像头 / 扬声器）──
   document.getElementById('btn-device').onclick = runDeviceCheck
+
+  // ── 手动授予媒体权限（麦克风/摄像头兜底）：在主页面 origin 内 getUserMedia 并立即关闭 ──
+  document.getElementById('btn-mic-activate').onclick = async function () {
+    var btn = this
+    var st = document.getElementById('mic-activate-status')
+    btn.disabled = true
+    st.textContent = '授权中…'
+    st.style.color = '#9A9893'
+    try {
+      var r = await api.mediaActivate()
+      var aOk = !!(r && r.audio && r.audio.ok)
+      var vOk = !!(r && r.video && r.video.ok)
+      if (aOk && vOk) {
+        st.textContent = '✅ 麦克风与摄像头授权成功'
+        st.style.color = '#15803D'
+      } else if (aOk && !vOk) {
+        var vName = (r && r.video && r.video.name) || ''
+        var camMsg = /NotFound|DevicesNotFound|No mandatory|Overconstrained/i.test(vName)
+          ? '✅ 麦克风已授权；本机未检测到摄像头（不影响语音）'
+          : '✅ 麦克风已授权；摄像头未授权（可在系统设置→隐私中开启，不影响语音）'
+        st.textContent = camMsg
+        st.style.color = '#15803D'
+      } else if (!aOk) {
+        st.textContent = '❌ 麦克风授权失败：' + ((r && r.audio && r.audio.error) || (r && r.error) || '未知错误')
+        st.style.color = '#B45309'
+      } else {
+        st.textContent = '❌ 授权失败，请检查系统设置'
+        st.style.color = '#B45309'
+      }
+    } catch (e) {
+      st.textContent = '❌ 调用失败：' + (e && e.message ? e.message : e)
+      st.style.color = '#B45309'
+    } finally {
+      btn.disabled = false
+    }
+  }
 
   // ── 手工：弹窗 ──
   document.getElementById('m-popup').onclick = function () { api.diagPushTest(); mark('c-popup', false) }

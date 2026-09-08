@@ -640,16 +640,69 @@ function setupScreenShare() {
     })
   })
 
-  session.defaultSession.setPermissionRequestHandler(function (webContents, permission, cb) {
-    var url = webContents.getURL()
+  session.defaultSession.setPermissionRequestHandler(function (webContents, permission, cb, details) {
     // 仅对可信来源放行一组安全的 Web API（媒体/采集/全屏/剪贴板/指针锁定/通知）；
-    // 原实现只放行 media/display-capture，导致主页面窗口内 requestFullscreen()、
-    // 剪贴板、指针锁定、通知等被拒（表现为"点击无响应/报错"）。
-    var allow = permissionAllowed(url, permission)
-    // 诊断日志：便于远程定位"被拒的权限"（如屏幕共享仍报错的客户机）
-    console.log('[Permission]', allow ? 'allow' : 'deny', permission, 'url:', url)
+    // 主帧 URL 或请求来源（子上下文/worker 可能为非主页面 URL）任一是可信来源即放行 media/display-capture，
+    // 避免 WASM/worker 内部以非主页面 URL 请求媒体时被误杀。
+    var url = webContents.getURL()
+    var reqOrigin = (details && details.requestingUrl) || ''
+    var allow = permissionAllowed(url, permission) || permissionAllowed(reqOrigin, permission)
+    console.log('[Permission]', allow ? 'allow' : 'deny', permission, 'url:', url, reqOrigin ? ('req:' + reqOrigin) : '')
     cb(allow)
   })
+
+  // 程序化权限查询（WASM/worker/子上下文走此路径，setPermissionRequestHandler 不一定被触发）：
+  // 对可信来源的 media/display-capture 直接放行，覆盖 TRTC 内部采集路径。
+  // 这是修复"麦克风没声音"的关键一环——腾讯会议/通话引擎在内部以程序化方式查询权限，
+  // 不触发 request handler，导致被静默拒绝（日志表现为无任何 [Permission] 行却直接 NotAllowedError）。
+  try {
+    session.defaultSession.setPermissionCheckHandler(function (webContents, permission, requestingOrigin) {
+      var url = (webContents && webContents.getURL && webContents.getURL()) || ''
+      var allow = permissionAllowed(url, permission) || permissionAllowed(requestingOrigin || '', permission)
+      console.log('[PermissionCheck]', allow ? 'allow' : 'deny', permission, 'url:', url || requestingOrigin)
+      return allow
+    })
+  } catch (e) { console.error('[PermissionCheck] setPermissionCheckHandler failed:', e && e.message) }
+}
+
+// ─── 麦克风手动激活（兜底）───
+// 在主页面 origin 内执行 getUserMedia，把媒体权限置为 granted，覆盖被缓存的拒绝/不同步状态。
+// 必须在【主页面】webContents 内执行，而非设置/诊断窗口：Electron 权限按 origin 存储，
+// 在 file:// 诊断窗口授权对 https://data.tygps.com 主页面无效。
+let mediaPreAuthed = false
+// 在主页面 origin 内分别请求音频/视频权限并立即关闭，把媒体权限置为 granted。
+// 音频与视频【独立两次】请求：避免"无摄像头机器上 video:true 整体报错、连麦克风也授权不了"的回归
+// （多数机器只有麦克风、没有摄像头）。返回 { ok, audio:{ok,label}, video:{ok,label} }。
+// 必须在【主页面】webContents 内执行，而非设置/诊断窗口：Electron 权限按 origin 存储，
+// 在 file:// 诊断窗口授权对 https://data.tygps.com 主页面无效。
+async function activateMediaInMainPage() {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) {
+    return { ok: false, error: '主页面窗口不存在，请先打开应用主窗口', errorName: 'NoMainPage' }
+  }
+  try {
+    var res = await mainPageWindow.webContents.executeJavaScript(
+      '(async () => { ' +
+      'function tryGet(c){ return navigator.mediaDevices.getUserMedia(c).then(function(s){ ' +
+      '  var r = { ok: true, label: "" }; ' +
+      '  try { r.label = (c.audio ? (s.getAudioTracks()[0] && s.getAudioTracks()[0].label) : (s.getVideoTracks()[0] && s.getVideoTracks()[0].label)) || ""; } catch(e){} ' +
+      '  s.getTracks().forEach(function(t){ t.stop(); }); ' +
+      '  return r; ' +
+      '}).catch(function(e){ return { ok: false, error: (e && e.message) || String(e), name: (e && e.name) || "Error" }; }); } ' +
+      'const audio = await tryGet({ audio: true }); ' +
+      'const video = await tryGet({ video: true }); ' +
+      'return JSON.stringify({ ok: audio.ok && video.ok, audio: audio, video: video }); ' +
+      '})()'
+    )
+    var parsed = JSON.parse(res)
+    var aL = (parsed.audio && parsed.audio.label) || ''
+    var vL = (parsed.video && parsed.video.label) || ''
+    console.log('[MediaActivate]', parsed.ok ? 'granted' : 'partial',
+      'audio=' + ((parsed.audio && parsed.audio.ok) ? ('ok ' + aL) : 'fail'),
+      'video=' + ((parsed.video && parsed.video.ok) ? ('ok ' + vL) : 'fail'))
+    return parsed
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e), errorName: 'ExecuteError' }
+  }
 }
 
 // Shared BrowserWindow options for center-popup notification windows
@@ -1008,6 +1061,16 @@ function buildDownloadsMenu() {
   return items
 }
 
+// 轻量系统通知（用于托盘菜单等无 UI 上下文的反馈）
+function notify(title, body, isError) {
+  try {
+    if (Notification.isSupported && Notification.isSupported()) {
+      const n = new Notification({ title, body, silent: !!isError })
+      n.show()
+    }
+  } catch (e) { /* 通知失败不影响主流程 */ }
+}
+
 function updateTrayMenu() {
   if (!tray) return
 
@@ -1050,8 +1113,38 @@ function updateTrayMenu() {
   })
   menuItems.push({ type: 'separator' })
 
-  // ── Exit（左侧单色关机图标，与「开机自启」对勾左列对齐） ──
+  // ── 手动授予麦克风/摄像头权限（兜底：对因缓存拒绝/子上下文漏放而"没声音/无画面"的机器，
+  //     在主页面 origin 内分别执行 getUserMedia 把权限置 granted）。点击后系统通知回显结果。 ──
+  menuItems.push({
+    label: '打开麦克风/摄像头',
+    click: async () => {
+      try {
+        const res = await activateMediaInMainPage()
+        const aOk = !!(res && res.audio && res.audio.ok)
+        const vOk = !!(res && res.video && res.video.ok)
+        if (aOk && vOk) {
+          notify('麦克风与摄像头已开启', '已成功授予麦克风与摄像头权限，可正常通话/视频。')
+        } else if (aOk && !vOk) {
+          // 多数机器只有麦克风、无摄像头：麦克风成功即达标，摄像头失败不报警
+          const vErr = (res && res.video && res.video.name) || ''
+          const camMsg = /NotFound|DevicesNotFound|No mandatory|Overconstrained/i.test(vErr)
+            ? '本机未检测到摄像头（不影响语音通话）。'
+            : '摄像头未能开启，可在系统设置→隐私中检查摄像头授权（不影响语音通话）。'
+          notify('麦克风已开启', camMsg)
+        } else if (!aOk) {
+          const detail = (res && res.audio && res.audio.error) ? `\n${res.audio.error}` : ((res && res.error) ? `\n${res.error}` : '')
+          notify('开启失败', '未能授予麦克风权限，请检查系统麦克风设置或重试。' + detail, true)
+        } else {
+          notify('开启失败', '未能授予媒体权限，请检查系统设置或重试。', true)
+        }
+      } catch (e) {
+        notify('开启失败', '发生异常：' + (e && e.message ? e.message : String(e)), true)
+      }
+    },
+  })
   menuItems.push({ type: 'separator' })
+
+  // ── Exit（左侧单色关机图标，与「开机自启」对勾左列对齐） ──
   const exitItem = { label: '退出', click: () => { isQuitting = true; quitApp() } }
   const si = getShutdownIcon()
   if (si) exitItem.icon = si
@@ -1704,6 +1797,19 @@ function openMainPage() {
   // SPA 内部路由切换不会触发这两个事件，shim 持久化于同一 JS 上下文。
   mainPageWindow.webContents.on('dom-ready', () => injectScreenShareShim(mainPageWindow))
   mainPageWindow.webContents.on('did-finish-load', () => injectScreenShareShim(mainPageWindow))
+
+  // 启动预授权：主页面首次加载完成后，在主页面 origin 内静默 getUserMedia 并立即关闭，
+  // 把媒体权限置为 granted，消除"首次会议才被发现没声音"的窗口期。
+  // 兜底：失败不阻断，仅记日志（用户仍可手动点击托盘「打开麦克风/摄像头」或诊断页按钮兜底）。
+  mainPageWindow.webContents.on('did-finish-load', () => {
+    if (mediaPreAuthed) return
+    mediaPreAuthed = true
+    setTimeout(() => {
+      activateMediaInMainPage()
+        .then((r) => { if (!r.ok) console.warn('[MediaPreAuth] 预授权未全部成功（可手动激活兜底）:', (r.audio && !r.audio.ok ? ('audio:' + r.audio.name) : ''), (r.video && !r.video.ok ? ('video:' + r.video.name) : '')) })
+        .catch(() => {})
+    }, 1500)
+  })
 
   // 加载状态：任务栏不确定进度
   mainPageWindow.webContents.on('did-start-loading', () => {
@@ -2968,6 +3074,12 @@ ipcMain.handle('diag:mode-linkage', () => {
   if (notificationCenter) { notificationCenter.markRead('__diag_mode__'); notificationCenter.hideWindow() }
   settingsStore.set({ notifyMode: origMode })
   return { origMode, dndBlockedPopup, dndMuted, restored: settingsStore.getMerged().notifyMode === origMode }
+})
+
+// 手动激活媒体权限（麦克风/摄像头兜底按钮）：
+// 在主页面 origin 内 getUserMedia 并立即关闭，覆盖被缓存的拒绝/不同步状态。
+ipcMain.handle('media:activate', async () => {
+  return activateMediaInMainPage()
 })
 
 // ─── Workbench window IPC ──────────────────────────
