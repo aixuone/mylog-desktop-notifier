@@ -212,7 +212,7 @@ function markClientOffline(ws, reason) {
   // If no more connected clients and not ringing → switch to gray with reason in tooltip
   if (!hasConnectedClients() && !isRinging) {
     setTrayState('gray')
-    tray?.setToolTip(`我的日志-通知助手 | ${reason}`)
+    tray?.setToolTip(`e日志-通知助手 | ${reason}`)
   }
 }
 
@@ -922,9 +922,9 @@ function updateUnreadCount(count) {
       .filter(u => u.connected)
       .map(u => u.userName || u.userId)
       .join(', ')
-    tray?.setToolTip(`我的日志-通知助手 | ${onlineCount} 人在线${unreadCount > 0 ? ` | ${unreadCount} 条未读` : ''}`)
+    tray?.setToolTip(`e日志-通知助手 | ${onlineCount} 人在线${unreadCount > 0 ? ` | ${unreadCount} 条未读` : ''}`)
   } else {
-    tray?.setToolTip('我的日志-通知助手 | 未连接')
+    tray?.setToolTip('e日志-通知助手 | 未连接')
   }
 }
 
@@ -1077,7 +1077,7 @@ function updateTrayMenu() {
   const menuItems = []
 
   // ── Header（第一行标题 + 版本号） ──
-  menuItems.push({ label: `我的日志（v${version}）`, enabled: false })
+  menuItems.push({ label: `e日志（v${version}）`, enabled: false })
   menuItems.push({ type: 'separator' })
 
   // ── Connected users（显示头像 + 在线状态标识，禁用项） ──
@@ -1176,9 +1176,9 @@ function updateTrayMenu() {
   // Tooltip：显示在线数量
   const onlineCount = Array.from(connectedClients.values()).filter(u => u.connected).length
   if (onlineCount > 0) {
-    tray.setToolTip(`我的日志-通知助手 | ${onlineCount} 个用户在线`)
+    tray.setToolTip(`e日志-通知助手 | ${onlineCount} 个用户在线`)
   } else {
-    tray.setToolTip(currentUser.userName ? `${currentUser.userName} - 我的日志通知助手` : '我的日志-通知助手')
+    tray.setToolTip(currentUser.userName ? `${currentUser.userName} - e日志通知助手` : 'e日志-通知助手')
   }
 }
 
@@ -1692,7 +1692,7 @@ function openMainPage() {
     minWidth: 800,
     minHeight: 480,
     show: false,                 // 先隐藏，splash 渲染完成后由 ready-to-show 显示
-    title: '我的日志',           // 系统标题栏显示文本（与设置/诊断/工作台窗口一致）
+    title: 'e日志',           // 系统标题栏显示文本（与设置/诊断/工作台窗口一致）
     frame: true,                 // 使用系统默认标题栏（最小化/最大化/关闭由 OS 提供），与设置/诊断/工作台窗口风格统一
     resizable: true,
     minimizable: true,
@@ -2867,6 +2867,14 @@ ipcMain.handle('downloads:open', (e, id) => {
 ipcMain.handle('downloads:open-folder', (e, id) => {
   const d = downloads.find(x => x.id === id)
   if (d && fs.existsSync(d.savePath)) shell.showItemInFolder(d.savePath)
+})
+ipcMain.handle('downloads:open-in-browser', (e, id) => {
+  const d = downloads.find(x => x.id === id)
+  if (!d || !d.url) return
+  let u
+  try { u = new URL(d.url) } catch (e2) { return }
+  // 仅允许 http/https 协议，避免 file:/data 等被滥用
+  if (u.protocol === 'http:' || u.protocol === 'https:') shell.openExternal(d.url)
 })
 ipcMain.handle('downloads:cancel', (e, id) => {
   const d = downloads.find(x => x.id === id)

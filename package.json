@@ -75,7 +75,7 @@
       }
     },
     "dmg": {
-      "title": "我的日志",
+      "title": "e日志",
       "icon": "assets/icon.png",
       "iconSize": 80,
       "window": {
@@ -89,7 +89,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "我的日志_桌面通知",
+      "shortcutName": "e日志",
       "runAfterFinish": true,
       "installerIcon": "assets/icon.ico",
       "uninstallerIcon": "assets/icon.ico"

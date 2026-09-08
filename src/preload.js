@@ -145,6 +145,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloadsOpen: (id) => ipcRenderer.invoke('downloads:open', id),
   /** 打开文件所在目录并选中该文件 */
   downloadsOpenFolder: (id) => ipcRenderer.invoke('downloads:open-folder', id),
+  /** 用系统默认浏览器打开原始 URL 重新下载 */
+  downloadsOpenInBrowser: (id) => ipcRenderer.invoke('downloads:open-in-browser', id),
   /** 取消进行中的下载 */
   downloadsCancel: (id) => ipcRenderer.invoke('downloads:cancel', id),
   /** 清空已完成/失败/取消的任务记录 */

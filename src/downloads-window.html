@@ -73,15 +73,16 @@ body {
 .pbar.fail > i { background: #DC2626; }
 
 /* 操作按钮 */
-.ops { display: flex; gap: 6px; flex-shrink: 0; }
+.ops { display: flex; gap: 4px; flex-shrink: 0; }
 .ops button {
-  border: 1px solid #D8D5CF; background: #fff; color: #2C2C2A;
-  font-family: inherit; font-size: 11.5px; padding: 5px 9px; border-radius: 7px; cursor: pointer;
-  transition: border-color .15s, color .15s, background .15s;
-  white-space: nowrap;
+  border: 1px solid #D8D5CF; background: #fff; color: #6B6864;
+  font-family: inherit; padding: 0; width: 28px; height: 28px; border-radius: 7px; cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s, transform .1s;
+  display: inline-flex; align-items: center; justify-content: center;
 }
-.ops button:hover { border-color: #185FA5; color: #185FA5; }
-.ops button.danger:hover { border-color: #DC2626; color: #DC2626; }
+.ops button:hover { border-color: #185FA5; color: #185FA5; background: rgba(24,95,165,.06); }
+.ops button:active { transform: scale(.92); }
+.ops button.danger:hover { border-color: #DC2626; color: #DC2626; background: rgba(220,38,38,.06); }
 .ops button:disabled { opacity: .45; cursor: not-allowed; }
 
 /* 空状态 */
@@ -137,6 +138,13 @@ body {
     interrupted: '<span class="badge fail">失败</span>',
     cancelled: '<span class="badge fail">已取消</span>',
   }
+  // 操作按钮图标（stroke 风格 SVG，currentColor 继承）
+  var BTN = {
+    cancel: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6 L18 18 M6 18 L18 6"/></svg>',
+    open: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="13" x2="12" y2="18"/><polyline points="9 15 12 12 15 15"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    browser: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+  }
   function fmtBytes(n) {
     if (!n || n <= 0) return ''
     var u = ['B', 'KB', 'MB', 'GB'], i = 0
@@ -171,15 +179,23 @@ body {
     listEl.innerHTML = list.map(function (d) {
       var isGoing = d.state === 'progressing'
       var doneOk = d.state === 'completed'
-      var fail = d.state === 'interrupted' || d.state === 'cancelled'
-      var barCls = doneOk ? 'pbar done' : (fail ? 'pbar fail' : 'pbar')
-      var ops =
-        '<div class="ops">' +
-        (doneOk || fail
-          ? '<button data-act="open" data-id="' + d.id + '" title="用系统默认程序打开该文件">打开文件</button>' +
-            '<button data-act="folder" data-id="' + d.id + '" title="在资源管理器中定位该文件">所在目录</button>'
-          : '<button data-act="cancel" data-id="' + d.id + '" class="danger" title="取消本次下载">取消</button>') +
-        '</div>'
+      var fail = d.state === 'interrupted'
+      var cancelled = d.state === 'cancelled'
+      var barCls = doneOk ? 'pbar done' : (fail || cancelled ? 'pbar fail' : 'pbar')
+      var ops = '<div class="ops">'
+      if (isGoing) {
+        ops += '<button data-act="cancel" data-id="' + d.id + '" class="danger" title="取消本次下载">' + BTN.cancel + '</button>'
+      } else if (doneOk) {
+        ops += '<button data-act="open" data-id="' + d.id + '" title="用系统默认程序打开该文件">' + BTN.open + '</button>' +
+               '<button data-act="folder" data-id="' + d.id + '" title="在资源管理器中定位该文件">' + BTN.folder + '</button>' +
+               '<button data-act="browser" data-id="' + d.id + '" title="用系统浏览器重新下载">' + BTN.browser + '</button>'
+      } else if (fail) {
+        ops += '<button data-act="folder" data-id="' + d.id + '" title="在资源管理器中定位该文件">' + BTN.folder + '</button>' +
+               '<button data-act="browser" data-id="' + d.id + '" title="用系统浏览器重新下载">' + BTN.browser + '</button>'
+      } else if (cancelled) {
+        ops += '<button data-act="browser" data-id="' + d.id + '" title="用系统浏览器重新下载">' + BTN.browser + '</button>'
+      }
+      ops += '</div>'
       return '<div class="item">' +
         '<span class="icon">' + (ICONS[d.state] || '📄') + '</span>' +
         '<div class="body">' +
@@ -204,6 +220,7 @@ body {
     var act = btn.getAttribute('data-act')
     if (act === 'open' && api.downloadsOpen) api.downloadsOpen(id)
     else if (act === 'folder' && api.downloadsOpenFolder) api.downloadsOpenFolder(id)
+    else if (act === 'browser' && api.downloadsOpenInBrowser) api.downloadsOpenInBrowser(id)
     else if (act === 'cancel' && api.downloadsCancel) { btn.disabled = true; api.downloadsCancel(id) }
   })
   clearBtn.addEventListener('click', function () { if (api.downloadsClear) api.downloadsClear() })
