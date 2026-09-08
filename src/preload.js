@@ -52,6 +52,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onNcSettingsChanged: (callback) => ipcRenderer.on('nc-settings-changed', (_, data) => callback(data)),
   /** 播放消息/系统铃声（path 为 null 则不播） */
   onNcPlay: (callback) => ipcRenderer.on('nc-play', (_, data) => callback(data)),
+  /** 窗口由隐藏→可见时触发（渲染进程据此播放入场动画，避免列表刷新时反复闪） */
+  onNcShow: (callback) => ipcRenderer.on('nc-show', () => callback()),
 
   /** 打开会话（主进程 shell.openExternal） */
   openConversation: (conversationId, url) => ipcRenderer.send('nc-open-conversation', { conversationId, url }),

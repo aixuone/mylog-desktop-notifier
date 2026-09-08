@@ -1058,7 +1058,15 @@ function updateTrayMenu() {
   menuItems.push(exitItem)
 
   const contextMenu = Menu.buildFromTemplate(menuItems)
-  tray.setContextMenu(contextMenu)
+  if (process.platform === 'darwin') {
+    // macOS 关键修复：setContextMenu 会把左键点击变成"弹出菜单"，导致 tray.on('click') 不触发，
+    // 表现就是"点托盘没反应、窗口唤不醒"。改为：左键走 click 事件（toggle 主窗口），
+    // 右键才弹菜单（popUpContextMenu）。updateTrayMenu 会被多次调用，先 removeAllListeners 防重复绑定。
+    tray.removeAllListeners('right-click')
+    tray.on('right-click', () => { try { tray.popUpContextMenu(contextMenu) } catch (e) {} })
+  } else {
+    tray.setContextMenu(contextMenu)
+  }
 
   // 同步刷新主窗口顶部菜单（在线用户列表会随连接状态变动）
   if (mainPageWindow && !mainPageWindow.isDestroyed()) {
@@ -1450,6 +1458,18 @@ app.on('window-all-closed', () => {
   }
 })
 
+// macOS: 用户点 Dock 图标重新激活 app 时唤起主窗口（与钉钉/微信一致）
+// macOS：用户点 Dock 图标重新激活 app 时唤起主窗口（与钉钉/微信一致）。
+// 注意：Dock 点击只负责"show"，不 toggle——否则窗口已显示时再点 Dock 反而会把它隐藏，体验怪异。
+app.on('activate', () => {
+  if (process.platform !== 'darwin') return
+  try { app.show() } catch (e) {}
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) { openMainPage(); return }
+  if (mainPageWindow.isMinimized()) mainPageWindow.restore()
+  mainPageWindow.show()
+  mainPageWindow.focus()
+})
+
 app.on('before-quit', () => {
   isQuitting = true
   stopStaleCleanup()
@@ -1495,14 +1515,16 @@ function saveMainPageBounds() {
 // 托盘点击 → 切换主页面窗口显示/隐藏（Ctrl/⌘+Shift+M）
 function toggleMainPage() {
   if (!mainPageWindow || mainPageWindow.isDestroyed()) {
-    if (process.platform === 'darwin') app.focus({ steal: true })
+    if (process.platform === 'darwin') { try { app.show() } catch (e) {} }
     return openMainPage()
   }
   if (mainPageWindow.isVisible() && mainPageWindow.isFocused()) {
     mainPageWindow.hide()
   } else {
     if (mainPageWindow.isMinimized()) mainPageWindow.restore()
-    if (process.platform === 'darwin') app.focus({ steal: true })
+    // macOS：app.show() = NSApp.activate(ignoringOtherApps:true)，先把 App 激活到前台，
+    // 再 show() 窗口才会被系统带到最前（纯托盘/后台态下 NSApp 不激活则 show 无效）。
+    if (process.platform === 'darwin') { try { app.show() } catch (e) {} }
     mainPageWindow.show()
     mainPageWindow.focus()
   }
@@ -1565,7 +1587,7 @@ function openMainPage() {
     // 点击切换语义：最小化则恢复；可见且聚焦则隐藏（类 IM）；其余置顶显示
     if (mainPageWindow.isMinimized()) { mainPageWindow.restore(); mainPageWindow.focus(); return }
     if (mainPageWindow.isVisible() && mainPageWindow.isFocused()) { mainPageWindow.hide(); return }
-    if (process.platform === 'darwin') app.focus({ steal: true })
+    if (process.platform === 'darwin') { try { app.show() } catch (e) {} }
     mainPageWindow.show(); mainPageWindow.focus()
     return
   }
@@ -1591,9 +1613,16 @@ function openMainPage() {
     webPreferences: { ...makeWebPrefs(), backgroundThrottling: false, v8CacheOptions: 'bypassHeatCheck' },
   })
 
-  // 关闭即隐藏到托盘（继续当前页面），而非销毁；真正退出由全局 isQuitting 控制
+  // 关闭即隐藏到托盘（继续当前页面），而非销毁；真正退出由全局 isQuitting 控制。
+  // 注意：preventDefault 只阻止"销毁"，窗口对象保留在内存里——会议 / 视频 / 表单状态
+  // 都在 renderer 进程，hide 不会断开 WebRTC 或暂停 <video>，符合钉钉/微信"关窗不影响内容"。
+  // macOS 上不要做 setImmediate + showInactive 之类的状态机复位，那只会让 NSWindow 更混乱；
+  // 单纯 hide() 即可，后续 show() 能正常唤回。
   mainPageWindow.on('close', (e) => {
-    if (!isQuitting) { e.preventDefault(); mainPageWindow.hide() }
+    if (!isQuitting) {
+      e.preventDefault()
+      mainPageWindow.hide()
+    }
   })
   // ─── 渲染进程 console 桥接到主进程 ───
   // 用户无法直接查看主页面窗口的 console 日志（TRTC SDK 的报错、调用路径全藏在渲染进程）。
@@ -1754,9 +1783,9 @@ function createTray() {
   updateTrayMenu()
 
   tray.on('click', () => {
-    // 左键点击 → toggle 显隐（与钉钉/微信一致）。
-    // macOS 上纯托盘应用需要显式 app.focus({steal:true})，否则窗口 show() 后不会激活到前台
-    if (process.platform === 'darwin') app.focus({ steal: true })
+    // 左键点击 → toggle 主窗口显隐（与钉钉/微信一致）。
+    // macOS：先 app.show() 把 App 激活到前台，再 toggleMainPage（内部 show 才会生效）。
+    if (process.platform === 'darwin') { try { app.show() } catch (e) {} }
     toggleMainPage()
   })
 }

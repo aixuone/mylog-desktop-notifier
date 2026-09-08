@@ -130,6 +130,14 @@ body.nc-hide-content .conv .last { display: none; }
   border-top: 1px solid #ECECEC; margin-top: 4px;
 }
 .more-footer:hover { background: #EDEBE6; }
+
+/* 入场动画：从下往上滑入 + 淡入。仅由主进程「隐藏→可见」时通过 nc-show 触发，
+   避免列表刷新（renderUnread）时反复播放；动画结束后移除 class 以便下次重新触发。 */
+@keyframes ncSlideUp {
+  from { opacity: 0; transform: translateY(28px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+#app.nc-enter { animation: ncSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1); }
 </style>
 </head>
 <body>
@@ -318,6 +326,19 @@ if (!api) {
       audioEl.volume = 0.7
       audioEl.play().catch(function (e) { console.warn('[NC] play failed', e && e.name) })
     } catch (e) { console.warn('[NC] audio error', e) }
+  })
+
+  // 入场动画：主进程在「隐藏→可见」时发 nc-show，这里重启动画让面板从下往上滑入。
+  var appEl = document.getElementById('app')
+  function playEnter() {
+    if (!appEl) return
+    appEl.classList.remove('nc-enter')
+    void appEl.offsetWidth   // 强制重排，确保动画可重复触发
+    appEl.classList.add('nc-enter')
+  }
+  api.onNcShow(playEnter)
+  appEl.addEventListener('animationend', function (e) {
+    if (e.animationName === 'ncSlideUp') appEl.classList.remove('nc-enter')
   })
 
   // Delegated clicks
