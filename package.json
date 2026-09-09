@@ -1,6 +1,6 @@
 {
   "name": "mylog-desktop-notifier",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "author": "ixu",
   "description": "e日志-桌面端",
   "main": "main.js",
@@ -59,7 +59,7 @@
           ]
         }
       ],
-      "artifactName": "${productName} 安装包 ${version}.${ext}",
+      "artifactName": "${productName} 安装包 ${version}-${arch}.${ext}",
       "icon": "assets/icon.png",
       "category": "public.app-category.utilities",
       "hardenedRuntime": true,
