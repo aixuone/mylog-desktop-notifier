@@ -71,7 +71,8 @@
         "LSUIElement": true,
         "NSHighResolutionCapable": true,
         "NSCameraUsageDescription": "需要使用摄像头进行视频通话",
-        "NSMicrophoneUsageDescription": "需要使用麦克风进行语音与视频通话"
+        "NSMicrophoneUsageDescription": "需要使用麦克风进行语音与视频通话",
+        "NSScreenCaptureUsageDescription": "需要共享屏幕以进行视频会议与远程协助"
       }
     },
     "dmg": {
