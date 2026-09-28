@@ -165,7 +165,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   titlebarMenu: (key) => ipcRenderer.send('titlebar:menu', key),
   /** 订阅连接状态（offline/reconnecting） */
   onTitlebarStatus: (callback) => ipcRenderer.on('titlebar-status', (_, data) => callback(data)),
-  /** 订阅窗口最大化/全屏状态（{ maximized: boolean }），供标题栏"最大化/恢复"图标切换 */
+  /** 订阅窗口最大化/全屏状态（{ maximized: boolean, fullScreen: boolean }），供标题栏"最大化/恢复"及"退出全屏"按钮判定 */
   onTitlebarState: (callback) => ipcRenderer.on('titlebar-state', (_, data) => callback(data)),
   /** 订阅审批待办数（角标） */
   onTitlebarApproval: (callback) => ipcRenderer.on('titlebar-approval', (_, count) => callback(count)),

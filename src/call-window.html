@@ -201,21 +201,8 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
     if (!ringtonePath) {
-      try {
-        var ctx = new (window.AudioContext || window.webkitAudioContext)();
-        if (ctx.state === 'suspended') ctx.resume();
-        var osc = ctx.createOscillator();
-        var gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.3);
-        gain.gain.setValueAtTime(0.3, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.8);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.8);
-      } catch(e) {}
+      // 静音：notifyMode=silent/dnd、铃声总开关关闭、或屏蔽聊天消息时 resolver 返回 null，
+      // 此处保持静默，不再合成提示音（否则静音/勿扰仍会响）
       return;
     }
     audioElement.loop = ringtoneConfig.loop !== undefined ? ringtoneConfig.loop : true;

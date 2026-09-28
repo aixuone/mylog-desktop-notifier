@@ -11,7 +11,7 @@ mac/
 .DS_Store
 Thumbs.db
 *.log
-
+.workbuddy/
 # Certificates (NEVER commit)
 p12/
 *.p12

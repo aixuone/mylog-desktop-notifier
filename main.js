@@ -767,6 +767,34 @@ function hasAppClient() {
   return Array.from(connectedClients.values()).some(u => u.isAppWindow && u.connected)
 }
 
+// ─── Agent 中继（WorkBuddy 连接器 ↔ 应用窗口）──────────────
+// 无 token：WS 仅绑 127.0.0.1，本地边界由该绑定 + 文件 ACL 提供。
+// Agent 连接通过 REGISTER 时 browserType==='agent' 标识，不另设鉴权。
+const AGENT_REQUEST_TIMEOUT_MS = 30000
+// requestId -> { ws: 来自 Agent 的连接, timer }
+const pendingAgentRequests = new Map()
+
+// 向所有已识别的 Agent 连接广播（用于 AGENT_EVENT 异步事件）
+function broadcastToAgentClients(msg) {
+  if (!wsServer) return
+  const raw = JSON.stringify(msg)
+  wsServer.clients.forEach((c) => {
+    if (c.readyState !== 1) return
+    const entry = connectedClients.get(c)
+    if (entry && entry.isAgent) c.send(raw)
+  })
+}
+
+// 清理某连接上所有未完成的 Agent 请求（连接断开时调用）
+function clearAgentRequestsFor(ws) {
+  for (const [requestId, pending] of pendingAgentRequests) {
+    if (pending.ws === ws) {
+      clearTimeout(pending.timer)
+      pendingAgentRequests.delete(requestId)
+    }
+  }
+}
+
 // 置前主页面窗口，并可选地跳转到指定 url（SPA 路由跳转，不刷新页面）
 function focusMainWindow(url) {
   if (!mainPageWindow || mainPageWindow.isDestroyed()) return
@@ -1742,6 +1770,38 @@ function openMainPage() {
     console.warn('[DevTools] 快捷键注册失败:', e && e.message)
   }
 
+  // ─── F5 / F11 / F12 主窗口快捷键（窗口级，仅主页面聚焦时生效，不劫持全局）───
+  // 用 webContents 的 before-input-event 在「渲染进程 keydown 派发前」拦截，
+  // 并 preventDefault 阻止网页自身或浏览器默认行为重复触发。
+  //   F5  → 刷新主页面（reload 当前已加载的 URL）
+  //   F11 → 切换系统级全屏（setFullScreen 取反；菜单栏显隐由 enter/leave-full-screen 处理）
+  //   F12 → 打开 / 关闭 DevTools（toggleDevTools，与 Ctrl/⌘+Shift+I 行为一致）
+  // 注意：before-input-event 仅在该窗口 webContents 聚焦时触发，故天然限定在主页面，
+  // 不会像 globalShortcut 那样在其它窗口或外部应用里误触发。
+  try {
+    mainPageWindow.webContents.on('before-input-event', (event, input) => {
+      if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+      if (input.type !== 'keyDown') return
+      switch (input.key) {
+        case 'F5':
+          event.preventDefault()
+          if (mainPageWindow.isVisible()) mainPageWindow.reload()
+          else openMainPage()
+          break
+        case 'F11':
+          event.preventDefault()
+          mainPageWindow.setFullScreen(!mainPageWindow.isFullScreen())
+          break
+        case 'F12':
+          event.preventDefault()
+          mainPageWindow.webContents.toggleDevTools()
+          break
+      }
+    })
+  } catch (e) {
+    console.warn('[Shortcut] F5/F11/F12 注册失败:', e && e.message)
+  }
+
   // 主页面显隐快捷键（默认 Ctrl/⌘+Shift+M，可在「设置-通用」中自定义，修改后即时生效）
   registerMainPageHotkey()
 
@@ -1926,6 +1986,7 @@ function startWSServer() {
       localIconPath: '',
       lastSeenAt: now,
       isAppWindow,
+      isAgent: false,
     })
 
     ws.send(JSON.stringify({ type: 'CONNECTED', payload: { version: version, port: currentWsPort } }))
@@ -1945,6 +2006,8 @@ function startWSServer() {
     })
 
     ws.on('close', () => {
+      // 清理该连接上未完成的 Agent 请求，避免悬挂
+      clearAgentRequestsFor(ws)
       const entry = connectedClients.get(ws)
       if (entry) {
         console.log('[WS] Browser disconnected:', entry.userName || entry.userId || `client#${entry.clientId}`)
@@ -1991,6 +2054,12 @@ function handleBrowserMessage(ws, msg) {
         userIcon: msg.payload?.userIcon,
         browserType: msg.payload?.browserType
       }, ws)   // pass ws client for multi-user tracking
+      // 标记 Agent 连接（WorkBuddy 连接器），用于后续 AGENT_RESULT 路由回写
+      if (msg.payload?.browserType === 'agent') {
+        const e = connectedClients.get(ws)
+        if (e) { e.isAgent = true; connectedClients.set(ws, e) }
+        console.log('[WS] Agent client registered, clientId:', clientId)
+      }
       break
 
     case 'SHOW_CALL_NOTIFICATION':
@@ -2006,6 +2075,8 @@ function handleBrowserMessage(ws, msg) {
         console.log('[Dedup] Skip duplicate call:', msg.payload.callId)
         return
       }
+      // 来电/会议弹窗永远不隐藏：模式设置只决定铃声是否静音（在 showCallWindow/showMeetingWindow
+      // 中由 ringtoneResolver 返回 null 控制），弹窗本身始终展示，由网页端承载通话 UI。
       setTrayState('ringing')
       if (msg.payload.callType === 'meeting') {
         showMeetingWindow(msg.payload, ws)
@@ -2132,6 +2203,56 @@ function handleBrowserMessage(ws, msg) {
       }
       break
 
+    // ── Agent 中继（WorkBuddy 连接器 ↔ 应用窗口）────────────
+    // 来自连接器的意图：校验应用窗口在线 → 暂存 requestId → 转发给应用窗口
+    case 'AGENT_INTENT': {
+      const payload = msg.payload || {}
+      const requestId = payload.requestId
+      if (!requestId) {
+        ws.send(JSON.stringify({ type: 'AGENT_RESULT', payload: { requestId: null, ok: false, error: 'BAD_REQUEST:missing requestId' }, timestamp: Date.now() }))
+        break
+      }
+      // 应用窗口未就绪：立即失败，绝不排队（避免乱序灾难）
+      if (!hasAppClient()) {
+        ws.send(JSON.stringify({ type: 'AGENT_RESULT', payload: { requestId, ok: false, error: 'WEB_OFFLINE' }, timestamp: Date.now() }))
+        break
+      }
+      // 重复 requestId：忽略，避免结果被旧连接消费
+      if (pendingAgentRequests.has(requestId)) {
+        ws.send(JSON.stringify({ type: 'AGENT_RESULT', payload: { requestId, ok: false, error: 'DUP_REQUEST_ID' }, timestamp: Date.now() }))
+        break
+      }
+      const timer = setTimeout(() => {
+        if (pendingAgentRequests.has(requestId)) {
+          pendingAgentRequests.delete(requestId)
+          ws.send(JSON.stringify({ type: 'AGENT_RESULT', payload: { requestId, ok: false, error: 'TIMEOUT' }, timestamp: Date.now() }))
+        }
+      }, AGENT_REQUEST_TIMEOUT_MS)
+      pendingAgentRequests.set(requestId, { ws, timer })
+      sendToAppClient({ type: 'AGENT_INTENT', payload })
+      break
+    }
+
+    // 来自应用窗口的执行结果：按 requestId 路由回发起意图的连接器
+    case 'AGENT_RESULT': {
+      const payload = msg.payload || {}
+      const requestId = payload.requestId
+      const pending = pendingAgentRequests.get(requestId)
+      if (pending) {
+        clearTimeout(pending.timer)
+        pendingAgentRequests.delete(requestId)
+        pending.ws.send(JSON.stringify({ type: 'AGENT_RESULT', payload, timestamp: Date.now() }))
+      } else {
+        console.warn('[WS] AGENT_RESULT 无匹配请求（可能已超时）:', requestId)
+      }
+      break
+    }
+
+    // 来自应用窗口的异步事件（如来电主动提示）：广播给所有 Agent 连接
+    case 'AGENT_EVENT':
+      broadcastToAgentClients(msg)
+      break
+
     default:
       console.log('[WS] Unknown message type:', msg.type)
   }
@@ -2186,7 +2307,7 @@ function preCreateCallWindow() {
   // Preload ringtone as soon as page is ready — eliminates ~5s audio decode delay on call arrival
   callWindow.webContents.once('did-finish-load', () => {
     callWindow.webContents.send('preload-ringtone', {
-      ringtonePath: (ringtoneResolver ? ringtoneResolver.resolve('audio', null) : null) || getRingtonePath(),
+      ringtonePath: ringtoneResolver ? ringtoneResolver.resolve('audio', null) : getRingtonePath(),
       ringtoneConfig: config.ringtone,
     })
   })
@@ -2209,11 +2330,12 @@ function showCallWindow(payload, ws) {
   callWindow.focus()
 
   function sendCallPayload() {
+    // resolver 可用时直接采用其返回值：返回 null 表示静音（silent/dnd/总开关关闭/blockChat 消息），
+    // 必须如实传递 null 给来电窗口，不得回退默认铃声，否则静音/勿扰失效。
+    // 仅当 resolver 本身未初始化时才回退默认铃声（保证有铃路径始终可用）。
     var rp = ringtoneResolver
       ? ringtoneResolver.resolve(payload.callType || 'audio', payload.callerId)
-      : null
-    // 兜底：resolver 可能因设置状态返回 null（如勿扰模式），仍需保证有铃声
-    if (!rp) rp = getRingtonePath()
+      : getRingtonePath()
     callWindow.webContents.send('call-data', {
       ...payload,
       ringtonePath: rp,
@@ -2273,7 +2395,7 @@ function preCreateMeetingWindow() {
   // Preload ringtone as soon as page is ready — eliminates ~5s audio decode delay on call arrival
   meetingWindow.webContents.once('did-finish-load', () => {
     meetingWindow.webContents.send('preload-ringtone', {
-      ringtonePath: (ringtoneResolver ? ringtoneResolver.resolve('meeting', null) : null) || getRingtonePath(),
+      ringtonePath: ringtoneResolver ? ringtoneResolver.resolve('meeting', null) : getRingtonePath(),
       ringtoneConfig: config.ringtone,
     })
   })
@@ -2296,10 +2418,11 @@ function showMeetingWindow(payload, ws) {
   meetingWindow.focus()
 
   function sendMeetingPayload() {
+    // resolver 可用时直接采用其返回值：返回 null 表示静音（silent/dnd/总开关关闭/blockChat 消息），
+    // 必须如实传递 null，不得回退默认铃声，否则静音/勿扰失效；仅 resolver 未初始化时回退默认铃声。
     var rp = ringtoneResolver
       ? ringtoneResolver.resolve('meeting', payload.callerId)
-      : null
-    if (!rp) rp = getRingtonePath()
+      : getRingtonePath()
     meetingWindow.webContents.send('meeting-data', {
       ...payload,
       ringtonePath: rp,
@@ -2653,7 +2776,9 @@ function pushTitlebarState() {
   if (!mainPageWindow || mainPageWindow.isDestroyed()) return
   try {
     const maximized = mainPageWindow.isMaximized() || mainPageWindow.isFullScreen()
-    mainPageWindow.webContents.send('titlebar-state', { maximized })
+    // fullScreen 单独上报：与「最大化」区分开，供网页「退出全屏」按钮精确判定
+    // （isMaximized || isFullScreen 合并会把单纯最大化也误判为全屏，导致按钮误显示）
+    mainPageWindow.webContents.send('titlebar-state', { maximized, fullScreen: mainPageWindow.isFullScreen() })
   } catch (e) {}
 }
 ipcMain.on('titlebar:win', (e, action) => {
@@ -2664,6 +2789,15 @@ ipcMain.on('titlebar:win', (e, action) => {
     else mainPageWindow.maximize()
     // 窗口最大化态变更可能由系统动画延迟，下一帧再推送（此时 isMaximized 已是最新值）
     pushTitlebarState()
+  }
+  else if (action === 'fullscreen') {
+    // F11 / 标题栏按钮触发的系统级全屏切换（与 before-input-event 的 F11 同一条链路）
+    mainPageWindow.setFullScreen(!mainPageWindow.isFullScreen())
+    pushTitlebarState() // 全屏态变化由 enter/leave-full-screen 事件再推一次，这里兜底确保即时
+  }
+  else if (action === 'exit-fullscreen') {
+    // 网页「退出全屏」按钮：仅当处于系统级全屏时退出（不干扰单纯最大化窗口）
+    if (mainPageWindow.isFullScreen()) { mainPageWindow.setFullScreen(false); pushTitlebarState() }
   }
   else if (action === 'close') { mainPageWindow.close() } // close 事件已拦截为隐藏到托盘
 })

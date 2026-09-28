@@ -8,6 +8,7 @@
     "dev": "scripts\\start.bat",
     "dev:mac": "bash scripts/start.sh",
     "build": "node build.js",
+    "test:agent": "node scripts/test-agent-bridge.js",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --win --publish never && rm -rf dist-installer-new/win-unpacked",
     "dist:mac": "electron-builder --mac",
