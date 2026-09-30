@@ -211,6 +211,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Browser ──────────────────────────────────
   /** Open browser to conversation page */
   openBrowser: (url) => ipcRenderer.send('open-browser', url),
+
+  // ─── 画板「真·OS 全屏」覆盖窗口 ──────────────
+  /** 网页端：请求开关画板全屏覆盖窗口 */
+  boardOverlayToggle: () => ipcRenderer.send('board-overlay:toggle'),
+  boardOverlayOpen: () => ipcRenderer.send('board-overlay:open'),
+  /** 仅当主进程记录了共享源时才在屏幕上开覆盖窗（纯白板场景不弹） */
+  boardOverlayOpenIfSharing: () => ipcRenderer.send('board-overlay:open-if-sharing'),
+  /** 屏幕共享真正开始（SDK 调 chooseDesktopMedia）→ 通知主进程开画板覆盖窗 */
+  notifyScreenShareStarted: (sourceId) => ipcRenderer.send('board-overlay:share-started', sourceId),
+  /** 网页端：推全量画板状态给覆盖窗口（{ strokes, images }） */
+  boardOverlayPushState: (state) => ipcRenderer.send('board-overlay:sync', state),
+  /** 网页端：监听覆盖窗口采集的笔迹 */
+  onBoardOverlayRemoteStroke: (callback) => ipcRenderer.on('board-overlay:remote-stroke', (_, stroke) => callback(stroke)),
+  /** 网页端：监听覆盖窗口已关闭 */
+  onBoardOverlayClosed: (callback) => ipcRenderer.on('board-overlay:closed', () => callback()),
+  /** 网页端：监听覆盖窗口不支持（共享窗口/未共享，无法保证对齐） */
+  onBoardOverlayUnsupported: (callback) => ipcRenderer.on('board-overlay:unsupported', (_, reason) => callback(reason)),
+  /** 覆盖窗口：发送本地采集的笔迹 */
+  boardOverlaySendStroke: (stroke) => ipcRenderer.send('board-overlay:local-stroke', stroke),
+  /** 覆盖窗口：监听全量画板状态 */
+  onBoardOverlayState: (callback) => ipcRenderer.on('board-overlay:state', (_, state) => callback(state)),
+  /** 覆盖窗口：请求撤销（转交网页端执行 undo 并广播） */
+  boardOverlayUndo: () => ipcRenderer.send('board-overlay:undo'),
+  /** 覆盖窗口：请求清空（转交网页端执行 clearAll 并广播） */
+  boardOverlayClear: () => ipcRenderer.send('board-overlay:clear'),
+  /** 网页端：监听覆盖窗实际已打开（OS 覆盖窗 show 后由主进程发出） */
+  onBoardOverlayScreenOpened: (callback) => ipcRenderer.on('board-overlay:screen-opened', () => callback()),
+  /** 网页端：监听「本机（桌面端）是否正在共享屏幕」（由主进程 share-started 推送，hasScreenStream 对本人不可靠） */
+  onBoardOverlaySelfScreenShare: (callback) => ipcRenderer.on('board-overlay:self-screen-share', (_, v) => callback(!!v)),
+  /** 网页端：监听覆盖窗「清空」请求（由覆盖窗按钮发起，转网页端 clearAll） */
+  onBoardOverlayClear: (callback) => ipcRenderer.on('board-overlay:clear', () => callback()),
+  /** 覆盖窗口：切换整窗鼠标穿透（鼠标模式下让桌面可操作；工具栏悬停区由网页端切回可点） */
+  boardOverlaySetIgnoreMouse: (ignore, forward) => ipcRenderer.send('board-overlay:set-ignore-mouse', !!ignore, !!forward),
+  /** 网页端：监听覆盖窗口的撤销请求 */
+  onBoardOverlayUndo: (callback) => ipcRenderer.on('board-overlay:undo', () => callback()),
+  /** 覆盖窗口：请求关闭自身 */
+  boardOverlayClose: () => ipcRenderer.send('board-overlay:close'),
 })
 
 // 屏幕共享 main-world shim 已迁移到 src/screenshare-shim.js，由主进程在页面加载完成后

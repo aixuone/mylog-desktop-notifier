@@ -79,6 +79,14 @@
     var requestId = _nextRequestId++
     log('chrome.desktopCapture.chooseDesktopMedia called | types=' + JSON.stringify(types || [])
       + ' | sourceId=' + (SOURCE_ID ? SOURCE_ID.slice(0, 16) + '…' : 'none'))
+    // ★ 通知桌面端：屏幕共享真正开始了 → 主进程据此在「被共享的那块屏」上打开画板覆盖窗。
+    //   桌面端共享走本 shim 路径、不经 getDisplayMedia，
+    //   所以主进程 setDisplayMediaRequestHandler 里的自动开窗永远不会被触发。
+    try {
+      if (window.electronAPI && window.electronAPI.notifyScreenShareStarted) {
+        window.electronAPI.notifyScreenShareStarted(SOURCE_ID)
+      }
+    } catch (e) {}
     if (!SOURCE_ID) {
       log('chooseDesktopMedia: no SOURCE_ID → returning empty (cancel)')
       setTimeout(function () { callback('') }, 0)
@@ -557,6 +565,11 @@
           iframeDcMock.chooseDesktopMedia = function (types, targetTab, cb) {
             var rid = iframeNextId++
             log('[iframe-' + i + '] chooseDesktopMedia called | types=' + JSON.stringify(types || []))
+            try {
+              if (window.electronAPI && window.electronAPI.notifyScreenShareStarted) {
+                window.electronAPI.notifyScreenShareStarted(iframeSourceId)
+              }
+            } catch (e) {}
             if (!iframeSourceId) { setTimeout(function () { cb('') }, 0); return rid }
             iframeActive[rid] = { sourceId: iframeSourceId, callback: cb }
             setTimeout(function () {

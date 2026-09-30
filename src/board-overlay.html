@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+<title>画板</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #stage { position: fixed; inset: 0; background: transparent; pointer-events: none; }
+  #canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+    touch-action: none;
+  }
+  .toolbar {
+    position: fixed;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 14px;
+    background: rgba(20, 20, 28, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+    z-index: 10;
+    pointer-events: auto;
+  }
+  .tool-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.88);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .tool-btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+  .tool-btn.active { background: #006eff; color: #fff; }
+  .divider { width: 1px; height: 22px; background: rgba(255, 255, 255, 0.16); margin: 0 4px; }
+  .colors { display: flex; align-items: center; gap: 4px; }
+  .color-dot {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    cursor: pointer;
+    padding: 0;
+  }
+  .color-dot.active { border-color: #fff; transform: scale(1.15); }
+  .size-slider { width: 70px; height: 4px; accent-color: #fff; cursor: pointer; }
+  .size-value { color: rgba(255, 255, 255, 0.88); font-size: 12px; min-width: 16px; text-align: center; }
+  .exit-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 34px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 8px;
+    background: rgba(255, 77, 79, 0.2);
+    color: #ff7875;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .exit-btn:hover { background: #ff4d4f; color: #fff; }
+  /* 开启提示：让「覆盖窗确实出现了」一眼可见（3 秒后淡出） */
+  .tip {
+    position: fixed;
+    top: 62px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: rgba(0, 110, 255, 0.92);
+    color: #fff;
+    font-size: 13px;
+    z-index: 11;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+  }
+  .tip.hide { opacity: 0; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="canvas"></canvas>
+    <div class="toolbar">
+      <button class="tool-btn active" data-tool="pointer" title="鼠标（透传，不绘制，可操作下方桌面）">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/></svg>
+      </button>
+      <button class="tool-btn" data-tool="pen" title="画笔">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+      </button>
+      <button class="tool-btn" data-tool="eraser" title="橡皮">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M15.14 3c-.51 0-1.02.2-1.41.59L2.59 14.73c-.78.77-.78 2.04 0 2.83l2.83 2.83c.39.39.9.59 1.41.59h3.42L20.91 9.9c.78-.78.78-2.05 0-2.83l-4.36-4.36c-.39-.4-.9-.6-1.41-.6z"/></svg>
+      </button>
+      <button class="tool-btn" data-tool="line" title="直线">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M3 17l2.83-2.83L18 4l2 2L7.83 19 5 16.17 3 17z"/></svg>
+      </button>
+      <button class="tool-btn" data-tool="rect" title="矩形">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M3 5h18v14H3z M5 7v10h14V7H5z"/></svg>
+      </button>
+      <button class="tool-btn" data-tool="circle" title="圆形">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+      </button>
+      <div class="divider"></div>
+      <div class="colors" id="colors"></div>
+      <div class="divider"></div>
+      <input type="range" min="1" max="20" value="4" class="size-slider" id="size" title="粗细" />
+      <span class="size-value" id="sizeVal">4</span>
+      <div class="divider"></div>
+      <button class="tool-btn" id="undo" title="撤销">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>
+      </button>
+      <button class="tool-btn" id="clear" title="清空（清掉所有人笔迹）">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+      </button>
+      <button class="tool-btn" id="save" title="保存为图片">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2z"/></svg>
+      </button>
+      <button class="exit-btn" id="exit" title="收起屏幕画板（关闭这层覆盖，会议画板继续）">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        收起
+      </button>
+    </div>
+    <div class="tip" id="tip">屏幕画板已开启 · 点顶部「画笔」开始绘制</div>
+  </div>
+  <script>
+    (function () {
+      var api = window.electronAPI || {}
+      var canvas = document.getElementById('canvas')
+      var ctx = canvas.getContext('2d')
+      var dpr = window.devicePixelRatio || 1
+      var cssW = 0, cssH = 0
+
+      var tool = 'pointer'       // 默认鼠标透传：共享屏幕上不拦截操作，要画点一下画笔
+      var color = '#ff4d4f'
+      var size = 4
+      var strokes = []           // 本地维护的完整笔迹（与 web 端 state 对齐）
+
+      // 开启提示 3 秒后淡出（用于确认覆盖窗确实已出现）
+      var tipEl = document.getElementById('tip')
+      if (tipEl) setTimeout(function () { tipEl.className = 'tip hide' }, 3000)
+
+      function setupCanvas() {
+        cssW = window.innerWidth
+        cssH = window.innerHeight
+        canvas.width = Math.round(cssW * dpr)
+        canvas.height = Math.round(cssH * dpr)
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        render()
+      }
+
+      function drawStroke(s) {
+        var pts = s.points.map(function (p) { return { x: p.x * cssW, y: p.y * cssH } })
+        if (!pts.length) return
+        ctx.save()
+        ctx.strokeStyle = s.color
+        ctx.fillStyle = s.color
+        ctx.lineWidth = s.size
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        ctx.globalCompositeOperation = s.tool === 'eraser' ? 'destination-out' : 'source-over'
+        ctx.beginPath()
+        switch (s.tool) {
+          case 'pen':
+          case 'eraser':
+            ctx.moveTo(pts[0].x, pts[0].y)
+            for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
+            ctx.stroke()
+            break
+          case 'line':
+            ctx.moveTo(pts[0].x, pts[0].y)
+            ctx.lineTo(pts[1].x, pts[1].y)
+            ctx.stroke()
+            break
+          case 'rect':
+            ctx.rect(pts[0].x, pts[0].y, pts[1].x - pts[0].x, pts[1].y - pts[0].y)
+            ctx.stroke()
+            break
+          case 'circle': {
+            var cx = (pts[0].x + pts[1].x) / 2
+            var cy = (pts[0].y + pts[1].y) / 2
+            var rx = Math.abs(pts[1].x - pts[0].x) / 2
+            var ry = Math.abs(pts[1].y - pts[0].y) / 2
+            ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
+            ctx.stroke()
+            break
+          }
+        }
+        ctx.restore()
+      }
+
+      function render() {
+        ctx.clearRect(0, 0, cssW, cssH)
+        for (var i = 0; i < strokes.length; i++) drawStroke(strokes[i])
+      }
+
+      // ── 笔迹采集 ──
+      var drawing = false
+      var points = []
+
+      function pos(e) {
+        return {
+          x: Math.min(1, Math.max(0, e.clientX / cssW)),
+          y: Math.min(1, Math.max(0, e.clientY / cssH)),
+        }
+      }
+
+      function commit() {
+        if (!points.length) return
+        var stroke = { tool: tool, color: color, size: size, points: points.slice() }
+        strokes.push(stroke)
+        points = []
+        if (api.boardOverlaySendStroke) api.boardOverlaySendStroke(stroke)
+      }
+
+      canvas.addEventListener('pointerdown', function (e) {
+        e.preventDefault()
+        canvas.setPointerCapture(e.pointerId)
+        drawing = true
+        points = [pos(e)]
+      })
+      canvas.addEventListener('pointermove', function (e) {
+        if (!drawing) return
+        e.preventDefault()
+        points.push(pos(e))
+        // 增量绘制最后一段
+        if (points.length >= 2) {
+          var a = points[points.length - 2]
+          var b = points[points.length - 1]
+          ctx.save()
+          ctx.strokeStyle = color
+          ctx.lineWidth = size
+          ctx.lineCap = 'round'
+          ctx.lineJoin = 'round'
+          ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over'
+          ctx.beginPath()
+          ctx.moveTo(a.x * cssW, a.y * cssH)
+          ctx.lineTo(b.x * cssW, b.y * cssH)
+          ctx.stroke()
+          ctx.restore()
+        }
+      })
+      canvas.addEventListener('pointerup', function (e) {
+        if (!drawing) return
+        drawing = false
+        commit()
+      })
+      canvas.addEventListener('pointercancel', function (e) {
+        if (!drawing) return
+        drawing = false
+        commit()
+      })
+
+      // ── 工具栏 ──
+      // 鼠标（pointer）模式：整窗忽略鼠标事件 → 点击穿透到下方桌面（可正常操作桌面，需求7）。
+      // 仅当光标悬停在工具栏区域时才恢复可点，以保证「画笔/撤销」等按钮仍可用。
+      function setIgnore(on) {
+        if (api.boardOverlaySetIgnoreMouse) {
+          try { api.boardOverlaySetIgnoreMouse(on, true) } catch (e) {}
+        }
+      }
+      function applyToolMode() {
+        if (tool === 'pointer') {
+          canvas.style.pointerEvents = 'none'
+          canvas.style.cursor = 'default'
+          setIgnore(true)   // 整窗穿透：桌面可操作
+        } else {
+          canvas.style.pointerEvents = 'auto'
+          canvas.style.cursor = 'crosshair'
+          setIgnore(false)  // 绘制模式：窗口捕获鼠标
+        }
+      }
+      // pointer 模式下，光标在工具栏区域内恢复窗口可点（按钮可点），离开则继续穿透（桌面可操作）
+      document.addEventListener('mousemove', function (e) {
+        if (tool !== 'pointer') return
+        var tb = document.querySelector('.toolbar')
+        if (!tb) return
+        var r = tb.getBoundingClientRect()
+        var overTb = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+        setIgnore(!overTb)
+      })
+      var toolBtns = Array.prototype.slice.call(document.querySelectorAll('[data-tool]'))
+      toolBtns.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          tool = btn.getAttribute('data-tool')
+          toolBtns.forEach(function (b) { b.classList.toggle('active', b === btn) })
+          applyToolMode()
+        })
+      })
+      applyToolMode()
+
+      var PALETTE = ['#ff4d4f', '#fa8c16', '#fadb14', '#52c41a', '#1677ff', '#722ed1', '#000000', '#ffffff']
+      var colorsEl = document.getElementById('colors')
+      PALETTE.forEach(function (c) {
+        var d = document.createElement('button')
+        d.className = 'color-dot'
+        d.style.background = c
+        d.title = c
+        d.addEventListener('click', function () {
+          color = c
+          Array.prototype.slice.call(colorsEl.children).forEach(function (x) { x.classList.toggle('active', x === d) })
+        })
+        if (c === color) d.classList.add('active')
+        colorsEl.appendChild(d)
+      })
+
+      var sizeInput = document.getElementById('size')
+      var sizeVal = document.getElementById('sizeVal')
+      sizeInput.addEventListener('input', function () {
+        size = Number(sizeInput.value)
+        sizeVal.textContent = size
+      })
+
+      document.getElementById('undo').addEventListener('click', function () {
+        if (api.boardOverlayUndo) api.boardOverlayUndo()
+      })
+      // 清空（与网页画板一致）：本端清 + 广播清（board-overlay:clear → 网页端 clearAll）
+      document.getElementById('clear').addEventListener('click', function () {
+        strokes = []
+        render()
+        if (api.boardOverlayClear) api.boardOverlayClear()
+      })
+      // 保存为图片：导出透明背景的 PNG（仅本地笔迹）
+      document.getElementById('save').addEventListener('click', function () {
+        try {
+          var url = canvas.toDataURL('image/png')
+          var a = document.createElement('a')
+          a.href = url
+          a.download = 'screen-board-' + Date.now() + '.png'
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+        } catch (e) { /* 导出失败忽略 */ }
+      })
+      document.getElementById('exit').addEventListener('click', function () {
+        if (api.boardOverlayClose) api.boardOverlayClose()
+      })
+
+      // ── IPC：接收 web 端全量状态 ──
+      if (api.onBoardOverlayState) {
+        api.onBoardOverlayState(function (state) {
+          strokes = (state && state.strokes) || []
+          render()
+        })
+      }
+
+      window.addEventListener('resize', setupCanvas)
+      setupCanvas()
+    })()
+  </script>
+</body>
+</html>

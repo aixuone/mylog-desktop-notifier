@@ -1,7 +1,7 @@
 // main.js - Electron main process: tray + WS server + HTTP server + notification windows
 process.env.ELECTRON_NO_ATTACH_CONSOLE = '1'
 
-const { app, Tray, Menu, BrowserWindow, ipcMain, shell, nativeImage, dialog, session, desktopCapturer, globalShortcut, clipboard, Notification } = require('electron')
+const { app, Tray, Menu, BrowserWindow, ipcMain, shell, nativeImage, dialog, session, desktopCapturer, globalShortcut, clipboard, Notification, screen } = require('electron')
 const path = require('path')
 const crypto = require('crypto')
 const { WebSocketServer } = require('ws')
@@ -10,6 +10,7 @@ const https = require('https')
 const fs = require('fs')
 const net = require('net')
 const zlib = require('zlib')
+const { execFile } = require('child_process')
 
 // ─── Feature modules (M1+) ──────────────────────
 const settingsStore = require('./lib/settingsStore')
@@ -61,6 +62,9 @@ let settingsWindow = null      // 设置面板单例窗口
 let diagnosticsWindow = null   // 诊断测试窗口单例
 let workbenchWindow = null     // 个人工作台窗口单例
 let downloadsWindow = null     // 下载中心面板窗口单例
+let boardOverlayWindow = null  // 画板「真·OS 全屏」透明覆盖窗口单例
+let lastSharedScreen = null    // 共享源（选源窗口路径，优先级高）：{ type:'screen'|'window', displayId, name }
+let shimShareSource = null     // 共享源（shim 路径：SDK 实际共享的那个源，桌面端的主路径）
 let downloads = []             // 下载任务：[{ id, filename, savePath, url, state, receivedBytes, totalBytes, item }]
 let downloadSeq = 0            // 自增 id
 // ─── Tray icon state management ───────────────────────────
@@ -435,8 +439,20 @@ async function injectScreenShareShim(win) {
   let sourceId = ''
   try {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1, height: 1 } })
-    const screen = sources.find((s) => s.id && s.id.indexOf('screen:') === 0) || sources[0]
-    sourceId = screen ? screen.id : ''
+    const picked = sources.find((s) => s.id && s.id.indexOf('screen:') === 0) || sources[0]
+    sourceId = picked ? picked.id : ''
+    // ★ 关键：桌面端共享走 shim 的 chrome.desktopCapture.chooseDesktopMedia 路径，
+    //   不会触发 setDisplayMediaRequestHandler → lastSharedScreen 永远为空
+    //   → 覆盖窗「拿不到 bounds 就拒绝打开」→ 表现就是「测多少次都没有系统级画板」。
+    //   这里记录 SDK 实际会共享的那个源，作为覆盖窗定位的可靠依据。
+    if (picked) {
+      shimShareSource = {
+        type: (picked.id && picked.id.indexOf('screen:') === 0) ? 'screen' : 'window',
+        displayId: (picked.display_id != null) ? picked.display_id : null,
+        name: picked.name || '',
+      }
+      boardLog('shim share source recorded | id=' + picked.id + ' | display_id=' + picked.display_id + ' | name=' + picked.name)
+    }
   } catch (e) { console.error('[ScreenShare] enumerate for shim failed:', e && e.message) }
   const cfg = JSON.stringify({ sourceId: sourceId, audioMode: screenShareAudioMode })
   try {
@@ -624,6 +640,13 @@ function setupScreenShare() {
         callback({})
         return
       }
+      // 记录共享源类型与所在显示器（供画板覆盖窗口定位，保证笔迹与画面不错位）
+      lastSharedScreen = {
+        type: (picked.id && picked.id.indexOf('screen:') === 0) ? 'screen' : 'window',
+        displayId: (picked.display_id != null) ? picked.display_id : null,
+        // 窗口标题：共享「某个窗口」时用它定位该窗口在屏幕上的矩形
+        name: picked.name || '',
+      }
       // 复用 buildScreenShareStreams 的音频逻辑构造响应
       var streams = { video: picked }
       if (audioRequested) {
@@ -634,6 +657,8 @@ function setupScreenShare() {
         '| picked:', (picked.id + ' (' + picked.name + ')'),
         '| callback(audio:' + (streams.audio || 'omitted-video-only') + ')')
       callback(streams)
+      // 注意：共享源确定后【不再】自动打开画板覆盖窗口（需求4：开启屏幕共享不可自动开屏板，
+      // 必须用户主动点击才开）。记录共享源即可，供用户后续主动开屏板时精确定位。
     }).catch(function (err) {
       console.error('[ScreenShare] getSources failed:', err && err.message)
       callback({})
@@ -1121,6 +1146,25 @@ function updateTrayMenu() {
   menuItems.push({ label: '设置', click: () => openSettingsWindow() })
   // 下载中心：查看网页下载任务，打开文件 / 打开所在目录
   menuItems.push({ label: '下载中心', click: () => openDownloadsWindow() })
+  // 屏幕画板（桌面端专属）：把透明涂鸦层开到被共享的屏幕 / 当前显示器上。
+  // 仅手动入口（需求4：开启屏幕共享不再自动开屏板，必须用户主动点击才开）。
+  menuItems.push({
+    label: '屏幕画板（开/关）',
+    click: () => {
+      if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) closeBoardOverlay()
+      else safeOpenBoardOverlay()
+    },
+  })
+  // 网页画板（测试）：独立打开画板浮层 —— 不必先开一个会议就能直接用/自测画板
+  menuItems.push({
+    label: '网页画板（测试）',
+    click: () => {
+      if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+        mainPageWindow.show()
+        mainPageWindow.webContents.send('quick-action', 'open-board')
+      }
+    },
+  })
   // 调试窗口：打开主页面窗口的 Chrome DevTools，查看 TRTC SDK 内部日志（或用 Ctrl+Shift+I）
   menuItems.push({ label: '调试窗口', click: () => {
     if (mainPageWindow && !mainPageWindow.isDestroyed()) {
@@ -3398,6 +3442,7 @@ function quitApp() {
   if (toastWindow && !toastWindow.isDestroyed()) { toastWindow.destroy(); toastWindow = null }
   if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.destroy(); settingsWindow = null }
   if (workbenchWindow && !workbenchWindow.isDestroyed()) { workbenchWindow.destroy(); workbenchWindow = null }
+  if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) { boardOverlayWindow.destroy(); boardOverlayWindow = null }
 
   // Destroy tray
   if (tray) { tray.destroy(); tray = null }
@@ -3406,3 +3451,370 @@ function quitApp() {
   app.quit()
   process.exit(0)
 }
+
+// ─── 画板覆盖窗诊断日志（落盘）──────────────────────────────
+// 打包后主进程 console 不可见，导致「画板窗口没出现」这类问题只能靠猜。
+// 这里同时追加写 userData/board-overlay.log，测完可直接读文件定位断点。
+let _boardLogPath = null
+function boardLog(msg) {
+  var line = '[' + new Date().toISOString() + '] ' + msg
+  try { console.log('[BoardOverlay]', msg) } catch (e) {}
+  try {
+    if (!_boardLogPath) _boardLogPath = path.join(app.getPath('userData'), 'board-overlay.log')
+    fs.appendFileSync(_boardLogPath, line + '\n')
+  } catch (e) { /* 落盘失败不影响功能 */ }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 画板「真·OS 全屏」覆盖窗口（桌面端专属）
+//
+// 场景：共享者 A 在桌面端共享【整个屏幕】并打开画板时，画板升级为一块
+// 透明覆盖窗口，A 可在整个共享屏幕上涂鸦，笔迹经主页面窗口的
+// useInteractiveBoard 广播给会议其他人。
+//
+// 数据流（真相源 = 主页面窗口的 useInteractiveBoard strokes 单例）：
+//   覆盖窗口采集笔迹 → 'board-overlay:local-stroke' → 主进程 → 主页面 → addStroke（广播+本地）
+//   主页面 strokes 变化 → 'board-overlay:sync' → 主进程 → 覆盖窗口 → 全量重绘
+//
+// 对齐保证：覆盖窗口精确铺到「被共享的那块屏幕」的 display.bounds，
+// 坐标相对该屏 0-1 == 画面内容坐标，笔迹与画面不错位（多显示器亦如此）。
+// 共享【窗口】（window）时拿不到窗口精确 bounds，覆盖窗口不打开、
+// 降级用窗口级画板（贴合画面内容区，同样不错位）。
+// ═══════════════════════════════════════════════════════════
+/** 共享源所在显示器的 bounds（共享「整个屏幕」时用） */
+function resolveSharedDisplayBounds(src) {
+  var wantDisplayId = (src && src.displayId != null) ? src.displayId : null
+  var display = null
+  if (wantDisplayId != null) {
+    try {
+      // ⚠ desktopCapturer 的 display_id 是字符串，Electron 的 display.id 是数字，
+      //   必须转成同一类型比较，否则永远匹配不上（多显示器会定位到主屏）。
+      display = screen.getAllDisplays().find(function (d) {
+        return String(d.id) === String(wantDisplayId)
+      }) || null
+    } catch (e) { display = null }
+  }
+  if (!display) display = screen.getPrimaryDisplay()
+  var b = display.bounds
+  return { x: b.x, y: b.y, width: b.width, height: b.height }
+}
+
+/** 当前鼠标所在显示器全屏（最终兜底：宁可范围略大，也不能让画板整个不存在） */
+function resolveCursorDisplayBounds() {
+  var display = null
+  try { display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()) } catch (e) { display = null }
+  if (!display) display = screen.getPrimaryDisplay()
+  var b = display.bounds
+  return { x: b.x, y: b.y, width: b.width, height: b.height }
+}
+
+/**
+ * Windows 下用 Win32 API 查外部应用窗口在屏幕上的矩形（物理像素）。
+ * 失败（非 Windows / 窗口不存在 / 被安全策略拦截）返回 null，由调用方降级处理。
+ */
+function queryWindowRectNative(title) {
+  return new Promise(function (resolve) {
+    if (process.platform !== 'win32' || !title) return resolve(null)
+    // 用 here-string 内嵌 C#，交给 PowerShell 一次性编译调用（execFile 不经过 shell，引号安全）
+    var ps = [
+      "Add-Type -TypeDefinition @'",
+      'using System;',
+      'using System.Text;',
+      'using System.Runtime.InteropServices;',
+      'public class MyLogWinRect {',
+      '  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();',
+      '  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr p);',
+      '  public delegate bool EnumProc(IntPtr h, IntPtr p);',
+      '  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);',
+      '  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);',
+      '  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);',
+      '  [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);',
+      '  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }',
+      '  public static string Find(string title) {',
+      '    try { SetProcessDPIAware(); } catch (Exception) {}',
+      '    IntPtr found = IntPtr.Zero;',
+      '    EnumWindows(delegate(IntPtr h, IntPtr l) {',
+      '      if (!IsWindowVisible(h)) return true;',
+      '      StringBuilder sb = new StringBuilder(1024);',
+      '      GetWindowTextW(h, sb, 1024);',
+      '      if (sb.ToString() == title) { found = h; return false; }',
+      '      return true;',
+      '    }, IntPtr.Zero);',
+      '    if (found == IntPtr.Zero) return "";',
+      '    RECT r;',
+      '    int hr = DwmGetWindowAttribute(found, 9, out r, Marshal.SizeOf(typeof(RECT)));',
+      '    if (hr != 0 && !GetWindowRect(found, out r)) return "";',
+      '    return r.Left + "," + r.Top + "," + (r.Right - r.Left) + "," + (r.Bottom - r.Top);',
+      '  }',
+      '}',
+      "'@",
+      "  $env:MYLOG_TITLE = '" + String(title).replace(/'/g, "''") + "'",
+      '  [MyLogWinRect]::Find($env:MYLOG_TITLE)',
+    ].join('\n')
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+      { timeout: 8000, windowsHide: true },
+      function (err, stdout) {
+        if (err) {
+          console.warn('[BoardOverlay] 查询窗口矩形失败:', err.message)
+          return resolve(null)
+        }
+        var out = String(stdout || '').trim().split(/\r?\n/).pop() || ''
+        var parts = out.trim().split(',')
+        if (parts.length !== 4) return resolve(null)
+        var nums = parts.map(Number)
+        if (nums.some(function (n) { return !isFinite(n) })) return resolve(null)
+        if (nums[2] <= 0 || nums[3] <= 0) return resolve(null)
+        resolve({ x: nums[0], y: nums[1], width: nums[2], height: nums[3], physical: true })
+      },
+    )
+  })
+}
+
+/** 物理像素 → Electron DIP（BrowserWindow 的 x/y/width/height 使用 DIP 单位） */
+function physicalRectToDip(rect) {
+  if (!rect || !rect.physical) return rect
+  try {
+    var d = screen.getDisplayMatching({ x: rect.x, y: rect.y, width: rect.width, height: rect.height })
+    var f = (d && d.scaleFactor) ? d.scaleFactor : 1
+    if (!f || f === 1) return rect
+    return {
+      x: Math.round(rect.x / f),
+      y: Math.round(rect.y / f),
+      width: Math.round(rect.width / f),
+      height: Math.round(rect.height / f),
+    }
+  } catch (e) {
+    return rect
+  }
+}
+
+/** 共享「某个窗口」→ 解析该窗口在屏幕上的矩形（本应用窗口直接取 bounds；外部窗口走 Win32） */
+function resolveSharedWindowBounds(src) {
+  var title = (src && src.name) || ''
+  if (!title) return Promise.resolve(null)
+  // ① 本应用自己的窗口：零成本且精确
+  try {
+    var own = BrowserWindow.getAllWindows().find(function (w) {
+      return !w.isDestroyed() && w.getTitle() === title
+    })
+    if (own) {
+      var ob = own.getBounds()
+      if (ob.width > 0 && ob.height > 0) return Promise.resolve(ob)
+    }
+  } catch (e) { /* 落到 Win32 查询 */ }
+  // ② 外部应用窗口
+  return queryWindowRectNative(title).then(function (rect) {
+    return rect ? physicalRectToDip(rect) : null
+  })
+}
+
+/** 当前生效的共享源：选源窗口结果优先（最准），其次 shim 记录的实际共享源 */
+function currentShareSource() {
+  return lastSharedScreen || shimShareSource || null
+}
+
+/** 通知网页端「未能精确定位共享范围，已降级」——用于给出可见提示 */
+function notifyBoardUnsupported(reason) {
+  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+    try { mainPageWindow.webContents.send('board-overlay:unsupported', reason) } catch (e) {}
+  }
+}
+
+/**
+ * 覆盖窗口应铺满的屏幕矩形。
+ * ⚠ 绝不返回 null：「拿不到 bounds 就拒绝打开」的代价是功能彻底不存在
+ *   （原实现即如此 —— 这就是「共享屏幕测多少次都没有系统级画板」的直接原因）。
+ *   共享「整个屏幕」→ 该显示器 bounds
+ *   共享「某个窗口」→ 该窗口矩形；拿不到 → 退到当前显示器全屏
+ *   尚无共享信息 → 当前显示器全屏（记日志）
+ */
+function resolveBoardOverlayBounds() {
+  var src = currentShareSource()
+  boardLog('resolve bounds | source=' + (src ? JSON.stringify(src) : 'null'))
+  if (src && src.type === 'screen') return Promise.resolve(resolveSharedDisplayBounds(src))
+  if (src && src.type === 'window') {
+    return resolveSharedWindowBounds(src).then(function (rect) {
+      if (rect) return rect
+      boardLog('window rect unavailable → fallback to cursor display')
+      notifyBoardUnsupported('未能取到共享窗口的精确范围，屏幕画板已放到当前显示器（笔迹可能略有偏移）')
+      return resolveCursorDisplayBounds()
+    })
+  }
+  boardLog('no share source recorded yet → fallback to cursor display')
+  return Promise.resolve(resolveCursorDisplayBounds())
+}
+
+async function openBoardOverlay() {
+  boardLog('openBoardOverlay called | exists=' + !!(boardOverlayWindow && !boardOverlayWindow.isDestroyed()))
+  if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) {
+    boardOverlayWindow.show()
+    boardOverlayWindow.focus()
+    boardLog('overlay already exists → show + focus')
+    return
+  }
+  var bounds = await resolveBoardOverlayBounds()
+  // 理论不可达（resolveBoardOverlayBounds 已保证兜底），保底再拦一次：
+  // 画板宁可范围略大，也绝不能「打开了却什么都不出现」。
+  if (!bounds) bounds = resolveCursorDisplayBounds()
+  boardLog('creating overlay window | bounds=' + JSON.stringify(bounds))
+  var win = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    movable: false,
+    hasShadow: false,
+    show: false,
+    webPreferences: makeWebPrefs(),
+  })
+  boardOverlayWindow = win
+  win.setMenu(null)
+  // 置顶到屏幕级（'screen-saver' 层级，确保盖在绝大多数窗口之上）
+  win.setAlwaysOnTop(true, 'screen-saver')
+
+  // ⚠ 关键：transparent:true 的窗口在 Windows 上 `ready-to-show` 经常不触发 →
+  //   窗口已创建却永远不 show，表现就是「点了共享屏幕，画板窗口没出现」。
+  //   因此以 did-finish-load 为主、并加一个定时兜底，确保一定会显示。
+  var shown = false
+  function showOverlayOnce(reason) {
+    if (shown) return
+    if (!win || win.isDestroyed()) return
+    shown = true
+    win.show()
+    win.setAlwaysOnTop(true, 'screen-saver')
+    boardLog('overlay window shown | via=' + reason + ' | visible=' + win.isVisible() + ' | bounds=' + JSON.stringify(win.getBounds()))
+    // 通知网页端：OS 覆盖窗已实际打开 → 网页端据此把本端表面切到「屏幕画板」（互斥关网页画板）
+    if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+      try { mainPageWindow.webContents.send('board-overlay:screen-opened') } catch (e) {}
+    }
+  }
+  win.webContents.once('did-finish-load', function () { showOverlayOnce('did-finish-load') })
+  win.once('ready-to-show', function () { showOverlayOnce('ready-to-show') })
+  setTimeout(function () { showOverlayOnce('timeout-1500ms') }, 1500)
+  win.webContents.on('did-fail-load', function (e, code, desc) {
+    boardLog('overlay did-fail-load | code=' + code + ' | desc=' + desc)
+  })
+
+  win.loadFile(path.join(__dirname, 'src', 'board-overlay.html'))
+  win.on('closed', () => {
+    boardLog('overlay window closed')
+    if (boardOverlayWindow === win) boardOverlayWindow = null
+    if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+      mainPageWindow.webContents.send('board-overlay:closed')
+    }
+  })
+}
+
+function closeBoardOverlay() {
+  boardLog('closeBoardOverlay called | exists=' + !!(boardOverlayWindow && !boardOverlayWindow.isDestroyed()))
+  if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) {
+    boardOverlayWindow.destroy()
+  }
+  boardOverlayWindow = null
+}
+
+function toggleBoardOverlay() {
+  if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) closeBoardOverlay()
+  else return openBoardOverlay()
+}
+
+// ── IPC：覆盖窗口 ↔ 主页面窗口 ──
+// openBoardOverlay 是异步的（共享「窗口」时要先查该窗口矩形），统一吞掉异常避免未处理的 Promise
+function safeOpenBoardOverlay() {
+  Promise.resolve(openBoardOverlay()).catch(function (e) {
+    console.warn('[BoardOverlay] open failed:', e && e.message)
+  })
+}
+ipcMain.on('board-overlay:toggle', () => {
+  boardLog('IPC board-overlay:toggle')
+  if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) closeBoardOverlay()
+  else safeOpenBoardOverlay()
+})
+ipcMain.on('board-overlay:open', () => {
+  boardLog('IPC board-overlay:open')
+  safeOpenBoardOverlay()
+})
+ipcMain.on('board-overlay:close', () => closeBoardOverlay())
+
+// 网页点「画板」时调用：由主进程决定要不要在屏幕上开覆盖窗。
+// 只在确实记录了共享源时才开 —— 纯白板场景（没共享）不该在桌面上弹覆盖层。
+ipcMain.on('board-overlay:open-if-sharing', () => {
+  var src = currentShareSource()
+  boardLog('IPC board-overlay:open-if-sharing | source=' + (src ? JSON.stringify(src) : 'null'))
+  if (!src) return
+  safeOpenBoardOverlay()
+})
+
+// shim 的真实信号：SDK 调用了 chrome.desktopCapture.chooseDesktopMedia（用户确实点了共享）。
+// 这是桌面端唯一可靠的「共享已开始」时机 —— 共享走 shim 路径、不经 getDisplayMedia，
+// 所以 setDisplayMediaRequestHandler 里的自动开窗永远不会被触发。
+ipcMain.on('board-overlay:share-started', (e, sourceId) => {
+  boardLog('IPC board-overlay:share-started | sourceId=' + (sourceId || '(none)'))
+  // 仅记录共享源（用于用户后续主动开屏板时精确定位），【不自动】开覆盖窗（需求4）。
+  if (!sourceId) return
+  // 需求2：本机开始共享屏幕 → 立即通知网页端「本机正在共享」，供 enterBoard 分流到屏幕画板。
+  // 不能依赖网页 hasScreenStream（屏幕共享在 TUIRoomEngine 是独立参会人，本人 hasScreenStream 不必然为 true），
+  // 故以桌面 share-started 为「本机共享中」的权威真源。
+  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+    try { mainPageWindow.webContents.send('board-overlay:self-screen-share', true) } catch (e2) {}
+  }
+  desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1, height: 1 } })
+    .then(function (list) {
+      var hit = (list || []).filter(function (s) { return s.id === sourceId })[0]
+      if (hit) {
+        lastSharedScreen = {
+          type: (hit.id.indexOf('screen:') === 0) ? 'screen' : 'window',
+          displayId: (hit.display_id != null) ? hit.display_id : null,
+          name: hit.name || '',
+        }
+        boardLog('share-started resolved | id=' + hit.id + ' | display_id=' + hit.display_id)
+      }
+    })
+    .catch(function (err) {
+      boardLog('share-started resolve failed: ' + (err && err.message))
+    })
+})
+ipcMain.on('board-overlay:local-stroke', (e, stroke) => {
+  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+    mainPageWindow.webContents.send('board-overlay:remote-stroke', stroke)
+  }
+})
+ipcMain.on('board-overlay:sync', (e, state) => {
+  if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) {
+    boardOverlayWindow.webContents.send('board-overlay:state', state)
+  }
+})
+ipcMain.on('board-overlay:undo', () => {
+  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+    mainPageWindow.webContents.send('board-overlay:undo')
+  }
+})
+
+// 覆盖窗「清空」按钮 → 转发给网页端执行 clearAll 并广播（工具栏功能与网页一致）
+ipcMain.on('board-overlay:clear', () => {
+  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+    mainPageWindow.webContents.send('board-overlay:clear')
+  }
+})
+
+// 覆盖窗「鼠标模式」点击穿透：让整个透明窗口忽略鼠标（桌面可操作），
+// 仅工具栏悬停区域由网页端切回可点（见 board-overlay.html 的 hover 逻辑）。
+ipcMain.on('board-overlay:set-ignore-mouse', (e, ignore, forward) => {
+  try {
+    if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) {
+      boardOverlayWindow.setIgnoreMouseEvents(!!ignore, { forward: !!forward })
+    }
+  } catch (err) {
+    boardLog('set-ignore-mouse failed: ' + (err && err.message))
+  }
+})

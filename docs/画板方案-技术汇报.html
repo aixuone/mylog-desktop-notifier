@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>会议互动画板 · 技术方案汇报</title>
+<style>
+  :root {
+    --ink: #1a1f2e;
+    --ink-2: #4a5468;
+    --ink-3: #7a8497;
+    --line: #e3e8f0;
+    --line-2: #eef2f7;
+    --bg: #ffffff;
+    --bg-soft: #f7f9fc;
+    --brand: #1677ff;
+    --brand-soft: #eaf2ff;
+    --ok: #0e8a5f;
+    --ok-soft: #e8f7f1;
+    --warn: #b26a00;
+    --warn-soft: #fff7e6;
+    --danger: #c9384a;
+    --danger-soft: #fdeef0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 40px 24px 72px;
+    background: var(--bg-soft);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif;
+    font-size: 15px;
+    line-height: 1.72;
+    -webkit-font-smoothing: antialiased;
+  }
+  .doc {
+    max-width: 1000px;
+    margin: 0 auto;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 44px 52px 56px;
+    box-shadow: 0 8px 40px rgba(23, 43, 77, 0.06);
+  }
+  header { border-bottom: 2px solid var(--ink); padding-bottom: 20px; margin-bottom: 8px; }
+  h1 { font-size: 27px; margin: 0 0 10px; letter-spacing: -0.2px; }
+  .meta { color: var(--ink-3); font-size: 13px; display: flex; flex-wrap: wrap; gap: 18px; }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 {
+    font-size: 20px; margin: 48px 0 6px; padding-left: 12px;
+    border-left: 4px solid var(--brand); line-height: 1.3;
+  }
+  h2 .no { color: var(--brand); font-weight: 700; margin-right: 6px; }
+  h3 { font-size: 16px; margin: 30px 0 8px; color: var(--ink); }
+  h4 { font-size: 14.5px; margin: 20px 0 6px; color: var(--ink-2); }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0 8px 4px; padding-left: 22px; }
+  li { margin: 5px 0; }
+  code {
+    font-family: "JetBrains Mono", "Cascadia Mono", Consolas, Monaco, monospace;
+    font-size: 12.5px; background: #f2f5fa; border: 1px solid var(--line-2);
+    border-radius: 4px; padding: 1px 5px; color: #2b3546;
+  }
+  pre {
+    background: #fbfcfe; border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; margin: 12px 0;
+    font-family: "JetBrains Mono", "Cascadia Mono", Consolas, Monaco, monospace;
+    font-size: 12.5px; line-height: 1.65; color: #24304a;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+  .cmt { color: #7a8497; }
+  .kw { color: #0b6bcb; }
+  .str { color: #a13d00; }
+
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; }
+  th, td { border: 1px solid var(--line); padding: 9px 12px; text-align: left; vertical-align: top; }
+  th { background: #f4f7fc; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+  td code { font-size: 12px; }
+  tbody tr:nth-child(even) { background: #fcfdff; }
+
+  .tldr {
+    margin: 24px 0 4px; padding: 20px 24px; border-radius: 12px;
+    background: var(--brand-soft); border: 1px solid #cfe1ff;
+  }
+  .tldr h3 { margin: 0 0 10px; font-size: 15px; color: #0b4fa8; }
+  .tldr ul { margin: 0; padding-left: 20px; }
+  .tldr li { margin: 6px 0; color: #143a6b; }
+
+  .note {
+    margin: 16px 0; padding: 14px 18px; border-radius: 10px;
+    background: var(--warn-soft); border-left: 4px solid var(--warn); font-size: 13.5px; color: #6b4a00;
+  }
+  .note.ok { background: var(--ok-soft); border-left-color: var(--ok); color: #0a5c40; }
+  .note.danger { background: var(--danger-soft); border-left-color: var(--danger); color: #8a2231; }
+  .note b { font-weight: 700; }
+
+  figure { margin: 22px 0 26px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption {
+    margin-top: 10px; font-size: 12.5px; color: var(--ink-3); text-align: center;
+  }
+  .fig-title { font-size: 13.5px; font-weight: 600; color: var(--ink-2); margin-bottom: 8px; }
+
+  .tag {
+    display: inline-block; font-size: 11.5px; font-weight: 600; line-height: 1.6;
+    padding: 1px 8px; border-radius: 20px; margin-right: 6px;
+  }
+  .tag.web { background: var(--brand-soft); color: #0b4fa8; }
+  .tag.desktop { background: #f0ecff; color: #5a3fb8; }
+  .tag.both { background: var(--ok-soft); color: #0a5c40; }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink-3); }
+</style>
+</head>
+<body>
+<div class="doc">
+
+<header>
+  <h1>会议互动画板 · 技术方案汇报</h1>
+  <div class="meta">
+    <span><b>适用范围</b> e日志 视频会议（Web + Electron 桌面端）</span>
+    <span><b>日期</b> 2026-09-30</span>
+    <span><b>状态</b> 已联调可用 / 待办 1 项</span>
+  </div>
+</header>
+
+<div class="tldr">
+  <h3>结论速览</h3>
+  <ul>
+    <li><b>技术路线：完全自研，零新增依赖。</b>渲染用原生 Canvas 2D，同步复用会议已有的房间信令通道（<code>TUIRoomKit</code> 自定义消息），不引入任何新 SDK、新服务。</li>
+    <li><b>是否收费：画板功能本身不产生任何费用</b>，无新增许可与计费项。相关成本只有会议既有的音视频时长费，其中<b>屏幕共享本身按视频时长计费</b>（TRTC 既有规则，与画板无关）。</li>
+    <li><b>两个显示面互斥</b>：网页内画板（贴合会议画面）与 OS 级屏幕画板（Electron 透明覆盖窗，可覆盖整个桌面）二选一，由「本机是否正在共享屏幕」自动分流。</li>
+    <li><b>同步策略：发「笔迹段」而非逐点</b>，一次落笔一条消息，天然规避频控；坐标 0–1 归一化，跨分辨率对齐。</li>
+  </ul>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ -->
+<h2><span class="no">一</span>技术路线与计费</h2>
+
+<h3>1.1 技术路线</h3>
+
+<p>画板是挂在会议之上的<b>一层轻量批注层</b>，整条链路只用了会议既有的能力，没有引入新服务：</p>
+
+<table>
+  <thead>
+    <tr><th>层次</th><th>选型</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>绘制 / 渲染</td>
+      <td>原生 Canvas 2D</td>
+      <td>网页画板双层 canvas：底层画底图（截图/上传），上层画笔迹；橡皮擦用 <code>destination-out</code> 只擦笔迹、不伤底图</td>
+    </tr>
+    <tr>
+      <td>多人同步</td>
+      <td>会议房间自定义消息</td>
+      <td><code>TUIRoomEngine.sendCustomMessage()</code> / <code>on('onReceiveCustomMessage')</code>，<code>businessId = interactive_board</code>。复用会议室已有的长连接，无需自建信令</td>
+    </tr>
+    <tr>
+      <td>显示面 A（网页）</td>
+      <td>Vue3 浮层 + 双层 canvas</td>
+      <td><code>InteractiveBoardPanel.vue</code>，<code>Teleport</code> 到 body，动态贴合「会议画面内容区」</td>
+    </tr>
+    <tr>
+      <td>显示面 B（系统级）</td>
+      <td>Electron 透明覆盖窗</td>
+      <td><code>board-overlay.html</code> 跑在独立 <code>BrowserWindow</code>（<code>transparent</code> + <code>alwaysOnTop:'screen-saver'</code> + <code>skipTaskbar</code>），可覆盖整个桌面与其它应用</td>
+    </tr>
+    <tr>
+      <td>桌面桥接</td>
+      <td>IPC（preload 白名单）</td>
+      <td>网页 ↔ 主进程 ↔ 覆盖窗 三方的状态下发与笔迹回传</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>为什么不用现成的「互动白板」产品</h4>
+<ul>
+  <li>腾讯云<b>互动白板 TIW</b> 是独立计费的单独产品，功能重（多页、文档转码、实时音视频同步白板），与本需求不匹配。</li>
+  <li>项目里确实存在一个 <code>whiteboard.vue</code>（引用官方 <code>WhiteboardView</code> 组件），但<b>本互动画板与它无关</b>，没有走那条路径。</li>
+  <li>本需求本质是「在会议画面上圈画批注」，<b>复用既有信令即可闭环</b>，引入新 SDK 只会增加成本与风险。</li>
+</ul>
+
+<h3>1.2 是否收费</h3>
+
+<p>分两层看，结论是<b>画板不新增任何计费项</b>：</p>
+
+<h4>（1）画板功能本身：不额外收费</h4>
+<ul>
+  <li>不引入新 SDK、新云服务、新计费项；</li>
+  <li>同步走的是会议房间的自定义消息通道，<b>自定义消息不单独计费</b>；</li>
+  <li>不涉及云端录制、混流转码、AI 字幕等增值服务，因此也不触发这些额外账单。</li>
+</ul>
+
+<h4>（2）承载它的底层能力：沿用 TRTC / TUIRoomKit 既有计费</h4>
+
+<p>画板依附于视频会议，会议本身的计费口径不变。当前腾讯云官方价格如下（<b>2026-09 官网口径，实际以合同与官网为准</b>）：</p>
+
+<table>
+  <thead>
+    <tr><th>包月套餐</th><th>价格</th><th>赠送音视频时长</th><th>备注</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>入门版（默认）</td><td>0 元/月</td><td>无</td><td>按量后付费，可直接跑业务</td></tr>
+    <tr><td>基础版</td><td>625 元/月</td><td>11 万分钟/月</td><td>约 5.68 元/千分钟</td></tr>
+    <tr><td>尊享版</td><td>1,875 元/月</td><td>38 万分钟/月</td><td>约 4.93 元/千分钟</td></tr>
+    <tr><td>旗舰版</td><td>6,250 元/月</td><td>140 万分钟/月</td><td>约 4.46 元/千分钟</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <b>三个必须知道的计费事实：</b>
+  <ul style="margin:6px 0 0">
+    <li><b>屏幕共享是单独一路视频流，按视频时长计费。</b>用户订阅到共享画面时即按视频档位（标清/高清/全高清）计价。这是 TRTC 既有规则，<b>「屏幕画板」场景下共享行为本身的成本与画板无关</b>。</li>
+    <li><b>TUIRoomKit 正式版需 IM 专业版/旗舰版 + TRTC 包月套餐同时生效</b>（含 UI 低代码方案的开通条件）。</li>
+    <li><b>免费额度</b>：新账号可领 10,000 分钟音视频时长试用；TUIRoomKit 另有 7 天体验版（每个 SDKAppID 可领 2 次），适合评审/演示阶段零成本验证。</li>
+  </ul>
+</div>
+
+<div class="note ok">
+  <b>一句话给负责人：</b>画板是「复用既有会议信道的自研批注层」，<b>0 新增许可、0 新增计费项</b>；唯一相关的成本是屏幕共享视频流的时长费，而那是会议本来就有的支出，不因画板而增加。
+</div>
+
+<!-- ══════════════════════════════════════════════════════ -->
+<h2><span class="no">二</span>模块图与数据流</h2>
+
+<h3>2.1 模块图</h3>
+
+<div class="fig-title">图 1　分层模块图（Web 侧 + Electron 桌面侧）</div>
+<figure>
+<svg viewBox="0 0 960 588" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif">
+  <!-- ── 入口层 ── -->
+  <rect x="0" y="8" width="960" height="76" rx="10" fill="#f5f8ff" stroke="#d6e4ff"/>
+  <text x="16" y="28" font-size="12" font-weight="700" fill="#1677ff">入口层</text>
+  <rect x="120" y="36" width="240" height="40" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="240" y="53" font-size="12.5" fill="#1a1f2e" text-anchor="middle" font-weight="600">底部栏「画板」按钮</text>
+  <text x="240" y="68" font-size="10.5" fill="#7a8497" text-anchor="middle">会议内 · InteractiveBoardButton.vue</text>
+  <rect x="380" y="36" width="220" height="40" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="490" y="53" font-size="12.5" fill="#1a1f2e" text-anchor="middle" font-weight="600">桌面托盘菜单</text>
+  <text x="490" y="68" font-size="10.5" fill="#7a8497" text-anchor="middle">非会议场景</text>
+  <rect x="620" y="36" width="320" height="40" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="780" y="53" font-size="12.5" fill="#1a1f2e" text-anchor="middle" font-weight="600">快捷键 Ctrl+Alt+B</text>
+  <text x="780" y="68" font-size="10.5" fill="#7a8497" text-anchor="middle">独立画板（不开会也能用）</text>
+
+  <!-- ── 状态与同步层 ── -->
+  <rect x="0" y="104" width="960" height="104" rx="10" fill="#f5fbff" stroke="#cfe8f5"/>
+  <text x="16" y="124" font-size="12" font-weight="700" fill="#0b7ea8">状态与同步层（Web · 模块级单例）</text>
+  <text x="316" y="124" font-size="11" fill="#7a8497">useInteractiveBoard.ts —— 跨组件/跨进出会复用</text>
+  <rect x="120" y="136" width="188" height="52" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="214" y="156" font-size="11.5" fill="#1a1f2e" text-anchor="middle" font-weight="600">strokes / images</text>
+  <text x="214" y="173" font-size="10.5" fill="#7a8497" text-anchor="middle">笔迹与图片笔迹</text>
+  <rect x="320" y="136" width="272" height="52" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="456" y="156" font-size="11.5" fill="#1a1f2e" text-anchor="middle" font-weight="600">画板状态</text>
+  <text x="456" y="173" font-size="10.5" fill="#7a8497" text-anchor="middle">boardActive / boardVisible / screenBoardActive</text>
+  <rect x="604" y="136" width="216" height="52" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="712" y="156" font-size="11.5" fill="#1a1f2e" text-anchor="middle" font-weight="600">selfScreenSharing</text>
+  <text x="712" y="173" font-size="10.5" fill="#7a8497" text-anchor="middle">= TUIRoomKit screenStatus</text>
+  <rect x="832" y="136" width="112" height="52" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="888" y="156" font-size="11.5" fill="#1a1f2e" text-anchor="middle" font-weight="600">收发</text>
+  <text x="888" y="173" font-size="10.5" fill="#7a8497" text-anchor="middle">sendMsg</text>
+
+  <!-- 箭头 -->
+  <path d="M480 84 L480 104" stroke="#9fb3cc" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  <!-- ── 显示层 ── -->
+  <rect x="0" y="228" width="960" height="132" rx="10" fill="#fbf9ff" stroke="#e2d9f7"/>
+  <text x="16" y="248" font-size="12" font-weight="700" fill="#5a3fb8">显示层（两个互斥显示面 · 同一时刻只显示一个）</text>
+  <rect x="120" y="262" width="392" height="82" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="316" y="282" font-size="12.5" fill="#1a1f2e" text-anchor="middle" font-weight="700">A · 网页内画板</text>
+  <text x="316" y="300" font-size="11" fill="#4a5468" text-anchor="middle">InteractiveBoardPanel.vue（Teleport → body，z-index 6000）</text>
+  <text x="316" y="317" font-size="11" fill="#4a5468" text-anchor="middle">双层 canvas：底图层 + 笔迹层 ｜ 玻璃态工具栏（可拖拽）</text>
+  <text x="316" y="334" font-size="11" fill="#7a8497" text-anchor="middle">动态贴合「画面内容区」，反推 letterbox 后的真实画面矩形</text>
+  <rect x="532" y="262" width="412" height="82" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="738" y="282" font-size="12.5" fill="#1a1f2e" text-anchor="middle" font-weight="700">B · 屏幕画板（OS 覆盖窗）</text>
+  <text x="738" y="300" font-size="11" fill="#4a5468" text-anchor="middle">board-overlay.html（独立 BrowserWindow，透明 + 置顶）</text>
+  <text x="738" y="317" font-size="11" fill="#4a5468" text-anchor="middle">单层 canvas ｜ 工具栏功能与 A 一致</text>
+  <text x="738" y="334" font-size="11" fill="#7a8497" text-anchor="middle">可覆盖整个桌面与其它应用 ｜ 鼠标模式整窗穿透</text>
+  <text x="480" y="256" font-size="11" fill="#8a7fc0" text-anchor="middle" font-weight="600">⇄ 互斥</text>
+
+  <path d="M480 208 L480 228" stroke="#9fb3cc" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  <!-- ── 桥接与桌面层 ── -->
+  <rect x="0" y="372" width="960" height="100" rx="10" fill="#f6f8fb" stroke="#dde5ef"/>
+  <text x="16" y="392" font-size="12" font-weight="700" fill="#4a5468">桥接与桌面层（Electron）</text>
+  <rect x="120" y="404" width="250" height="52" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="245" y="424" font-size="11.5" fill="#1a1f2e" text-anchor="middle" font-weight="600">useBoardOverlaySync.ts</text>
+  <text x="245" y="441" font-size="10.5" fill="#7a8497" text-anchor="middle">web ↔ 主进程 状态同步 / watch 联动</text>
+  <rect x="386" y="404" width="214" height="52" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="493" y="424" font-size="11.5" fill="#1a1f2e" text-anchor="middle" font-weight="600">preload.js</text>
+  <text x="493" y="441" font-size="10.5" fill="#7a8497" text-anchor="middle">IPC API 白名单（contextIsolation）</text>
+  <rect x="616" y="404" width="328" height="52" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="780" y="424" font-size="11.5" fill="#1a1f2e" text-anchor="middle" font-weight="600">main.js（主进程）</text>
+  <text x="780" y="441" font-size="10.5" fill="#7a8497" text-anchor="middle">覆盖窗创建与管理 · setIgnoreMouseEvents · 共享源解析 · 屏幕共享 shim</text>
+
+  <path d="M480 360 L480 372" stroke="#9fb3cc" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  <!-- ── 平台层 ── -->
+  <rect x="0" y="496" width="960" height="80" rx="10" fill="#f8fafc" stroke="#e3e8f0"/>
+  <text x="16" y="516" font-size="12" font-weight="700" fill="#7a8497">平台层</text>
+  <rect x="120" y="528" width="292" height="36" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="266" y="551" font-size="11.5" fill="#1a1f2e" text-anchor="middle">TUIRoomKit（房间 + 自定义消息通道）</text>
+  <rect x="428" y="528" width="292" height="36" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="574" y="551" font-size="11.5" fill="#1a1f2e" text-anchor="middle">Electron（透明置顶窗 + 屏幕采集）</text>
+  <rect x="736" y="528" width="208" height="36" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="840" y="551" font-size="11.5" fill="#1a1f2e" text-anchor="middle">TRTC（音视频 + 屏幕流）</text>
+
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9fb3cc"/>
+    </marker>
+  </defs>
+</svg>
+<figcaption>入口层触发 → 状态层持有并广播 → 显示层两个互斥表面渲染；桥接层负责网页与 OS 覆盖窗之间的状态一致。</figcaption>
+</figure>
+
+<h3>2.2 数据流：多人怎么绘制、怎么传输、怎么显示</h3>
+
+<div class="fig-title">图 2　一次落笔的完整数据流（以参会人 A 画一笔为例）</div>
+<figure>
+<svg viewBox="0 0 960 470" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif">
+  <!-- 三列背景 -->
+  <rect x="8" y="8" width="272" height="392" rx="10" fill="#f5f8ff" stroke="#d6e4ff"/>
+  <rect x="344" y="8" width="272" height="392" rx="10" fill="#f4f7fc" stroke="#dde5ef"/>
+  <rect x="680" y="8" width="272" height="392" rx="10" fill="#fbfffd" stroke="#cdeee0"/>
+
+  <text x="144" y="32" font-size="12.5" font-weight="700" fill="#1677ff" text-anchor="middle">① 本端 A（绘制）</text>
+  <text x="480" y="32" font-size="12.5" font-weight="700" fill="#4a5468" text-anchor="middle">② 会议房间（信令中转）</text>
+  <text x="816" y="32" font-size="12.5" font-weight="700" fill="#0e8a5f" text-anchor="middle">③ 远端 B / C（显示）</text>
+
+  <!-- 列 1 -->
+  <rect x="28" y="52" width="232" height="66" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="44" y="72" font-size="11.5" font-weight="700" fill="#1a1f2e">1 · 采集</text>
+  <text x="44" y="89" font-size="10.8" fill="#4a5468">pointerdown → 起记</text>
+  <text x="44" y="104" font-size="10.8" fill="#4a5468">pointermove → 累点（本地增量绘制）</text>
+  <text x="44" y="114" fill="none" />
+
+  <rect x="28" y="130" width="232" height="66" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="44" y="150" font-size="11.5" font-weight="700" fill="#1a1f2e">2 · 坐标归一化</text>
+  <text x="44" y="167" font-size="10.8" fill="#4a5468">相对「画面内容区」取 0–1</text>
+  <text x="44" y="182" font-size="10.8" fill="#4a5468">→ 与分辨率 / 窗口尺寸无关</text>
+
+  <rect x="28" y="208" width="232" height="80" rx="8" fill="#eaf2ff" stroke="#a8c8f0"/>
+  <text x="44" y="228" font-size="11.5" font-weight="700" fill="#0b4fa8">3 · pointerup 提交整笔</text>
+  <text x="44" y="245" font-size="10.8" fill="#2b3546">addStroke({ id, userId,</text>
+  <text x="44" y="259" font-size="10.8" fill="#2b3546">userName, tool, color, size,</text>
+  <text x="44" y="273" font-size="10.8" fill="#2b3546">points[] })　←　一次交互一条消息</text>
+
+  <rect x="28" y="300" width="232" height="76" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="44" y="320" font-size="11.5" font-weight="700" fill="#1a1f2e">4 · 本地先落笔</text>
+  <text x="44" y="337" font-size="10.8" fill="#4a5468">不等网络，立即 push 并重绘</text>
+  <text x="44" y="352" font-size="10.8" fill="#4a5468">→ 本端「零延迟」手感</text>
+  <text x="44" y="368" font-size="10.5" fill="#7a8497">（网络只影响他人看到的时机）</text>
+
+  <!-- 列 2 -->
+  <rect x="364" y="120" width="232" height="76" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="380" y="140" font-size="11.5" font-weight="700" fill="#1a1f2e">sendCustomMessage</text>
+  <text x="380" y="157" font-size="10.8" fill="#4a5468">businessId = interactive_board</text>
+  <text x="380" y="172" font-size="10.8" fill="#4a5468">data = JSON.stringify(BoardMsg)</text>
+  <text x="380" y="187" font-size="10.8" fill="#4a5468">type: 'stroke' | 'image' | 'undo' …</text>
+
+  <rect x="364" y="212" width="232" height="86" rx="8" fill="#f4f7fc" stroke="#dde5ef"/>
+  <text x="380" y="232" font-size="11.5" font-weight="700" fill="#4a5468">房间广播</text>
+  <text x="380" y="249" font-size="10.8" fill="#4a5468">复用会议既有长连接</text>
+  <text x="380" y="264" font-size="10.8" fill="#4a5468">不新建信令服务 / 无独立计费项</text>
+  <text x="380" y="282" font-size="10.5" fill="#7a8497">单条 ≤ 12KB ｜ 群消息 ≤ 40 条/秒</text>
+
+  <rect x="364" y="314" width="232" height="62" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="380" y="334" font-size="11.5" font-weight="700" fill="#1a1f2e">onReceiveCustomMessage</text>
+  <text x="380" y="351" font-size="10.8" fill="#4a5468">房间内其它端（除发送方）回调</text>
+  <text x="380" y="366" font-size="10.8" fill="#4a5468">发送方不回传自己的消息</text>
+
+  <!-- 列 3 -->
+  <rect x="700" y="120" width="232" height="66" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="716" y="140" font-size="11.5" font-weight="700" fill="#1a1f2e">5 · 解析 + 去重</text>
+  <text x="716" y="157" font-size="10.8" fill="#4a5468">JSON.parse → 按 stroke.id 判重</text>
+  <text x="716" y="172" font-size="10.8" fill="#4a5468">防止重放 / 重复渲染</text>
+
+  <rect x="700" y="202" width="232" height="76" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="716" y="222" font-size="11.5" font-weight="700" fill="#1a1f2e">6 · 入列</text>
+  <text x="716" y="239" font-size="10.8" fill="#4a5468">strokes.push(stroke)</text>
+  <text x="716" y="254" font-size="10.8" fill="#4a5468">（Vue 响应式数组）</text>
+  <text x="716" y="269" font-size="10.5" fill="#7a8497">watch(strokes) 自动触发</text>
+
+  <rect x="700" y="294" width="232" height="82" rx="8" fill="#e8f7f1" stroke="#a8dcc6"/>
+  <text x="716" y="314" font-size="11.5" font-weight="700" fill="#0a5c40">7 · 重绘显示</text>
+  <text x="716" y="331" font-size="10.8" fill="#2b3546">renderStrokes() 全量重绘 canvas</text>
+  <text x="716" y="346" font-size="10.8" fill="#2b3546">x×w、y×h 按本端区域尺寸还原</text>
+  <text x="716" y="363" font-size="10.5" fill="#4a5468">→ 各端笔迹位置一致（0–1 对齐）</text>
+
+  <!-- 主箭头 1→2 -->
+  <path d="M262 248 L362 158" stroke="#1677ff" stroke-width="2" marker-end="url(#ar2)"/>
+  <!-- 主箭头 2→3 -->
+  <path d="M598 160 L698 153" stroke="#0e8a5f" stroke-width="2" marker-end="url(#ar3)"/>
+
+  <!-- 反向说明 -->
+  <path d="M816 424 L144 424" stroke="#b9c6d8" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#ar4)"/>
+  <text x="480" y="444" font-size="11.5" fill="#7a8497" text-anchor="middle">对称：B / C 落笔走同一条通道回到 A，任一端的笔迹都经过这台「房间中转」</text>
+
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1677ff"/>
+    </marker>
+    <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0e8a5f"/>
+    </marker>
+    <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b9c6d8"/>
+    </marker>
+  </defs>
+</svg>
+<figcaption>核心：把「一整笔」当最小同步单位，pointerup 才发一条消息；本端先落笔保证手感，远端靠 0–1 归一化坐标还原到各自区域。</figcaption>
+</figure>
+
+<h3>2.3 关键设计决策</h3>
+
+<table>
+  <thead>
+    <tr><th>设计点</th><th>做法</th><th>解决的问题</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>同步单位</td>
+      <td>发「笔迹段」而非逐点</td>
+      <td>消息量小、无节流抖动、重放简单；天然远低于频控上限</td>
+    </tr>
+    <tr>
+      <td>发送时机</td>
+      <td>仅 <code>pointerup</code> 广播</td>
+      <td>一次交互 = 一条消息，避免 move 事件刷屏</td>
+    </tr>
+    <tr>
+      <td>坐标系</td>
+      <td>0–1 归一化（相对画面内容区）</td>
+      <td>跨分辨率、跨窗口尺寸对齐；解决 letterbox 下多人笔迹错位</td>
+    </tr>
+    <tr>
+      <td>笔迹错位根因处理</td>
+      <td>反推 <code>object-fit: contain</code> 后的真实画面矩形</td>
+      <td>贴合「画面内容区」而非「视频容器」，避免黑边导致偏移</td>
+    </tr>
+    <tr>
+      <td>后进会者</td>
+      <td><code>snapshot-request</code> / <code>snapshot</code> 全量补发</td>
+      <td>解决「后进来的人看不到已有笔迹」</td>
+    </tr>
+    <tr>
+      <td>会议级画板开关</td>
+      <td><code>board-open</code>（附现状全量）/ <code>board-close</code></td>
+      <td>一人开画板，全员自动进入并看到现状；共享结束自动收口</td>
+    </tr>
+    <tr>
+      <td>橡皮擦不伤底图</td>
+      <td>双层 canvas + <code>destination-out</code></td>
+      <td>擦除只作用于笔迹层，截图/上传的底图不被破坏</td>
+    </tr>
+    <tr>
+      <td>本端即时反馈</td>
+      <td>先本地 push 重绘，再发消息</td>
+      <td>绘制「零延迟」，网络只影响他人看到的时机</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>2.4 两个显示面如何互斥与切换</h3>
+
+<p>同一用户同一时刻只会有一种画板表面，由「本机是否正在共享屏幕」分流。<b>状态真源是 TUIRoomKit 自带的 <code>useDeviceState().screenStatus</code></b>（该状态仅在事件属于本地登录用户且为屏幕流时才置 On）——而不是参会人条目上的 <code>hasScreenStream</code>（屏幕共享在引擎里是「独立参会人」，本人的该字段并不可靠）。</p>
+
+<div class="fig-title">图 3　显示面分流与互斥</div>
+<figure>
+<svg viewBox="0 0 960 250" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif">
+  <rect x="330" y="34" width="300" height="56" rx="10" fill="#f4f7fc" stroke="#dde5ef"/>
+  <text x="480" y="58" font-size="12.5" fill="#1a1f2e" text-anchor="middle" font-weight="700">用户点击底部「画板」</text>
+  <text x="480" y="77" font-size="11" fill="#7a8497" text-anchor="middle">enterBoard() 按 screenStatus 分流</text>
+
+  <path d="M480 90 L480 112" stroke="#9fb3cc" stroke-width="1.6" marker-end="url(#ar5)"/>
+  <rect x="330" y="112" width="300" height="44" rx="8" fill="#ffffff" stroke="#c9d6ea"/>
+  <text x="480" y="131" font-size="12" fill="#1a1f2e" text-anchor="middle" font-weight="600">本机是否正在共享屏幕？</text>
+  <text x="480" y="147" font-size="10.5" fill="#7a8497" text-anchor="middle">TUIRoomKit useDeviceState().screenStatus</text>
+
+  <path d="M360 156 L250 190" stroke="#5a3fb8" stroke-width="1.8" marker-end="url(#ar6)"/>
+  <path d="M600 156 L710 190" stroke="#1677ff" stroke-width="1.8" marker-end="url(#ar7)"/>
+  <text x="272" y="172" font-size="11" fill="#5a3fb8" font-weight="700" text-anchor="middle">是</text>
+  <text x="690" y="172" font-size="11" fill="#1677ff" font-weight="700" text-anchor="middle">否</text>
+
+  <rect x="60" y="192" width="380" height="48" rx="8" fill="#fbf9ff" stroke="#c9a8f0"/>
+  <text x="250" y="212" font-size="12" fill="#3d2b80" text-anchor="middle" font-weight="700">开「屏幕画板」（OS 覆盖窗）</text>
+  <text x="250" y="229" font-size="10.5" fill="#6a5aa8" text-anchor="middle">board-overlay.html · 覆盖整个桌面 · 锚定被共享的屏</text>
+
+  <rect x="520" y="192" width="380" height="48" rx="8" fill="#f5f8ff" stroke="#a8c8f0"/>
+  <text x="710" y="212" font-size="12" fill="#0b4fa8" text-anchor="middle" font-weight="700">开「网页内画板」</text>
+  <text x="710" y="229" font-size="10.5" fill="#40618f" text-anchor="middle">InteractiveBoardPanel · 贴合会议画面内容区</text>
+
+  <defs>
+    <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9fb3cc"/></marker>
+    <marker id="ar6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5a3fb8"/></marker>
+    <marker id="ar7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1677ff"/></marker>
+  </defs>
+</svg>
+<figcaption>互斥由 web 端状态机保证：<code>boardVisible</code>（网页画板）与 <code>screenBoardActive</code>（OS 覆盖窗）互斥；覆盖窗的真实开关状态会反向回传，保证两端视图一致。</figcaption>
+</figure>
+
+<!-- ══════════════════════════════════════════════════════ -->
+<h2><span class="no">三</span>数据定义</h2>
+
+<h3>3.1 核心数据结构</h3>
+
+<pre><code><span class="cmt">// ── 工具类型 ──────────────────────────────</span>
+<span class="kw">type</span> BoardTool = <span class="str">'pointer'</span> | <span class="str">'pen'</span> | <span class="str">'eraser'</span> | <span class="str">'line'</span> | <span class="str">'rect'</span> | <span class="str">'circle'</span> | <span class="str">'image'</span>
+
+<span class="cmt">// ── 坐标：归一化 0-1，相对「画面内容区」，保证跨端对齐 ──</span>
+<span class="kw">interface</span> Point { x: <span class="kw">number</span>; y: <span class="kw">number</span> }
+
+<span class="cmt">// ── 笔迹 ──────────────────────────────────</span>
+<span class="kw">interface</span> Stroke {
+  id: <span class="kw">string</span>          <span class="cmt">// `${selfId}_${Date.now()}_${rand}`，全局唯一，用于去重与撤销</span>
+  userId: <span class="kw">string</span>        <span class="cmt">// 绘制者，用于「撤销只撤自己那笔」</span>
+  userName: <span class="kw">string</span>      <span class="cmt">// 展示用</span>
+  tool: BoardTool
+  color: <span class="kw">string</span>        <span class="cmt">// #rrggbb（8 色调色板）</span>
+  size: <span class="kw">number</span>         <span class="cmt">// 1–20，默认 4</span>
+  points: Point[]      <span class="cmt">// pen/eraser＝完整路径点；line/rect/circle＝[起点, 终点]</span>
+}
+
+<span class="cmt">// ── 图片笔迹（截图底图 / 上传图片）────────────</span>
+<span class="kw">interface</span> ImageStroke {
+  id: <span class="kw">string</span>
+  userId: <span class="kw">string</span>
+  userName: <span class="kw">string</span>
+  tool: <span class="str">'image'</span>
+  src: <span class="kw">string</span>          <span class="cmt">// 预研：base64 dataURL；正式版：COS URL</span>
+  ratio: <span class="kw">number</span>        <span class="cmt">// 原始宽高比 w/h，用于 contain 适配</span>
+  cx: <span class="kw">number</span>         <span class="cmt">// 归一化中心 x（0-1）</span>
+  cy: <span class="kw">number</span>         <span class="cmt">// 归一化中心 y（0-1）</span>
+  w: <span class="kw">number</span>          <span class="cmt">// 归一化宽度（高度由 ratio 推导）</span>
+}
+</code></pre>
+
+<h3>3.2 同步消息协议</h3>
+
+<p>通道：<code>TUIRoomEngine.sendCustomMessage({ businessId: 'interactive_board', data })</code>，<code>data</code> 为 <code>BoardMsg</code> 的 JSON 串。接收端统一走 <code>onReceiveCustomMessage</code> 并按 <code>type</code> 分发。</p>
+
+<pre><code><span class="kw">type</span> BoardMsg =
+  | { type: <span class="str">'stroke'</span>;           stroke: Stroke }                        <span class="cmt">// 新增一笔</span>
+  | { type: <span class="str">'image'</span>;            image: ImageStroke }                   <span class="cmt">// 新增图片笔迹</span>
+  | { type: <span class="str">'undo'</span>;             strokeId: <span class="kw">string</span> }                   <span class="cmt">// 按 id 精确删除一笔</span>
+  | { type: <span class="str">'clear'</span> }                                                    <span class="cmt">// 清空全员笔迹</span>
+  | { type: <span class="str">'board-open'</span>;       strokes: Stroke[]; images: ImageStroke[] } <span class="cmt">// 开画板 + 现状全量</span>
+  | { type: <span class="str">'board-close'</span> }                                              <span class="cmt">// 结束会议画板</span>
+  | { type: <span class="str">'snapshot-request'</span> }                                         <span class="cmt">// 后进会者拉历史</span>
+  | { type: <span class="str">'snapshot'</span>;         strokes: Stroke[]; images: ImageStroke[] } <span class="cmt">// 历史全量回包</span>
+</code></pre>
+
+<table>
+  <thead>
+    <tr><th>消息</th><th>方向</th><th>载荷</th><th>语义</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>stroke</code></td><td>广播</td><td>Stroke</td><td>一笔落下（pointerup 时发）</td></tr>
+    <tr><td><code>image</code></td><td>广播</td><td>ImageStroke</td><td>截图底图或上传图片</td></tr>
+    <tr><td><code>undo</code></td><td>广播</td><td>strokeId</td><td>按 id 精确删除，不靠「最后一笔」推断</td></tr>
+    <tr><td><code>clear</code></td><td>广播</td><td>—</td><td>清空所有人笔迹与图片</td></tr>
+    <tr><td><code>board-open</code></td><td>广播</td><td>strokes + images</td><td>会议级画板开启，附带现状全量，他人即时进入</td></tr>
+    <tr><td><code>board-close</code></td><td>广播</td><td>—</td><td>画板结束，全员清空关闭</td></tr>
+    <tr><td><code>snapshot-request</code></td><td>点发</td><td>—</td><td>进会后 1.5s 发出，向已有内容的端要历史</td></tr>
+    <tr><td><code>snapshot</code></td><td>点发</td><td>strokes + images</td><td>有内容的端回全量</td></tr>
+  </tbody>
+</table>
+
+<h3>3.3 容量与频控约束</h3>
+
+<table>
+  <thead>
+    <tr><th>约束项</th><th>限制值</th><th>本方案的应对</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>单条消息大小</td>
+      <td><b>12 KB</b>（腾讯 IM / 房间信令消息上限，超限错误码 <code>100603</code>）</td>
+      <td>笔迹消息体极小（<b>数 KB 以内</b>）；图片因 base64 膨胀约 33%，需压缩：截图 <code>640px / quality 0.5</code>、上传图 <code>1280px / quality 0.6</code></td>
+    </tr>
+    <tr>
+      <td>消息频率</td>
+      <td>群消息 <b>40 条/秒</b>（每房间独立限频）</td>
+      <td>仅 <code>pointerup</code> 发一条，单人手速远低于上限；多人同时绘制的叠加量也在安全区</td>
+    </tr>
+    <tr>
+      <td>图片高清底图</td>
+      <td>受 12 KB 上限约束，base64 只能传缩略图</td>
+      <td><b>正式版改走 COS URL</b>：消息体只传 URL，底图保留原始分辨率</td>
+    </tr>
+    <tr>
+      <td>消息丢弃</td>
+      <td>超频时服务端返回 <code>MsgDropReason</code>（频控丢弃）</td>
+      <td>发送失败静默忽略，不影响本地绘制；配合 <code>snapshot</code> 机制具备自愈能力</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <b>已知待收敛项：</b>图片底图目前以 base64 走消息通道（预研形态），受 12 KB 限制只能传缩略图。设计上已预留切换点——<code>ImageStroke.src</code> 字段本就同时支持 base64 与 COS URL，正式版只需把 <code>captureVideoFrame</code>/<code>compressImage</code> 的产物换成上传后的 URL，<b>协议与渲染层无需改动</b>。
+</div>
+
+<h3>3.4 桌面端覆盖窗 IPC 通道</h3>
+
+<p>网页端与 OS 覆盖窗之间通过主进程中转，全部走 <code>preload.js</code> 的白名单 API（<code>contextIsolation: true</code>，网页无法直接触达主进程）。</p>
+
+<table>
+  <thead>
+    <tr><th>preload API</th><th>IPC 通道</th><th>方向</th><th>用途</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>boardOverlayOpen</code></td><td><code>board-overlay:open</code></td><td>web → main</td><td>打开覆盖窗（已开则仅置顶）</td></tr>
+    <tr><td><code>boardOverlayClose</code></td><td><code>board-overlay:close</code></td><td>web / overlay → main</td><td>关闭覆盖窗</td></tr>
+    <tr><td><code>boardOverlayToggle</code></td><td><code>board-overlay:toggle</code></td><td>web → main</td><td>切换开 / 关</td></tr>
+    <tr><td><code>boardOverlayPushState</code></td><td><code>board-overlay:sync</code></td><td>web → main → overlay</td><td>全量状态下发（strokes / images）</td></tr>
+    <tr><td><code>onBoardOverlayState</code></td><td><code>board-overlay:state</code></td><td>main → overlay</td><td>覆盖窗接收全量状态并重绘</td></tr>
+    <tr><td><code>boardOverlaySendStroke</code></td><td><code>board-overlay:local-stroke</code></td><td>overlay → main → web</td><td>覆盖窗笔迹回传（网页端补 userId 后广播）</td></tr>
+    <tr><td><code>onBoardOverlayRemoteStroke</code></td><td><code>board-overlay:remote-stroke</code></td><td>main → web</td><td>网页端接收覆盖窗笔迹</td></tr>
+    <tr><td><code>boardOverlayUndo</code></td><td><code>board-overlay:undo</code></td><td>overlay → web</td><td>撤销（转交网页端统一执行并广播）</td></tr>
+    <tr><td><code>boardOverlayClear</code></td><td><code>board-overlay:clear</code></td><td>overlay → web</td><td>清空（转交网页端 <code>clearAll</code> 并广播）</td></tr>
+    <tr><td><code>boardOverlaySetIgnoreMouse</code></td><td><code>board-overlay:set-ignore-mouse</code></td><td>overlay → main</td><td>鼠标模式整窗穿透，让下方桌面可操作</td></tr>
+    <tr><td><code>onBoardOverlayScreenOpened</code></td><td><code>board-overlay:screen-opened</code></td><td>main → web</td><td>覆盖窗已显示 → 本端标记为开启</td></tr>
+    <tr><td><code>onBoardOverlayClosed</code></td><td><code>board-overlay:closed</code></td><td>main → web</td><td>覆盖窗已关闭 → 回退显示网页画板</td></tr>
+    <tr><td><code>onBoardOverlayUnsupported</code></td><td><code>board-overlay:unsupported</code></td><td>main → web</td><td>无法精确定位共享范围时降级提示</td></tr>
+    <tr><td><code>notifyScreenShareStarted</code></td><td><code>board-overlay:share-started</code></td><td>shim → main</td><td>屏幕共享真正开始，上报共享源</td></tr>
+    <tr><td><code>onBoardOverlaySelfScreenShare</code></td><td><code>board-overlay:self-screen-share</code></td><td>main → web</td><td>本机屏共兜底信号（主真源仍为 <code>screenStatus</code>）</td></tr>
+  </tbody>
+</table>
+
+<!-- ══════════════════════════════════════════════════════ -->
+<h2><span class="no">四</span>约束、风险与后续</h2>
+
+<table>
+  <thead>
+    <tr><th>项</th><th>现状</th><th>计划</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>图片底图分辨率</td>
+      <td>base64 受 12 KB 限制，只能缩略图</td>
+      <td>切 COS URL（协议已预留，改动集中在两个压缩函数）</td>
+    </tr>
+    <tr>
+      <td>屏幕画板在 macOS 的表现</td>
+      <td>已验证 Windows（透明窗 + 穿透）</td>
+      <td>打包前回归 macOS：透明窗与 <code>setIgnoreMouseEvents</code> 行为需实测</td>
+    </tr>
+    <tr>
+      <td>画板生命周期</td>
+      <td>共享结束自动收口；新会议前重置</td>
+      <td>保持现状；若后续要做「画板历史回看」，需要落库（当前无持久化）</td>
+    </tr>
+    <tr>
+      <td>待办（已记录，未开工）</td>
+      <td>—</td>
+      <td>视频会议每个有视频画面的窗口增加两个按钮：<b>「截图并打开画板」</b>（截图作底图）、<b>「以此视频画面作为画板背景」</b></td>
+    </tr>
+  </tbody>
+</table>
+
+<footer>
+  数据来源：项目源码（<code>web/src/components/conference/*</code>、<code>desktop-notifier/main.js</code>）与腾讯云官方计费文档（2026-09 口径）。价格与免费额度以官网及实际合同为准。
+</footer>
+
+</div>
+</body>
+</html>
