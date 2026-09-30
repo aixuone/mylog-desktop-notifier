@@ -2,7 +2,11 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+<!--
+  ⚠ img-src 必须显式放行 data: —— 底图（上传图片 / 截图）以 base64 dataURL 形式加载，
+     而 default-src 'self' 会把 data: 一并拦掉，表现为「底图永远画不出来」。
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
 <title>画板</title>
 <style>
   html, body {
@@ -15,6 +19,7 @@
     user-select: none;
     -webkit-user-select: none;
   }
+  /* 整窗默认穿透鼠标（鼠标模式下桌面可正常操作）；工具栏单独恢复可点，绘制时由 JS 切回捕获 */
   #stage { position: fixed; inset: 0; background: transparent; pointer-events: none; }
   #canvas {
     position: absolute;
@@ -31,6 +36,8 @@
     transform: translateX(-50%);
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 6px;
     padding: 6px 12px;
     border-radius: 14px;
@@ -39,6 +46,7 @@
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
     z-index: 10;
     pointer-events: auto;
+    max-width: calc(100vw - 24px);
   }
   .tool-btn {
     display: flex;
@@ -76,13 +84,15 @@
     padding: 0 12px;
     border: none;
     border-radius: 8px;
-    background: rgba(255, 77, 79, 0.2);
-    color: #ff7875;
+    background: rgba(0, 110, 255, 0.22);
+    color: #69a8ff;
     font-size: 13px;
     cursor: pointer;
+    white-space: nowrap;
   }
-  .exit-btn:hover { background: #ff4d4f; color: #fff; }
-  /* 开启提示：让「覆盖窗确实出现了」一眼可见（3 秒后淡出） */
+  .exit-btn:hover { background: #006eff; color: #fff; }
+  .hide-input { display: none; }
+  /* 提示条：按钮反馈 + 开启提示（首次 3 秒后淡出，之后由 flashTip 临时复用） */
   .tip {
     position: fixed;
     top: 62px;
@@ -104,13 +114,13 @@
   <div id="stage">
     <canvas id="canvas"></canvas>
     <div class="toolbar">
-      <button class="tool-btn active" data-tool="pointer" title="鼠标（透传，不绘制，可操作下方桌面）">
+      <button class="tool-btn active" data-tool="pointer" title="鼠标（不绘制，可操作下方桌面）">
         <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/></svg>
       </button>
       <button class="tool-btn" data-tool="pen" title="画笔">
         <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
       </button>
-      <button class="tool-btn" data-tool="eraser" title="橡皮">
+      <button class="tool-btn" data-tool="eraser" title="橡皮（扫过的整条笔迹会被整条清除）">
         <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M15.14 3c-.51 0-1.02.2-1.41.59L2.59 14.73c-.78.77-.78 2.04 0 2.83l2.83 2.83c.39.39.9.59 1.41.59h3.42L20.91 9.9c.78-.78.78-2.05 0-2.83l-4.36-4.36c-.39-.4-.9-.6-1.41-.6z"/></svg>
       </button>
       <button class="tool-btn" data-tool="line" title="直线">
@@ -123,23 +133,31 @@
         <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
       </button>
       <div class="divider"></div>
+      <button class="tool-btn" id="shot" title="截图当前屏幕作底图">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M9.4 10.5l4.77-8.26a1 1 0 0 1 1.73 1l-2.47 4.28H21a1 1 0 0 1 .9 1.45L17 19.5H3.7a1 1 0 0 1-.88-1.46L9.4 10.5z"/></svg>
+      </button>
+      <button class="tool-btn" id="upload" title="上传图片作底图">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+      </button>
+      <input type="file" id="fileInput" accept="image/*" class="hide-input" />
+      <div class="divider"></div>
       <div class="colors" id="colors"></div>
       <div class="divider"></div>
       <input type="range" min="1" max="20" value="4" class="size-slider" id="size" title="粗细" />
       <span class="size-value" id="sizeVal">4</span>
       <div class="divider"></div>
-      <button class="tool-btn" id="undo" title="撤销">
+      <button class="tool-btn" id="undo" title="撤销（撤销自己最近一笔）">
         <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>
       </button>
       <button class="tool-btn" id="clear" title="清空（清掉所有人笔迹）">
         <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
       </button>
-      <button class="tool-btn" id="save" title="保存为图片">
+      <button class="tool-btn" id="save" title="保存为图片（PNG，含底图与笔迹）">
         <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2z"/></svg>
       </button>
-      <button class="exit-btn" id="exit" title="收起屏幕画板（关闭这层覆盖，会议画板继续）">
-        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-        收起
+      <button class="exit-btn" id="exit" title="切回网页内画板（本层覆盖关闭，会议画板继续）">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+        网页画板
       </button>
     </div>
     <div class="tip" id="tip">屏幕画板已开启 · 点顶部「画笔」开始绘制</div>
@@ -155,10 +173,20 @@
       var tool = 'pointer'       // 默认鼠标透传：共享屏幕上不拦截操作，要画点一下画笔
       var color = '#ff4d4f'
       var size = 4
-      var strokes = []           // 本地维护的完整笔迹（与 web 端 state 对齐）
+      var strokes = []           // 笔迹（与 web 端 state 对齐，web 为真相源）
+      var images = []            // 底图（截图/上传），画在笔迹之下
+      var imgCache = {}          // src -> HTMLImageElement
 
-      // 开启提示 3 秒后淡出（用于确认覆盖窗确实已出现）
+      // ── 提示条 ──
       var tipEl = document.getElementById('tip')
+      var tipTimer = null
+      function flashTip(text, sticky) {
+        if (!tipEl) return
+        tipEl.textContent = text
+        tipEl.className = 'tip'
+        if (tipTimer) { clearTimeout(tipTimer); tipTimer = null }
+        if (!sticky) tipTimer = setTimeout(function () { tipEl.className = 'tip hide' }, 2200)
+      }
       if (tipEl) setTimeout(function () { tipEl.className = 'tip hide' }, 3000)
 
       function setupCanvas() {
@@ -170,20 +198,41 @@
         render()
       }
 
+      // ── 底图绘制（object-fit: contain，比例不变；与网页画板同一套算法） ──
+      function drawImageStroke(img) {
+        var cached = imgCache[img.src]
+        if (!cached) {
+          var el = new Image()
+          el.onload = function () { imgCache[img.src] = el; render() }
+          el.onerror = function () { /* CSP/解码失败：忽略，不影响笔迹 */ }
+          el.src = img.src
+          return
+        }
+        var ratio = img.ratio || 1
+        var drawW = img.w * cssW
+        var drawH = drawW / ratio
+        if (drawH > cssH) { drawH = cssH; drawW = cssH * ratio }
+        var dx = img.cx * cssW - drawW / 2
+        var dy = img.cy * cssH - drawH / 2
+        ctx.drawImage(cached, dx, dy, drawW, drawH)
+      }
+
+      // ── 笔迹绘制 ──
       function drawStroke(s) {
         var pts = s.points.map(function (p) { return { x: p.x * cssW, y: p.y * cssH } })
         if (!pts.length) return
+        // 需求3：橡皮是「整条清除」动作，不是笔迹，历史遗留的 eraser 笔迹直接跳过
+        if (s.tool === 'eraser') return
         ctx.save()
         ctx.strokeStyle = s.color
         ctx.fillStyle = s.color
         ctx.lineWidth = s.size
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
-        ctx.globalCompositeOperation = s.tool === 'eraser' ? 'destination-out' : 'source-over'
+        ctx.globalCompositeOperation = 'source-over'
         ctx.beginPath()
         switch (s.tool) {
           case 'pen':
-          case 'eraser':
             ctx.moveTo(pts[0].x, pts[0].y)
             for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
             ctx.stroke()
@@ -212,12 +261,15 @@
 
       function render() {
         ctx.clearRect(0, 0, cssW, cssH)
-        for (var i = 0; i < strokes.length; i++) drawStroke(strokes[i])
+        for (var i = 0; i < images.length; i++) drawImageStroke(images[i])
+        for (var j = 0; j < strokes.length; j++) drawStroke(strokes[j])
       }
 
       // ── 笔迹采集 ──
       var drawing = false
       var points = []
+      var erasing = false
+      var eraserPoints = []
 
       function pos(e) {
         return {
@@ -234,17 +286,49 @@
         if (api.boardOverlaySendStroke) api.boardOverlaySendStroke(stroke)
       }
 
+      /** 橡皮轨迹预览（半透明灰带）。命中判定与整条清除都交给网页端统一执行（需求3）。 */
+      function drawEraserTrail() {
+        render()
+        if (eraserPoints.length < 2) return
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.strokeStyle = 'rgba(110, 122, 140, 0.5)'
+        ctx.lineWidth = Math.max(2, size)
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        ctx.beginPath()
+        ctx.moveTo(eraserPoints[0].x * cssW, eraserPoints[0].y * cssH)
+        for (var i = 1; i < eraserPoints.length; i++) {
+          ctx.lineTo(eraserPoints[i].x * cssW, eraserPoints[i].y * cssH)
+        }
+        ctx.stroke()
+        ctx.restore()
+      }
+
       canvas.addEventListener('pointerdown', function (e) {
         e.preventDefault()
-        canvas.setPointerCapture(e.pointerId)
+        try { canvas.setPointerCapture(e.pointerId) } catch (err) {}
         drawing = true
-        points = [pos(e)]
+        var p = pos(e)
+        if (tool === 'eraser') {
+          erasing = true
+          eraserPoints = [p]
+        } else if (tool === 'pointer') {
+          drawing = false
+        } else {
+          points = [p]
+        }
       })
       canvas.addEventListener('pointermove', function (e) {
         if (!drawing) return
         e.preventDefault()
-        points.push(pos(e))
-        // 增量绘制最后一段
+        var p = pos(e)
+        if (erasing) {
+          eraserPoints.push(p)
+          drawEraserTrail()
+          return
+        }
+        points.push(p)
         if (points.length >= 2) {
           var a = points[points.length - 2]
           var b = points[points.length - 1]
@@ -253,7 +337,7 @@
           ctx.lineWidth = size
           ctx.lineCap = 'round'
           ctx.lineJoin = 'round'
-          ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over'
+          ctx.globalCompositeOperation = 'source-over'
           ctx.beginPath()
           ctx.moveTo(a.x * cssW, a.y * cssH)
           ctx.lineTo(b.x * cssW, b.y * cssH)
@@ -264,17 +348,33 @@
       canvas.addEventListener('pointerup', function (e) {
         if (!drawing) return
         drawing = false
+        var p = pos(e)
+        if (erasing) {
+          erasing = false
+          if (eraserPoints.length) {
+            eraserPoints.push(p)
+            // 把「橡皮路径」交给网页端：由它按同一份命中判定删掉整条笔迹并广播给全员
+            if (api.boardOverlaySendStroke) {
+              api.boardOverlaySendStroke({ tool: 'eraser', color: color, size: size, points: eraserPoints.slice() })
+            }
+          }
+          eraserPoints = []
+          render()  // 抹掉预览轨迹；真正被删的笔迹由网页端回推 state 后重绘
+          return
+        }
         commit()
       })
-      canvas.addEventListener('pointercancel', function (e) {
+      canvas.addEventListener('pointercancel', function () {
         if (!drawing) return
         drawing = false
+        erasing = false
+        eraserPoints = []
         commit()
       })
 
       // ── 工具栏 ──
-      // 鼠标（pointer）模式：整窗忽略鼠标事件 → 点击穿透到下方桌面（可正常操作桌面，需求7）。
-      // 仅当光标悬停在工具栏区域时才恢复可点，以保证「画笔/撤销」等按钮仍可用。
+      // 鼠标（pointer）模式：整窗忽略鼠标事件 → 点击穿透到下方桌面（需求7）。
+      // 仅当光标悬停在工具栏区域时才恢复可点，保证「画笔/撤销」等按钮仍可用。
       function setIgnore(on) {
         if (api.boardOverlaySetIgnoreMouse) {
           try { api.boardOverlaySetIgnoreMouse(on, true) } catch (e) {}
@@ -287,7 +387,7 @@
           setIgnore(true)   // 整窗穿透：桌面可操作
         } else {
           canvas.style.pointerEvents = 'auto'
-          canvas.style.cursor = 'crosshair'
+          canvas.style.cursor = tool === 'eraser' ? 'cell' : 'crosshair'
           setIgnore(false)  // 绘制模式：窗口捕获鼠标
         }
       }
@@ -332,16 +432,76 @@
         sizeVal.textContent = size
       })
 
+      // ── 底图：上传 / 截图 ──
+      /** 压缩为 base64（房间自定义消息单条上限 12KB，必须压到缩略图；正式版切 COS URL） */
+      function compressDataURL(src, maxDim, quality) {
+        return new Promise(function (resolve) {
+          var el = new Image()
+          el.onload = function () {
+            var w = el.naturalWidth || el.width
+            var h = el.naturalHeight || el.height
+            if (!w || !h) return resolve(null)
+            if (w > maxDim || h > maxDim) {
+              if (w >= h) { h = Math.round((h * maxDim) / w); w = maxDim }
+              else { w = Math.round((w * maxDim) / h); h = maxDim }
+            }
+            var tmp = document.createElement('canvas')
+            tmp.width = w
+            tmp.height = h
+            var c2 = tmp.getContext('2d')
+            if (!c2) return resolve(null)
+            c2.drawImage(el, 0, 0, w, h)
+            resolve({ src: tmp.toDataURL('image/jpeg', quality), ratio: w / h })
+          }
+          el.onerror = function () { resolve(null) }
+          el.src = src
+        })
+      }
+      function submitImage(res) {
+        if (!res || !res.src) { flashTip('底图处理失败'); return }
+        if (api.boardOverlaySendImage) api.boardOverlaySendImage(res)
+        else flashTip('当前版本不支持上传底图')
+      }
+
+      document.getElementById('upload').addEventListener('click', function () {
+        document.getElementById('fileInput').click()
+      })
+      document.getElementById('fileInput').addEventListener('change', function (e) {
+        var file = e.target.files && e.target.files[0]
+        e.target.value = ''
+        if (!file) return
+        var reader = new FileReader()
+        reader.onload = function () {
+          compressDataURL(reader.result, 1280, 0.6).then(submitImage)
+        }
+        reader.onerror = function () { flashTip('图片读取失败') }
+        reader.readAsDataURL(file)
+      })
+
+      document.getElementById('shot').addEventListener('click', function () {
+        if (!api.boardOverlayCaptureScreen) { flashTip('当前版本不支持截图'); return }
+        flashTip('正在截取屏幕…', true)
+        api.boardOverlayCaptureScreen().then(function (res) {
+          if (!res || !res.src) { flashTip('截图失败'); return }
+          // 截图同样要压到缩略图尺寸（与网页画板的截图底图一致：640px / q0.5）
+          return compressDataURL(res.src, 640, 0.5).then(function (c) {
+            submitImage(c)
+            flashTip('已插入截图底图')
+          })
+        }).catch(function () { flashTip('截图失败') })
+      })
+
+      // ── 撤销 / 清空 / 保存 / 切回网页画板 ──
       document.getElementById('undo').addEventListener('click', function () {
         if (api.boardOverlayUndo) api.boardOverlayUndo()
+        else flashTip('当前版本不支持撤销')
       })
-      // 清空（与网页画板一致）：本端清 + 广播清（board-overlay:clear → 网页端 clearAll）
       document.getElementById('clear').addEventListener('click', function () {
         strokes = []
+        images = []
         render()
         if (api.boardOverlayClear) api.boardOverlayClear()
       })
-      // 保存为图片：导出透明背景的 PNG（仅本地笔迹）
       document.getElementById('save').addEventListener('click', function () {
         try {
           var url = canvas.toDataURL('image/png')
@@ -351,16 +511,18 @@
           document.body.appendChild(a)
           a.click()
           document.body.removeChild(a)
-        } catch (e) { /* 导出失败忽略 */ }
+        } catch (e) { flashTip('导出失败') }
       })
       document.getElementById('exit').addEventListener('click', function () {
+        // 关闭本层覆盖 → 主进程回发 closed → 网页端自动切回网页画板（互斥状态机）
         if (api.boardOverlayClose) api.boardOverlayClose()
       })
 
-      // ── IPC：接收 web 端全量状态 ──
+      // ── IPC：接收 web 端全量状态（笔迹 + 底图） ──
       if (api.onBoardOverlayState) {
         api.onBoardOverlayState(function (state) {
           strokes = (state && state.strokes) || []
+          images = (state && state.images) || []
           render()
         })
       }

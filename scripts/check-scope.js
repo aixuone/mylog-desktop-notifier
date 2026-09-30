@@ -65,6 +65,7 @@ const REQUIRED_TOP_LEVEL_FUNCS = [
   'handleWillDownload',
   // 画板覆盖窗
   'boardLog',
+  'notifySelfScreenShare',
   'currentShareSource',
   'resolveBoardOverlayBounds',
   'openBoardOverlay',
@@ -86,9 +87,15 @@ const REQUIRED_IPC_CHANNELS = [
   'board-overlay:close',
   'board-overlay:open-if-sharing',
   'board-overlay:share-started',
+  'board-overlay:share-stopped',
+  'board-overlay:is-sharing',
   'board-overlay:local-stroke',
+  'board-overlay:local-image',
+  'board-overlay:capture-screen',
   'board-overlay:sync',
   'board-overlay:undo',
+  'board-overlay:clear',
+  'board-overlay:set-ignore-mouse',
 ]
 
 /** preload 必须经 contextBridge 暴露的画板 API */
@@ -107,6 +114,14 @@ const REQUIRED_PRELOAD_APIS = [
   'onBoardOverlayUnsupported',
   'onBoardOverlayUndo',
   'onBoardOverlaySelfScreenShare',
+  'onBoardOverlayClear',
+  'onBoardOverlayScreenOpened',
+  'onBoardOverlayRemoteImage',
+  'boardOverlaySendImage',
+  'boardOverlayCaptureScreen',
+  'boardOverlayIsSharing',
+  'boardOverlaySetIgnoreMouse',
+  'notifyScreenShareStopped',
 ]
 
 /**

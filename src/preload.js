@@ -248,6 +248,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onBoardOverlayUndo: (callback) => ipcRenderer.on('board-overlay:undo', () => callback()),
   /** 覆盖窗口：请求关闭自身 */
   boardOverlayClose: () => ipcRenderer.send('board-overlay:close'),
+  /** 覆盖窗口：上传图片 / 截图作底图（{ src, ratio }）→ 转交网页端 addImage 并广播 */
+  boardOverlaySendImage: (img) => ipcRenderer.send('board-overlay:local-image', img),
+  /** 网页端：监听覆盖窗提交的图片底图 */
+  onBoardOverlayRemoteImage: (callback) => ipcRenderer.on('board-overlay:remote-image', (_, img) => callback(img)),
+  /** 覆盖窗口：抓取当前屏幕作为底图（invoke，返回 { src, ratio } | null） */
+  boardOverlayCaptureScreen: () => ipcRenderer.invoke('board-overlay:capture-screen'),
+  /** 网页端：主动查询本机是否正在共享屏幕（invoke，返回 boolean） */
+  boardOverlayIsSharing: () => ipcRenderer.invoke('board-overlay:is-sharing'),
+  /** 屏幕共享 shim：观测到共享轨道已结束 → 通知主进程清除「本机共享中」标记 */
+  notifyScreenShareStopped: () => ipcRenderer.send('board-overlay:share-stopped'),
 })
 
 // 屏幕共享 main-world shim 已迁移到 src/screenshare-shim.js，由主进程在页面加载完成后

@@ -65,6 +65,13 @@ let downloadsWindow = null     // 下载中心面板窗口单例
 let boardOverlayWindow = null  // 画板「真·OS 全屏」透明覆盖窗口单例
 let lastSharedScreen = null    // 共享源（选源窗口路径，优先级高）：{ type:'screen'|'window', displayId, name }
 let shimShareSource = null     // 共享源（shim 路径：SDK 实际共享的那个源，桌面端的主路径）
+// 本机（桌面端）当前是否真的在共享屏幕。
+// ⚠ 真机实测（userData/board-overlay.log）：桌面端会议共享走 getDisplayMedia →
+//   setDisplayMediaRequestHandler（选源窗口也在那里），而 shim 的
+//   chrome.desktopCapture.chooseDesktopMedia 从未被 SDK 调用
+//   —— 日志中 'IPC board-overlay:share-started' 出现 0 次。
+//   因此「共享已开始」的唯一可靠时机是 setDisplayMediaRequestHandler 授予源的那一刻。
+let screenShareActive = false
 let downloads = []             // 下载任务：[{ id, filename, savePath, url, state, receivedBytes, totalBytes, item }]
 let downloadSeq = 0            // 自增 id
 // ─── Tray icon state management ───────────────────────────
@@ -657,6 +664,9 @@ function setupScreenShare() {
         '| picked:', (picked.id + ' (' + picked.name + ')'),
         '| callback(audio:' + (streams.audio || 'omitted-video-only') + ')')
       callback(streams)
+      // ★ 桌面端会议共享的「已开始」判定点：getDisplayMedia 已拿到用户选中的源。
+      //   通知网页端「本机共享中」→ 用户随后点「画板」时才会开系统级屏幕画板而非网页画板。
+      notifySelfScreenShare(true)
       // 注意：共享源确定后【不再】自动打开画板覆盖窗口（需求4：开启屏幕共享不可自动开屏板，
       // 必须用户主动点击才开）。记录共享源即可，供用户后续主动开屏板时精确定位。
     }).catch(function (err) {
@@ -3623,6 +3633,20 @@ function notifyBoardUnsupported(reason) {
 }
 
 /**
+ * 通知网页端「本机是否正在共享屏幕」。
+ * 用途：网页端 enterBoard() 据此分流（需求2）—— 共享中开「屏幕画板」（OS 覆盖窗），
+ * 否则开网页画板。网页端**不能**用 hasScreenStream 自判：TUIRoomEngine 把屏幕共享
+ * 当作独立参会人，共享者本人条目的 hasScreenStream 不必然为 true，只有桌面端知道真相。
+ */
+function notifySelfScreenShare(active) {
+  screenShareActive = !!active
+  boardLog('notifySelfScreenShare | active=' + !!active)
+  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+    try { mainPageWindow.webContents.send('board-overlay:self-screen-share', !!active) } catch (e) {}
+  }
+}
+
+/**
  * 覆盖窗口应铺满的屏幕矩形。
  * ⚠ 绝不返回 null：「拿不到 bounds 就拒绝打开」的代价是功能彻底不存在
  *   （原实现即如此 —— 这就是「共享屏幕测多少次都没有系统级画板」的直接原因）。
@@ -3763,11 +3787,10 @@ ipcMain.on('board-overlay:share-started', (e, sourceId) => {
   // 仅记录共享源（用于用户后续主动开屏板时精确定位），【不自动】开覆盖窗（需求4）。
   if (!sourceId) return
   // 需求2：本机开始共享屏幕 → 立即通知网页端「本机正在共享」，供 enterBoard 分流到屏幕画板。
-  // 不能依赖网页 hasScreenStream（屏幕共享在 TUIRoomEngine 是独立参会人，本人 hasScreenStream 不必然为 true），
-  // 故以桌面 share-started 为「本机共享中」的权威真源。
-  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
-    try { mainPageWindow.webContents.send('board-overlay:self-screen-share', true) } catch (e2) {}
-  }
+  // 不能依赖网页 hasScreenStream（屏幕共享在 TUIRoomEngine 是独立参会人，本人 hasScreenStream 不必然为 true）。
+  // 注：本路径（shim）在本项目里实测从未被 SDK 触发，保留作兼容；真正生效的是
+  //     setDisplayMediaRequestHandler 里授予共享源时的 notifySelfScreenShare(true)。
+  notifySelfScreenShare(true)
   desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1, height: 1 } })
     .then(function (list) {
       var hit = (list || []).filter(function (s) { return s.id === sourceId })[0]
@@ -3797,6 +3820,61 @@ ipcMain.on('board-overlay:sync', (e, state) => {
 ipcMain.on('board-overlay:undo', () => {
   if (mainPageWindow && !mainPageWindow.isDestroyed()) {
     mainPageWindow.webContents.send('board-overlay:undo')
+  }
+})
+
+// 屏幕共享已结束（shim 观测到 getDisplayMedia 返回的轨道 ended / stop）→ 清除「本机共享中」标记。
+// 没有这条信号时，标记会滞留为 true，导致「已停止共享后点画板」误开屏幕画板。
+ipcMain.on('board-overlay:share-stopped', () => {
+  boardLog('IPC board-overlay:share-stopped')
+  notifySelfScreenShare(false)
+})
+
+// 网页端主动查询本机是否在共享（应对「推送早于监听注册」或页面刚加载完就已在共享的情况）
+ipcMain.handle('board-overlay:is-sharing', () => !!screenShareActive)
+
+// 覆盖窗「上传图片 / 截图作底图」→ 转交网页端 addImage 并广播（与网页画板功能一致）
+ipcMain.on('board-overlay:local-image', (e, img) => {
+  if (!img || !img.src) return
+  boardLog('IPC board-overlay:local-image | ratio=' + img.ratio)
+  if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+    mainPageWindow.webContents.send('board-overlay:remote-image', img)
+  }
+})
+
+// 覆盖窗「截图当前屏幕作底图」：
+// 先临时隐藏覆盖窗再抓屏，否则会把已经画上去的笔迹一起烤进底图。
+ipcMain.handle('board-overlay:capture-screen', async () => {
+  var hidden = false
+  try {
+    if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) {
+      boardOverlayWindow.hide()
+      hidden = true
+      await new Promise(function (r) { setTimeout(r, 200) })
+    }
+    var list = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1280, height: 720 } })
+    if (!list || !list.length) return null
+    // 覆盖窗所在显示器对应的源优先（多显示器时别截错屏）
+    var hit = null
+    try {
+      var ob = boardOverlayWindow && !boardOverlayWindow.isDestroyed() ? boardOverlayWindow.getBounds() : null
+      if (ob) {
+        hit = list.find(function (s) {
+          var d = screen.getAllDisplays().find(function (x) { return String(x.id) === String(s.display_id) })
+          if (!d) return false
+          return Math.abs(d.bounds.x - ob.x) < 8 && Math.abs(d.bounds.y - ob.y) < 8
+        }) || null
+      }
+    } catch (e2) { hit = null }
+    if (!hit) hit = list[0]
+    var size = hit.thumbnail.getSize()
+    boardLog('capture-screen | sources=' + list.length + ' | hit=' + hit.name + ' | size=' + size.width + 'x' + size.height)
+    return { src: hit.thumbnail.toDataURL(), ratio: size.width / (size.height || 1) }
+  } catch (err) {
+    boardLog('capture-screen failed: ' + (err && err.message))
+    return null
+  } finally {
+    if (hidden && boardOverlayWindow && !boardOverlayWindow.isDestroyed()) boardOverlayWindow.show()
   }
 })
 

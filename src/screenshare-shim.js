@@ -58,6 +58,41 @@
     return !m.chromeMediaSourceId
   }
 
+  // ─── 屏幕共享轨道「已结束」探测 ───
+  // 真机实测：桌面端会议共享走的是 getDisplayMedia（主进程 setDisplayMediaRequestHandler
+  // 弹出自绘选源窗口并回源），而 chrome.desktopCapture.chooseDesktopMedia 从未被 SDK 调用。
+  // 这条路径下 shim 能看到返回的 MediaStream —— 拦下视频轨道的 ended / stop，
+  // 就能给主进程一个可靠的「共享已结束」信号，否则网页端会一直以为自己还在共享，
+  // 表现为「停止共享后再点画板」误开系统级屏幕画板。
+  function hookScreenTrack(stream, tag) {
+    try {
+      var track = stream && stream.getVideoTracks && stream.getVideoTracks()[0]
+      if (!track) return
+      var done = false
+      function notifyStop() {
+        if (done) return
+        done = true
+        log(tag + ' screen-share track ended/stopped → notify main')
+        try {
+          if (window.electronAPI && window.electronAPI.notifyScreenShareStopped) {
+            window.electronAPI.notifyScreenShareStopped()
+          }
+        } catch (e) {}
+      }
+      try { track.addEventListener('ended', notifyStop) } catch (e) {}
+      // 规范：MediaStreamTrack.stop() 不派发 'ended' 事件，SDK 停共享时通常直接调它 → 必须拦截
+      if (typeof track.stop === 'function') {
+        var origStop = track.stop.bind(track)
+        track.stop = function () {
+          try { origStop() } catch (e) {}
+          notifyStop()
+        }
+      }
+    } catch (e) {
+      log(tag + ' hookScreenTrack err: ' + (e && e.message))
+    }
+  }
+
   // ─── A. chrome.desktopCapture mock（TRTC 屏共享的关键入口）───
   // TRTC/TUICallEngine 检测到 Electron UA 后，会优先查找 chrome.desktopCapture API：
   //   if (window.chrome && chrome.desktopCapture && chrome.desktopCapture.chooseDesktopMedia)
@@ -193,6 +228,7 @@
         return origGDM(constraints)
           .then(function (s) {
             log(tag + ' getDisplayMedia OK v=' + !!s.getVideoTracks()[0] + ' a=' + !!s.getAudioTracks()[0])
+            hookScreenTrack(s, tag)
             return s
           })
           .catch(function (e) {
@@ -219,6 +255,7 @@
                 return bound(constraints)
                   .then(function (s) {
                     log(tag + ' getDisplayMedia OK v=' + !!s.getVideoTracks()[0] + ' a=' + !!s.getAudioTracks()[0])
+                    hookScreenTrack(s, tag)
                     return s
                   })
                   .catch(function (e) {
@@ -239,6 +276,7 @@
                 return bound(constraints)
                   .then(function (s) {
                     log(tag + ' getDisplayMedia OK v=' + !!s.getVideoTracks()[0] + ' a=' + !!s.getAudioTracks()[0])
+                    hookScreenTrack(s, tag)
                     return s
                   })
                   .catch(function (e) {
