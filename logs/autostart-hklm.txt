@@ -1,0 +1,7 @@
+﻿== HKLM:\Software\Microsoft\Windows\CurrentVersion\Run
+  SecurityHealth = C:\windows\system32\SecurityHealthSystray.exe
+  TP4A-Teleport = "C:\Users\Administrator\AppData\Roaming\TP4A\Teleport-Assist\tp_assist.exe"
+  WavesSvc = "C:\Program Files\Waves\MaxxAudio\WavesSvc64.exe" -Jack
+  RtkAudUService = "C:\windows\System32\DriverStore\FileRepository\realtekservice.inf_amd64_e54441f6cc56b0cb\RtkAudUService64.exe" -background
+== HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run
+  360Safetray = "C:\Program Files (x86)\360\360Safe\safemon\360Tray.exe" /start

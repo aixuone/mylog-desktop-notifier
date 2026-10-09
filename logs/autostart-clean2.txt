@@ -1,0 +1,9 @@
+﻿REMOVED: electron.app.MyLogNotifier
+----- final Run entries -----
+OneDrive = "C:\Users\Administrator\AppData\Local\Microsoft\OneDrive\OneDrive.exe" /background
+DingTalk = C:\Program Files (x86)\DingDing\DingtalkLauncher.exe /autorun
+Shadowsocks_891219123 = D:\ixuworkspace\科学上网\win-ss.exe
+ctfmon = C:\windows\system32\ctfmon.exe
+ApifoxAppAgent = C:\Users\Administrator\AppData\Roaming\apifox\ApifoxAppAgent.exe 
+WorkBuddy.WorkBuddy = C:\Program Files\WorkBuddy\WorkBuddy.exe
+MicrosoftEdgeAutoLaunch_98769996E24836F99EC8617644423B4C = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --no-startup-window --win-session-start

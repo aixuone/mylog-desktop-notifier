@@ -43,6 +43,34 @@ console.log('[Config] Loaded from config.js')
 // 关沙箱是安全回退，仅当此开关仍不生效、且确认需要时再考虑 --no-sandbox。
 app.commandLine.appendSwitch('enable-features', 'WebRtcDesktopCapture')
 
+// ─── 关闭 Chromium「窗口被遮挡即停渲染」（保护本应用自己的窗口）──
+// 【作用范围要说清】这些开关只影响**本应用（Electron）自己的窗口**，对浏览器等其它进程无效。
+//   真正导致「一开画笔、浏览器里的视频就卡住」的是别的进程的遮挡判定，解法是给覆盖窗补
+//   WS_EX_TOOLWINDOW（见 forceToolWindowStyle）——那份豁免对任何 Chromium 应用都成立。
+//   这几个开关是给**我们自己的窗口**留的保险：会议主窗口被别的应用盖住时，别把它的渲染/定时器
+//   降级，否则会议里对方的视频也会卡住 —— 对会议类应用，这个取舍是必要的。
+//   （注：主窗口已设 backgroundThrottling:false，但那**只**保证 visibilityState 不被置 hidden，
+//    挡不住遮挡侧的停渲染，故仍需这几个开关。）
+// 开关：① disable-features=CalculateNativeWinOcclusion 关闭遮挡计算
+//       ② disable-backgrounding-occluded-windows      被遮挡的窗口不再被 backgrounded
+//       ③ disable-renderer-backgrounding              渲染进程不因后台化而降级
+// 代价：被遮挡的窗口不再自动省电（多耗少量 GPU/CPU）。
+// 注意：① 必须与其它 disable-features 值合并，直接 appendSwitch 会覆盖已有值；
+//       ② 这里刻意用「函数声明 + 调用」，不用 `(function(){...})()` 的 IIFE ——
+//          上一行 appendSwitch(...) 没写分号时，以 `(` 开头的下一行会被解析为「调用上一行的返回值」
+//          （ASI 陷阱），运行时报 `appendSwitch(...) is not a function`；`node --check` 查不出来。
+function applyAntiOcclusionSwitches() {
+  var SWITCH = 'disable-features'
+  var FEATURE = 'CalculateNativeWinOcclusion'
+  var existing = app.commandLine.hasSwitch(SWITCH) ? app.commandLine.getSwitchValue(SWITCH) : ''
+  var all = (existing ? existing.split(',') : []).filter(function (f) { return f && f !== FEATURE })
+  all.push(FEATURE)
+  app.commandLine.appendSwitch(SWITCH, all.join(','))
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
+  app.commandLine.appendSwitch('disable-renderer-backgrounding')
+}
+applyAntiOcclusionSwitches()
+
 // ─── Global state ──────────────────────────────────────────
 let tray = null
 let wsServer = null
@@ -1089,7 +1117,7 @@ function buildWindowMenu() {
         } },
         { type: 'separator' },
         { label: '开机自启', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin,
-          click: (item) => { app.setLoginItemSettings({ openAtLogin: item.checked }); settingsStore.set({ autoStart: item.checked }); updateTrayMenu() } },
+          click: (item) => { setAutoStart(item.checked); settingsStore.set({ autoStart: item.checked }); updateTrayMenu() } },
         { label: '退出', click: () => { isQuitting = true; quitApp() } },
       ],
     },
@@ -1188,7 +1216,7 @@ function updateTrayMenu() {
     type: 'checkbox',
     checked: app.getLoginItemSettings().openAtLogin,
     click: (item) => {
-      app.setLoginItemSettings({ openAtLogin: item.checked })
+      setAutoStart(item.checked)
       settingsStore.set({ autoStart: item.checked })
       updateTrayMenu()
     },
@@ -1609,6 +1637,12 @@ app.whenReady().then(() => {
       if (typeof session.defaultSession.preconnect === 'function') session.defaultSession.preconnect({ url: preUrl })
     } catch (e) { /* 老版本 Electron 无此 API 时静默跳过 */ }
 
+    // 校正开机自启项：若用户已开启自启，确保注册表/登录项带 --hidden（旧版本可能漏写），
+    // 避免系统登录后自动启动仍弹出主窗口。
+    if (settingsStore.get() && settingsStore.get().autoStart) {
+      setAutoStart(true)
+    }
+
     // 启动即打开主页面窗口（默认展示网页，符合"启动时网页窗口应默认打开"）
     openMainPage()
 
@@ -1734,6 +1768,33 @@ function registerMainPageHotkey() {
 }
 
 // ─── 工作台全局快捷键（已移除：功能入口关闭，Ctrl/⌘+Shift+B 不再唤起工作台）───
+
+// 开机自启统一入口：带 --hidden 参数，使系统登录后自动启动时不弹出主窗口（仅驻留托盘）。
+// macOS 额外用 openAsHidden；Windows/Linux 通过 args 把 --hidden 传给启动进程，由 openMainPage 识别。
+function setAutoStart(v) {
+  const AUTO_START_NAME = 'com.tianyuan.mylog.desktop-notifier'
+  try {
+    if (!v) {
+      app.setLoginItemSettings({ openAtLogin: false, name: AUTO_START_NAME })
+      return
+    }
+    // 打包版：exe 即应用本体，参数只需 --hidden（开机隐藏启动）。
+    // 开发版：必须把「应用目录」作为第一个参数传给 electron，否则注册表里只会写入
+    //   node_modules/electron/dist/electron.exe（无 app 路径）—— 开机时 Electron 找不到
+    //   应用，会退回内置默认欢迎页（标题 "Electron"、内容 "To run a local app..."）。
+    //   这正是历史上开机弹出 Electron 默认窗口的根因。
+    const args = app.isPackaged ? ['--hidden'] : [app.getAppPath(), '--hidden']
+    app.setLoginItemSettings({
+      openAtLogin: true,
+      name: AUTO_START_NAME,
+      args,
+      openAsHidden: process.platform === 'darwin',
+    })
+  } catch (e) { console.warn('[AutoStart] setLoginItemSettings 失败:', e && e.message) }
+}
+
+// 本次启动是否由「开机自启」带 --hidden 触发（仅进程启动时判定一次）
+const LAUNCHED_HIDDEN = process.argv.includes('--hidden')
 
 function openMainPage() {
   const rawUrl = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
@@ -1971,7 +2032,10 @@ function openMainPage() {
   // 随后在后台加载远程主页，完成即替换内容。这样：① 窗口即时可见、无"隐藏后突然弹出"；
   // ② 底色为 app 灰（backgroundColor）而非默认白，消除白屏闪烁；③ 远程 SPA 慢加载期间有品牌加载页兜底。
   mainPageWindow.once('ready-to-show', () => {
-    try { mainPageWindow.show(); mainPageWindow.focus() } catch (e) {}
+    // 开机自启（带 --hidden）时不主动弹出窗口，仅驻留托盘；用户可点托盘「打开主页面」手动唤出
+    if (!LAUNCHED_HIDDEN) {
+      try { mainPageWindow.show(); mainPageWindow.focus() } catch (e) {}
+    }
     // 初始推送一次窗口状态（非最大化），保证标题栏图标初始为"最大化"
     pushTitlebarState()
   })
@@ -2711,7 +2775,7 @@ ipcMain.handle('ringtone-delete', (event, rel) => {
 
 ipcMain.on('set-auto-start', (event, value) => {
   const v = !!value
-  app.setLoginItemSettings({ openAtLogin: v })
+  setAutoStart(v)
   settingsStore.set({ autoStart: v })
   updateTrayMenu()
 })
@@ -3647,6 +3711,30 @@ function notifySelfScreenShare(active) {
 }
 
 /**
+ * 诊断取样：把会议页的「可见性 + <video> 帧数」写进 board-overlay.log。
+ * 用途：定位「开画笔后视频画面消失」究竟是哪一层停了 ——
+ *   vis=hidden            → 页面被判为不可见（visibility 层）
+ *   frames 不再增长       → 视频解码/渲染确实停了（媒体层）
+ *   frames 持续增长       → 画面数据还在，问题在合成/呈现层（GPU overlay 之类）
+ * 只在模式切换时取样（进入/退出绘制模式各两次），不影响性能。
+ */
+function sampleMainPageVideo(tag) {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+  var code = '(function(){try{' +
+    'var vs=Array.prototype.slice.call(document.querySelectorAll("video"));' +
+    'var frames=0,playing=0;' +
+    'vs.forEach(function(v){try{var q=v.getVideoPlaybackQuality?v.getVideoPlaybackQuality():null;' +
+    'frames+=(q&&q.totalVideoFrames)||0;if(!v.paused)playing++;}catch(e){}});' +
+    'return {vis:document.visibilityState,hidden:document.hidden,videos:vs.length,playing:playing,frames:frames};' +
+    '}catch(e){return {err:String(e&&e.message)}}})()'
+  mainPageWindow.webContents.executeJavaScript(code, true).then(function (r) {
+    boardLog('videoSample[' + tag + '] ' + JSON.stringify(r))
+  }).catch(function (e) {
+    boardLog('videoSample[' + tag + '] failed: ' + (e && e.message))
+  })
+}
+
+/**
  * 覆盖窗口应铺满的屏幕矩形。
  * ⚠ 绝不返回 null：「拿不到 bounds 就拒绝打开」的代价是功能彻底不存在
  *   （原实现即如此 —— 这就是「共享屏幕测多少次都没有系统级画板」的直接原因）。
@@ -3668,6 +3756,70 @@ function resolveBoardOverlayBounds() {
   }
   boardLog('no share source recorded yet → fallback to cursor display')
   return Promise.resolve(resolveCursorDisplayBounds())
+}
+
+/**
+ * 给覆盖窗补上 WS_EX_TOOLWINDOW 扩展样式 —— 这是「一开画笔，屏幕上其它应用的视频就卡住」的正解。
+ *
+ * 为什么必须：Chromium 的窗口遮挡判定（`ui/gfx/win/hwnd_util.cc` 的 `IsWindowVisibleAndFullyOpaque`）
+ * 决定「谁有资格当遮挡者」，其中两条豁免恰好对应我们的两种模式：
+ *     if (ex_styles & WS_EX_TRANSPARENT) return false;   // 鼠标模式：整窗穿透 → 不算遮挡 ← 所以那时一切正常
+ *     if (ex_styles & WS_EX_TOOLWINDOW)  return false;   // ← 绘制模式要的就是这一条
+ * 拿不到这条豁免时，浏览器（Chrome/Edge 等**任何** Chromium 应用）会判定自己的窗口「被完全盖住」，
+ * 于是停掉页面渲染与视频解码 —— 典型症状：视频区域发虚/模糊、进度条不走、音频却照常，切回鼠标模式即恢复。
+ * 注意：Electron 的 `transparent:true` 是逐像素 alpha，Chromium 认不出来；`skipTaskbar` 走的是
+ * ITaskbarList.DeleteTab，也不带这个样式 —— 所以只能显式设置。
+ * 副作用：不出现在任务栏与 Alt-Tab（本来也不该出现）；窗口仍可正常接收鼠标/键盘。
+ */
+function forceToolWindowStyle(win) {
+  return new Promise(function (resolve) {
+    if (process.platform !== 'win32' || !win || win.isDestroyed()) return resolve(false)
+    var hwnd = null
+    try {
+      var buf = win.getNativeWindowHandle()
+      hwnd = buf.length >= 8 ? buf.readBigInt64LE(0).toString() : String(buf.readUInt32LE(0))
+    } catch (e) { hwnd = null }
+    if (!hwnd) {
+      boardLog('toolwindow style skipped | cannot read hwnd')
+      return resolve(false)
+    }
+    // 与 queryWindowRectNative 同一套路：here-string 内嵌 C#，execFile 不经过 shell，引号安全
+    var ps = [
+      "Add-Type -TypeDefinition @'",
+      'using System;',
+      'using System.Runtime.InteropServices;',
+      'public class MyLogToolWin {',
+      '  [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr h, int i);',
+      '  [DllImport("user32.dll", EntryPoint="SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr(IntPtr h, int i, IntPtr v);',
+      '  public static string Mark(IntPtr h) {',
+      '    int GWL_EXSTYLE = -20; long WS_EX_TOOLWINDOW = 0x80;',
+      '    long before = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();',
+      '    SetWindowLongPtr(h, GWL_EXSTYLE, (IntPtr)(before | WS_EX_TOOLWINDOW));',
+      '    long after = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();',
+      '    return "0x" + before.ToString("X") + ",0x" + after.ToString("X");',
+      '  }',
+      '}',
+      "'@",
+      '  [MyLogToolWin]::Mark([IntPtr]' + hwnd + ')',
+    ].join('\n')
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+      { timeout: 8000, windowsHide: true },
+      function (err, stdout) {
+        if (err) {
+          boardLog('toolwindow style FAILED | ' + err.message)
+          return resolve(false)
+        }
+        var out = String(stdout || '').trim().split(/\r?\n/).pop() || ''
+        var parts = out.split(',')
+        var after = parts.length === 2 ? parseInt(parts[1].replace('0x', ''), 16) : NaN
+        var ok = isFinite(after) && (after & 0x80) !== 0
+        boardLog('toolwindow style ' + (ok ? 'OK' : 'UNVERIFIED') + ' | ex-style=' + out)
+        resolve(ok)
+      },
+    )
+  })
 }
 
 async function openBoardOverlay() {
@@ -3705,6 +3857,10 @@ async function openBoardOverlay() {
   win.setMenu(null)
   // 置顶到屏幕级（'screen-saver' 层级，确保盖在绝大多数窗口之上）
   win.setAlwaysOnTop(true, 'screen-saver')
+  // ★ 关键：补 WS_EX_TOOLWINDOW —— 否则 Chromium 系应用（浏览器、IDE，以及我们自己的会议窗口）
+  //   会把「被这扇全屏置顶透明窗盖住」判定为遮挡，进而停掉渲染（视频卡住/发虚、进度不走）。
+  //   不 await，避免阻塞开窗；结果与前后样式值写进 board-overlay.log 便于验证。
+  forceToolWindowStyle(win).catch(function () {})
 
   // ⚠ 关键：transparent:true 的窗口在 Windows 上 `ready-to-show` 经常不触发 →
   //   窗口已创建却永远不 show，表现就是「点了共享屏幕，画板窗口没出现」。
@@ -3887,12 +4043,25 @@ ipcMain.on('board-overlay:clear', () => {
 
 // 覆盖窗「鼠标模式」点击穿透：让整个透明窗口忽略鼠标（桌面可操作），
 // 仅工具栏悬停区域由网页端切回可点（见 board-overlay.html 的 hover 逻辑）。
+// 上一次「整窗忽略鼠标」的状态。pointer 模式下网页端 mousemove 会高频调用本通道，
+// 只在状态真正切换时才写日志/取样，避免刷日志。
+let lastIgnoreMouseState = null
 ipcMain.on('board-overlay:set-ignore-mouse', (e, ignore, forward) => {
+  var next = !!ignore
   try {
     if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) {
-      boardOverlayWindow.setIgnoreMouseEvents(!!ignore, { forward: !!forward })
+      boardOverlayWindow.setIgnoreMouseEvents(next, { forward: !!forward })
     }
   } catch (err) {
     boardLog('set-ignore-mouse failed: ' + (err && err.message))
+  }
+  if (next !== lastIgnoreMouseState) {
+    lastIgnoreMouseState = next
+    boardLog('mouse mode → ' + (next ? 'pointer(整窗穿透桌面)' : 'draw(覆盖窗接收鼠标)'))
+    // 进入绘制模式时覆盖窗才构成「完整遮挡」，此处最可能触发视频停渲染 → 前后取样对比
+    sampleMainPageVideo(next ? 'back-to-pointer' : 'enter-draw')
+    if (!next) {
+      setTimeout(function () { sampleMainPageVideo('enter-draw+2.5s') }, 2500)
+    }
   }
 })
