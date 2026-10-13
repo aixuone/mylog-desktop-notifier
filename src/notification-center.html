@@ -162,6 +162,7 @@ if (!api) {
   var settings = {}
   var unreadList = []
   var sysAlerts = {}
+  var focusId = null   // 本次弹窗聚焦展示的会话（主进程下发）：确保只显示触发弹窗的那条，不残留其它未读会话内容
   var audioEl = document.getElementById('nc-audio')
 
   function fmtTime(ts) {
@@ -201,28 +202,25 @@ if (!api) {
       sysp.forEach(function (id) { html += sysCardHtml(sysAlerts[id]) })
     }
 
-    var MAX_VISIBLE = 4
-    var convShown = 0
-    var hiddenCount = 0
-
-    // 只显示有未读数(count>0)的会话
+    // 只展示「本次触发弹窗的那条」未读消息：优先 focusId，找不到再按时间倒序取最新；
+    // 其余未读会话只保留在通知中心列表里（不在弹窗中陈列），避免残留其它会话内容。
     var activeUnread = unreadList.filter(function (it) { return (it.count || 0) > 0 })
+      .sort(function (a, b) { return (b.time || 0) - (a.time || 0) })
 
     if (activeUnread.length > 0) {
+      var head = null
+      if (focusId) {
+        head = activeUnread.filter(function (it) { return it.conversationId === focusId })[0] || null
+      }
+      if (!head) head = activeUnread[0]
       html += '<div class="section-title">会话</div>'
-      activeUnread.forEach(function (it, idx) {
-        if (convShown < MAX_VISIBLE) {
-          html += convHtml(it)
-          convShown++
-        } else {
-          hiddenCount += (it.count || 1)
-        }
-      })
-    }
-
-    // 还有更多未读
-    if (hiddenCount > 0) {
-      html += '<div class="more-footer" id="more-footer">还有 ' + hiddenCount + ' 条未读消息</div>'
+      html += convHtml(head)   // 仅渲染这一条
+      var rest = activeUnread.reduce(function (s, it) {
+        return s + (it.conversationId === head.conversationId ? 0 : (it.count || 1))
+      }, 0)
+      if (rest > 0) {
+        html += '<div class="more-footer" id="more-footer">还有 ' + rest + ' 条未读消息</div>'
+      }
     }
 
     if (sysp.length === 0 && activeUnread.length === 0) {
@@ -230,8 +228,10 @@ if (!api) {
     }
     list.innerHTML = html
 
-    // 动态调整窗口高度
-    requestAnimationFrame(resizeWindow)
+    // 动态调整窗口高度：直接同步测量（读 scrollHeight 会强制布局），
+    // 不用 requestAnimationFrame —— 隐藏窗口的 rAF 会被节流，导致高度回传延迟、
+    // 主进程只能用占位高度先 show，进而出现「先长后短」的闪动。
+    resizeWindow()
 
     // "还有更多" 点击 → 标记全部已读（简化：直接清空）
     var moreBtn = document.getElementById('more-footer')
@@ -305,6 +305,7 @@ if (!api) {
 
   api.onNcUnread(function (data) {
     unreadList = data.unread || []
+    focusId = data.focusId || null
     renderUnread()
   })
 

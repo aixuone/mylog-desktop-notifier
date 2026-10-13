@@ -212,6 +212,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Open browser to conversation page */
   openBrowser: (url) => ipcRenderer.send('open-browser', url),
 
+  // ─── Clipboard (复制图片到系统剪贴板) ──────────
+  /** 将图片字节写入系统剪贴板（主进程原生 clipboard.writeImage），供粘贴到钉钉 / 其他会话 */
+  copyImage: (buffer) => ipcRenderer.invoke('clipboard:copy-image', buffer),
+
   // ─── 画板「真·OS 全屏」覆盖窗口 ──────────────
   /** 网页端：请求开关画板全屏覆盖窗口 */
   boardOverlayToggle: () => ipcRenderer.send('board-overlay:toggle'),

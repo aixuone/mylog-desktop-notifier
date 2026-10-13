@@ -3439,6 +3439,21 @@ ipcMain.handle('workbench-paste-screenshot', () => {
   }
 })
 
+// 复制图片到系统剪贴板：渲染进程经 IPC 把图片字节交给主进程，
+// 由原生 clipboard.writeImage 写入【系统剪贴板】，从而可被钉钉 / 其他会话 / 其他应用读取。
+// （Electron 渲染进程的 navigator.clipboard.write 写图片不可靠，会抛 NotAllowedError）
+ipcMain.handle('clipboard:copy-image', (_e, buffer) => {
+  try {
+    const image = nativeImage.createFromBuffer(Buffer.from(buffer))
+    if (image.isEmpty()) return { ok: false, error: 'empty image' }
+    clipboard.writeImage(image)
+    return { ok: true }
+  } catch (e) {
+    console.error('[Clipboard] copy-image failed:', e && e.message)
+    return { ok: false, error: String((e && e.message) || e) }
+  }
+})
+
 ipcMain.handle('workbench-read-image', (e, filename) => workbenchStore.readImageDataUrl(filename))
 ipcMain.handle('workbench-open-image', (e, filename) => {
   try { shell.openPath(workbenchStore.imageFullPath(filename)) } catch (e) { /* ignore */ }
