@@ -26,6 +26,16 @@
     "asarUnpack": [
       "assets/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "vendor/php",
+        "to": "vendor/php"
+      },
+      {
+        "from": "vendor/snappymail",
+        "to": "vendor/snappymail"
+      }
+    ],
     "directories": {
       "output": "dist-installer-new"
     },
@@ -98,7 +108,10 @@
     }
   },
   "dependencies": {
+    "imapflow": "^2.4.2",
+    "mailparser": "^3.7.1",
     "pinyin-pro": "^3.29.1",
+    "sanitize-html": "2.17.0",
     "solarlunar": "^3.1.0",
     "ws": "8.18.0"
   },
