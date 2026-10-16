@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>邮箱 · e日志</title>
+<style>
+@font-face {
+  font-family: 'System UI';
+  src: local('Microsoft YaHei UI'), local('Microsoft YaHei'),
+       local('PingFang SC'), local('Noto Sans CJK SC'), local(system-ui), local(sans-serif);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: 'System UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  color: #2C2C2A; font-size: 13px; overflow: hidden;
+  background: #F6F8FA;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; cursor: pointer; }
+.btn {
+  border: none; border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  background: #185FA5; color: #fff; transition: background .15s;
+}
+.btn:hover { background: #0C447C; }
+.btn.ghost { background: #E6F1FB; color: #0C447C; }
+.btn.ghost:hover { background: #B5D4F4; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+input, select {
+  font-family: inherit; font-size: 13px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid #D3D1C7; background: #fff; color: #2C2C2A; width: 100%;
+}
+input:focus, select:focus { outline: none; border-color: #185FA5; }
+
+/* ── 布局 ── */
+#app { display: flex; height: 100vh; }
+.sidebar {
+  width: 210px; background: #fff; border-right: 1px solid #E5E8EC;
+  display: flex; flex-direction: column; padding: 12px 10px;
+}
+.sidebar .compose {
+  width: 100%; margin-bottom: 14px; background: #185FA5; color:#fff; border:none;
+  border-radius: 9px; padding: 10px; font-weight: 700; font-size: 13px;
+}
+.sidebar .compose:disabled { background: #cfd6df; cursor: not-allowed; }
+.sidebar .section-label { font-size: 11px; color: #9AA4B2; font-weight: 700; padding: 4px 6px; letter-spacing: .5px; }
+.folder {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px;
+  color: #2C2C2A; cursor: pointer; user-select: none; margin-bottom: 2px;
+}
+.folder:hover { background: #F1F4F8; }
+.folder.active { background: #E6F1FB; color: #0C447C; font-weight: 600; }
+.folder .badge {
+  margin-left: auto; background: #A32D2D; color:#fff; border-radius: 10px;
+  font-size: 11px; padding: 1px 7px; min-width: 18px; text-align: center;
+}
+.folder .ic { width: 16px; text-align: center; opacity: .8; }
+
+.list-pane { width: 340px; background: #FBFCFE; border-right: 1px solid #E5E8EC; display: flex; flex-direction: column; }
+.list-head {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #E5E8EC;
+}
+.list-head .title { font-weight: 700; font-size: 14px; }
+.list-head .spacer { flex: 1; }
+.list-head .refresh { background: transparent; border: 1px solid #D3D1C7; border-radius: 8px; padding: 5px 9px; color:#5F5E5A; }
+.list-head .refresh:hover { background: #F1F4F8; }
+.mail-list { flex: 1; overflow-y: auto; }
+.mail-item {
+  padding: 10px 12px; border-bottom: 1px solid #EEF1F5; cursor: pointer; display: flex; gap: 8px;
+}
+.mail-item:hover { background: #F4F8FC; }
+.mail-item.active { background: #E6F1FB; }
+.mail-item.unread .from { font-weight: 700; }
+.mail-item .dot { width: 8px; flex-shrink: 0; }
+.mail-item .dot i { display:block; width:8px; height:8px; border-radius:50%; background:#185FA5; margin-top:5px; }
+.mail-item.read .dot i { background: transparent; }
+.mail-item .col { flex: 1; min-width: 0; }
+.mail-item .row-top { display: flex; align-items: baseline; gap: 8px; }
+.mail-item .row-top .from { flex: 1; min-width: 0; }
+.mail-item .row-top .time { font-size: 11px; color: #9AA4B2; flex-shrink: 0; }
+.mail-item .from { font-size: 13px; color: #2C2C2A; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mail-item .subj { font-size: 12.5px; color: #444; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mail-item .meta { font-size: 11px; color: #9AA4B2; display:flex; gap:6px; margin-top:2px; overflow: hidden; }
+.mail-item .meta span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mail-item .att { color:#185FA5; }
+
+.detail-pane { flex: 1; display: flex; flex-direction: column; background: #fff; min-width: 0; }
+.detail-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: #9AA4B2; }
+.detail-head { padding: 14px 18px; border-bottom: 1px solid #E5E8EC; }
+.detail-head .subject { font-size: 16px; font-weight: 700; margin-bottom: 8px; word-break: break-word; }
+.detail-head .from-line { font-size: 12.5px; color: #444; display:flex; flex-wrap: wrap; gap: 4px 14px; }
+.detail-head .from-line b { color:#2C2C2A; font-weight:600; }
+.detail-head .toolbar { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
+.detail-body { flex: 1; overflow: hidden; }
+.detail-body iframe { width: 100%; height: 100%; border: none; background: #fff; }
+.detail-text { padding: 16px 18px; white-space: pre-wrap; word-break: break-word; line-height: 1.7; overflow-y: auto; height: 100%; }
+.attachments { padding: 10px 18px; border-top: 1px solid #E5E8EC; background: #FBFCFE; }
+.attachments .ttl { font-size: 11px; color: #9AA4B2; font-weight: 700; margin-bottom: 6px; }
+.att-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid #E5E8EC; border-radius: 8px; background:#fff; margin-bottom: 6px; }
+.att-row .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+.att-row .size { font-size: 11px; color: #9AA4B2; }
+.att-row .acts { display: flex; gap: 6px; }
+.att-row .acts button { border: 1px solid #D3D1C7; background:#fff; border-radius: 7px; padding: 4px 10px; font-size: 12px; color:#0C447C; }
+.att-row .acts button:hover { background:#E6F1FB; }
+
+/* ── 向导 ── */
+.overlay {
+  position: fixed; inset: 0; background: rgba(244,246,249,.96); z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+}
+.overlay.hidden { display: none; }
+.wizard { width: 460px; background: #fff; border: 1px solid #E5E8EC; border-radius: 14px; padding: 24px; box-shadow: 0 10px 40px rgba(31,45,61,.10); }
+.wizard h2 { font-size: 17px; margin-bottom: 4px; }
+.wizard .sub { color: #7A869A; font-size: 12.5px; margin-bottom: 18px; }
+.wizard .field { margin-bottom: 14px; }
+.wizard .field label { display:block; font-size: 12px; color:#5F5E5A; margin-bottom: 5px; font-weight:600; }
+.wizard .step-dots { display:flex; gap:6px; margin-bottom: 16px; }
+.wizard .step-dots i { width: 22px; height: 4px; border-radius: 2px; background: #D3D1C7; }
+.wizard .step-dots i.on { background: #185FA5; }
+.wizard .hint { font-size: 12px; color: #7A869A; line-height: 1.6; background:#F1F4F8; padding: 10px 12px; border-radius: 8px; margin-bottom: 14px; }
+.wizard .hint b { color:#0C447C; }
+.wizard .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+.wizard .err { color:#A32D2D; font-size: 12.5px; margin-top: 8px; min-height: 16px; }
+.wizard textarea { width:100%; min-height: 70px; border:1px solid #D3D1C7; border-radius:8px; padding:8px 10px; font-family: inherit; font-size:13px; resize: vertical; }
+
+/* ── 新邮件提示 ── */
+#toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  background: #0C447C; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px;
+  box-shadow: 0 6px 20px rgba(12,68,124,.35); opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 60;
+}
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="sidebar">
+    <button class="compose" id="composeBtn" disabled title="发信功能即将开放">写邮件（即将开放）</button>
+    <div class="section-label">文件夹</div>
+    <div id="folders"></div>
+  </div>
+
+  <div class="list-pane">
+    <div class="list-head">
+      <span class="title" id="listTitle">收件箱</span>
+      <span class="spacer"></span>
+      <button class="refresh" id="refreshBtn" title="刷新">⟳</button>
+    </div>
+    <div class="mail-list" id="mailList"></div>
+  </div>
+
+  <div class="detail-pane">
+    <div class="detail-empty" id="detailEmpty">选择一封邮件查看内容</div>
+    <div id="detail" style="display:none; flex:1; flex-direction:column; min-height:0;">
+      <div class="detail-head">
+        <div class="subject" id="dSubject"></div>
+        <div class="from-line">
+          <span>发件人：<b id="dFrom"></b></span>
+          <span>收件人：<b id="dTo"></b></span>
+          <span id="dCcWrap" style="display:none;">抄送：<b id="dCc"></b></span>
+          <span id="dDate"></span>
+        </div>
+        <div class="toolbar">
+          <label style="font-size:12px;color:#5F5E5A;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="showImages" style="width:auto;"> 显示外部图片
+          </label>
+        </div>
+      </div>
+      <div class="detail-body">
+        <iframe id="dFrame" sandbox="allow-popups" referrerpolicy="no-referrer"></iframe>
+        <div class="detail-text" id="dText" style="display:none;"></div>
+      </div>
+      <div class="attachments" id="dAttach" style="display:none;">
+        <div class="ttl">附件</div>
+        <div id="attList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 授权向导 -->
+<div class="overlay" id="wizard">
+  <div class="wizard">
+    <h2>添加阿里企业邮箱</h2>
+    <div class="sub">只需三步，把收件权限交给桌面端（仅同步查看，不发信）</div>
+    <div class="step-dots"><i id="dot1" class="on"></i><i id="dot2"></i><i id="dot3"></i></div>
+
+    <!-- step1 -->
+    <div id="step1">
+      <div class="field">
+        <label>邮箱地址</label>
+        <input id="wEmail" type="text" placeholder="name@your-company.com" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>IMAP 服务器（已按阿里企业邮箱预填，一般无需改）</label>
+        <div style="display:flex; gap:8px;">
+          <input id="wHost" type="text" value="imap.qiye.aliyun.com" style="flex:2;">
+          <input id="wPort" type="number" value="993" style="flex:1;">
+        </div>
+      </div>
+      <div class="err" id="err1"></div>
+      <div class="actions">
+        <button class="btn" id="next1">下一步</button>
+      </div>
+    </div>
+
+    <!-- step2 -->
+    <div id="step2" style="display:none;">
+      <div class="hint">
+        阿里企业邮箱不支持直接给桌面端授权，需先在网页邮箱生成一个 <b>客户端授权码</b>：<br>
+        1. 点击下方按钮打开阿里企业邮箱网页；<br>
+        2. 进入 <b>设置 → 账户 → 开启 IMAP/SMTP</b>，找到 <b>生成授权码</b>；<br>
+        3. 复制那串 16 位字符，粘贴到下方。
+      </div>
+      <div class="field">
+        <button class="btn ghost" id="openAuth" style="width:100%;">去阿里邮箱生成授权码</button>
+      </div>
+      <div class="field">
+        <label>客户端授权码（16 位，非登录密码）</label>
+        <textarea id="wCode" placeholder="粘贴授权码"></textarea>
+      </div>
+      <div class="err" id="err2"></div>
+      <div class="actions">
+        <button class="btn ghost" id="back2">上一步</button>
+        <button class="btn" id="next2">下一步</button>
+      </div>
+    </div>
+
+    <!-- step3 -->
+    <div id="step3" style="display:none;">
+      <div class="hint">点击下方按钮，用你填的邮箱和授权码实测一次连接。通过后即保存配置。</div>
+      <div class="err" id="err3"></div>
+      <div class="actions">
+        <button class="btn ghost" id="back3">上一步</button>
+        <button class="btn" id="test3">测试连接并保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id)
+let CFG = null            // { email, imapHost, imapPort, imapSecure }
+let FOLDERS = []          // 已加载的文件夹元数据（含 specialUse）
+let currentFolder = 'INBOX'
+let currentMsg = null     // 当前打开邮件详情
+let showImages = false
+
+// ── 工具 ──
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) }
+function fmtSize(n) { n = n || 0; return n < 1024 ? n + ' B' : n < 1048576 ? (n/1024).toFixed(1) + ' KB' : (n/1048576).toFixed(1) + ' MB' }
+function fmtDate(t) {
+  if (!t) return ''
+  const d = new Date(t); if (isNaN(d)) return ''
+  const p = n => (n<10?'0':'')+n
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+// 列表里的紧凑时间：今天只显示时分，今年显示月-日，更早显示年-月-日
+function fmtListTime(t) {
+  if (!t) return ''
+  const d = new Date(t); if (isNaN(d)) return ''
+  const p = n => (n<10?'0':'')+n
+  const now = new Date()
+  if (d.toDateString() === now.toDateString()) return `${p(d.getHours())}:${p(d.getMinutes())}`
+  if (d.getFullYear() === now.getFullYear()) return `${p(d.getMonth()+1)}-${p(d.getDate())}`
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`
+}
+// 地址显示：有名字优先显示「名字 <地址>」，只有地址就显示地址
+function fmtAddr(a) {
+  if (!a) return ''
+  const name = (a.name || '').trim()
+  const addr = (a.address || '').trim()
+  if (name && addr) return name + ' <' + addr + '>'
+  return name || addr
+}
+function folderLabel(f) {
+  const su = (f.specialUse || '').toUpperCase()
+  if (su.includes('INBOX')) return '收件箱'
+  if (su.includes('SENT')) return '已发送'
+  if (su.includes('DRAFT')) return '草稿'
+  if (su.includes('TRASH')) return '垃圾箱'
+  if (su.includes('JUNK') || su.includes('SPAM')) return '垃圾邮件'
+  if (su.includes('FLAGGED')) return '收藏（星标）'
+  return f.name || f.path
+}
+function folderIcon(f) {
+  const su = (f.specialUse || '').toUpperCase()
+  if (su.includes('INBOX')) return '📥'
+  if (su.includes('SENT')) return '📤'
+  if (su.includes('DRAFT')) return '📝'
+  if (su.includes('TRASH')) return '🗑'
+  if (su.includes('JUNK') || su.includes('SPAM')) return '⚠'
+  if (su.includes('FLAGGED')) return '★'
+  return '📁'
+}
+
+// ── 启动 ──
+async function boot() {
+  try {
+    CFG = await window.electronAPI.emailConfigLoad()
+  } catch (e) { CFG = null }
+  if (CFG && CFG.configured) {
+    hideWizard()
+    await loadFolders()
+  } else {
+    showWizard()
+  }
+}
+
+// ── 向导 ──
+function showWizard() { $('wizard').classList.remove('hidden') }
+function hideWizard() { $('wizard').classList.add('hidden') }
+function gotoStep(n) {
+  $('step1').style.display = n===1?'block':'none'
+  $('step2').style.display = n===2?'block':'none'
+  $('step3').style.display = n===3?'block':'none'
+  $('dot1').className = n>=1?'on':''
+  $('dot2').className = n>=2?'on':''
+  $('dot3').className = n>=3?'on':''
+}
+$('next1').onclick = () => {
+  const email = $('wEmail').value.trim()
+  const host = $('wHost').value.trim()
+  const port = parseInt($('wPort').value, 10)
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { $('err1').textContent = '请输入有效的邮箱地址'; return }
+  if (!host || !port) { $('err1').textContent = '请填写 IMAP 服务器与端口'; return }
+  CFG = { email, imapHost: host, imapPort: port, imapSecure: true }
+  $('err1').textContent = ''
+  gotoStep(2)
+}
+$('openAuth').onclick = () => {
+  // 打开阿里企业邮箱网页（用户自行找「设置→账户→授权码」）
+  if (window.electronAPI.openBrowser) window.electronAPI.openBrowser('https://qiye.aliyun.com/')
+}
+$('back2').onclick = () => gotoStep(1)
+$('next2').onclick = () => {
+  const code = $('wCode').value.trim().replace(/\s+/g, '')
+  if (code.length < 6) { $('err2').textContent = '请粘贴授权码（一般 16 位字符）'; return }
+  $('err2').textContent = ''
+  gotoStep(3)
+}
+$('back3').onclick = () => gotoStep(2)
+$('test3').onclick = async () => {
+  const code = $('wCode').value.trim().replace(/\s+/g, '')
+  $('err3').textContent = '正在连接测试…'
+  $('test3').disabled = true
+  try {
+    const res = await window.electronAPI.emailTest(Object.assign({}, CFG, { authCode: code }))
+    if (res && res.ok) {
+      await window.electronAPI.emailConfigSave(Object.assign({}, CFG, { authCode: code }))
+      hideWizard()
+      await loadFolders()
+    } else {
+      $('err3').textContent = (res && res.error) || '连接失败，请检查邮箱/授权码/服务器'
+    }
+  } catch (e) {
+    $('err3').textContent = '测试异常：' + (e && e.message ? e.message : e)
+  } finally {
+    $('test3').disabled = false
+  }
+}
+
+// ── 文件夹 ──
+async function loadFolders() {
+  const res = await window.electronAPI.emailMailboxes()
+  if (!res || !res.ok) { toast((res&&res.error)||'读取文件夹失败'); return }
+  const folders = res.mailboxes || []
+  FOLDERS = folders
+  const box = $('folders')
+  box.innerHTML = ''
+  if (!folders.length) {
+    box.innerHTML = '<div style="padding:10px;color:#9AA4B2;font-size:12px;">未找到任何文件夹</div>'
+    return
+  }
+  folders.forEach(f => {
+    const el = document.createElement('div')
+    el.className = 'folder' + (f.path === currentFolder ? ' active' : '')
+    el.dataset.path = f.path
+    const indent = (f.depth || 0) * 12
+    el.style.paddingLeft = (10 + indent) + 'px'
+    el.innerHTML = `<span class="ic">${folderIcon(f)}</span><span>${esc(folderLabel(f))}</span>`
+    el.onclick = () => selectFolder(f.path)
+    box.appendChild(el)
+  })
+  selectFolder(currentFolder)
+}
+
+async function selectFolder(path) {
+  currentFolder = path
+  document.querySelectorAll('.folder').forEach(e => e.classList.toggle('active', e.dataset.path === path))
+  const f = getCurrentFolderMeta()
+  $('listTitle').textContent = folderLabel(f) || path
+  await loadMessages(path)
+}
+
+function getCurrentFolderMeta() {
+  const found = FOLDERS.find(f => f.path === currentFolder)
+  return found || { path: currentFolder, name: currentFolder, specialUse: '' }
+}
+
+// ── 邮件列表 ──
+async function loadMessages(folder) {
+  const list = $('mailList')
+  list.innerHTML = '<div style="padding:16px;color:#9AA4B2;font-size:12px;">加载中…</div>'
+  const res = await window.electronAPI.emailMessages(folder, 60)
+  if (!res || !res.ok) { list.innerHTML = '<div style="padding:16px;color:#A32D2D;font-size:12px;">' + esc((res&&res.error)||'加载失败') + '</div>'; return }
+  const msgs = res.messages || []
+  if (!msgs.length) { list.innerHTML = '<div style="padding:16px;color:#9AA4B2;font-size:12px;">没有邮件</div>'; return }
+  list.innerHTML = ''
+  msgs.forEach(m => list.appendChild(renderMailItem(m)))
+}
+
+function renderMailItem(m) {
+  const el = document.createElement('div')
+  el.className = 'mail-item ' + (m.seen ? 'read' : 'unread')
+  el.dataset.uid = m.uid
+  const from = m.from ? (m.from.name || m.from.address) : '（未知发件人）'
+  const toStr = (m.to || []).map(fmtAddr).filter(Boolean).join('、')
+  const att = m.hasAttachment ? '<span class="att">📎 附件</span>' : ''
+  el.innerHTML = `
+    <div class="dot"><i></i></div>
+    <div class="col">
+      <div class="row-top"><span class="from">${esc(from)}</span><span class="time">${esc(fmtListTime(m.date))}</span></div>
+      <div class="subj">${esc(m.subject)}</div>
+      <div class="meta">${toStr ? '<span>收件人：' + esc(toStr) + '</span>' : ''}${att}</div>
+    </div>`
+  el.onclick = () => openMessage(m.uid)
+  return el
+}
+
+$('refreshBtn').onclick = () => loadMessages(currentFolder)
+
+// ── 详情 ──
+async function openMessage(uid) {
+  const res = await window.electronAPI.emailMessage(currentFolder, uid)
+  if (!res || !res.ok) { toast((res&&res.error)||'打开失败'); return }
+  const m = res.message
+  currentMsg = m
+  $('detailEmpty').style.display = 'none'
+  $('detail').style.display = 'flex'
+  $('dSubject').textContent = m.subject || '(无主题)'
+  $('dFrom').textContent = fmtAddr(m.from) || '（未知发件人）'
+  const toStr = (m.to || []).map(fmtAddr).filter(Boolean).join('、')
+  $('dTo').textContent = toStr || '（无）'
+  const ccStr = (m.cc || []).map(fmtAddr).filter(Boolean).join('、')
+  $('dCcWrap').style.display = ccStr ? '' : 'none'
+  $('dCc').textContent = ccStr
+  $('dDate').textContent = fmtDate(m.date)
+  showImages = false
+  $('showImages').checked = false
+  renderBody(m)
+  renderAttachments(m)
+  // 标记当前项已读
+  document.querySelectorAll('.mail-item').forEach(e => { if (e.dataset.uid == uid) e.classList.add('read') })
+}
+
+function renderBody(m) {
+  const frame = $('dFrame')
+  const textEl = $('dText')
+  if (m.html) {
+    textEl.style.display = 'none'
+    frame.style.display = 'block'
+    frame.srcdoc = buildSrcdoc(m.html)
+  } else {
+    frame.style.display = 'none'
+    frame.srcdoc = ''
+    textEl.style.display = 'block'
+    textEl.textContent = m.text || '(无正文)'
+  }
+}
+
+// 沙箱 iframe：默认 CSP 屏蔽一切外部资源；勾选「显示图片」才放行 https/http/data
+function buildSrcdoc(html) {
+  const img = showImages ? "https: http: data:" : 'none'
+  const csp = `default-src 'none'; img-src ${img}; style-src 'unsafe-inline'; font-src 'none'; media-src 'none'; script-src 'none'; frame-src 'none';`
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">` +
+    `<meta http-equiv="Content-Security-Policy" content="${csp}">` +
+    `<style>body{font-family:'Microsoft YaHei',sans-serif;font-size:14px;line-height:1.7;color:#222;padding:16px;word-break:break-word;}</style>` +
+    `</head><body>${html}</body></html>`
+}
+
+$('showImages').onchange = (e) => { showImages = e.target.checked; if (currentMsg) renderBody(currentMsg) }
+
+function renderAttachments(m) {
+  const wrap = $('dAttach')
+  const list = $('attList')
+  const atts = m.attachments || []
+  if (!atts.length) { wrap.style.display = 'none'; return }
+  wrap.style.display = 'block'
+  list.innerHTML = ''
+  atts.forEach(a => {
+    const row = document.createElement('div')
+    row.className = 'att-row'
+    row.innerHTML = `<span class="name">📎 ${esc(a.filename)}</span><span class="size">${fmtSize(a.size)}</span>`
+    const acts = document.createElement('div'); acts.className = 'acts'
+    const open = document.createElement('button'); open.textContent = '打开'
+    open.onclick = () => window.electronAPI.emailOpenAttachment(a.file)
+    const save = document.createElement('button'); save.textContent = '保存'
+    save.onclick = () => window.electronAPI.emailSaveAttachment(a.file)
+    acts.appendChild(open); acts.appendChild(save)
+    row.appendChild(acts)
+    list.appendChild(row)
+  })
+}
+
+// ── 新邮件提示 ──
+let toastTimer = null
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show')
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600)
+}
+if (window.electronAPI.onEmailNewMail) {
+  window.electronAPI.onEmailNewMail((msgs) => {
+    if (!msgs || !msgs.length) return
+    const last = msgs[msgs.length - 1]
+    const from = last.from ? (last.from.name || last.from.address) : '新邮件'
+    toast(`新邮件：${from} · ${last.subject}`)
+    if (currentFolder === 'INBOX') loadMessages('INBOX')
+  })
+}
+
+boot()
+</script>
+</body>
+</html>

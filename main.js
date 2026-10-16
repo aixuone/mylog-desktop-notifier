@@ -8,6 +8,7 @@ const { WebSocketServer } = require('ws')
 const http = require('http')
 const https = require('https')
 const fs = require('fs')
+const url = require('url')
 const net = require('net')
 const zlib = require('zlib')
 const { execFile } = require('child_process')
@@ -17,6 +18,10 @@ const settingsStore = require('./lib/settingsStore')
 const workbenchStore = require('./lib/workbenchStore')
 const { createRingtoneResolver } = require('./lib/ringtoneResolver')
 const { createNotificationCenter } = require('./lib/notificationCenter')
+const emailCreds = require('./lib/emailCreds')
+const emailClient = require('./lib/emailClient')
+const emailSender = require('./lib/emailSender')
+const phpServer = require('./lib/phpServer')
 
 // ─── Single instance lock ──────────────────────────
 // Prevent multiple instances of the notifier from running,
@@ -91,6 +96,7 @@ let diagnosticsWindow = null   // 诊断测试窗口单例
 let workbenchWindow = null     // 个人工作台窗口单例
 let downloadsWindow = null     // 下载中心面板窗口单例
 let boardOverlayWindow = null  // 画板「真·OS 全屏」透明覆盖窗口单例
+let emailWindow = null         // 邮箱窗口单例
 let lastSharedScreen = null    // 共享源（选源窗口路径，优先级高）：{ type:'screen'|'window', displayId, name }
 let shimShareSource = null     // 共享源（shim 路径：SDK 实际共享的那个源，桌面端的主路径）
 // 本机（桌面端）当前是否真的在共享屏幕。
@@ -1181,52 +1187,43 @@ function updateTrayMenu() {
   }
 
   // ── Actions ──
-  menuItems.push({ label: '设置', click: () => openSettingsWindow() })
+ 
   // 下载中心：查看网页下载任务，打开文件 / 打开所在目录
   menuItems.push({ label: '下载中心', click: () => openDownloadsWindow() })
+  // 邮箱：阿里企业邮箱收件查看（仅收件，不发信）
+  menuItems.push({ label: '邮箱', click: () => openEmailWindow() })
   // 屏幕画板（桌面端专属）：把透明涂鸦层开到被共享的屏幕 / 当前显示器上。
   // 仅手动入口（需求4：开启屏幕共享不再自动开屏板，必须用户主动点击才开）。
-  menuItems.push({
-    label: '屏幕画板（开/关）',
-    click: () => {
-      if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) closeBoardOverlay()
-      else safeOpenBoardOverlay()
-    },
-  })
-  // 网页画板（测试）：独立打开画板浮层 —— 不必先开一个会议就能直接用/自测画板
-  menuItems.push({
-    label: '网页画板（测试）',
-    click: () => {
-      if (mainPageWindow && !mainPageWindow.isDestroyed()) {
-        mainPageWindow.show()
-        mainPageWindow.webContents.send('quick-action', 'open-board')
-      }
-    },
-  })
+  // menuItems.push({
+  //   label: '屏幕画板（开/关）',
+  //   click: () => {
+  //     if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) closeBoardOverlay()
+  //     else safeOpenBoardOverlay()
+  //   },
+  // })
+  // // 网页画板（测试）：独立打开画板浮层 —— 不必先开一个会议就能直接用/自测画板
+  // menuItems.push({
+  //   label: '网页画板（测试）',
+  //   click: () => {
+  //     if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+  //       mainPageWindow.show()
+  //       mainPageWindow.webContents.send('quick-action', 'open-board')
+  //     }
+  //   },
+  // })
   // 调试窗口：打开主页面窗口的 Chrome DevTools，查看 TRTC SDK 内部日志（或用 Ctrl+Shift+I）
-  menuItems.push({ label: '调试窗口', click: () => {
-    if (mainPageWindow && !mainPageWindow.isDestroyed()) {
-      mainPageWindow.webContents.openDevTools()
-      mainPageWindow.show()
-      mainPageWindow.focus()
-    }
-  }})
-  menuItems.push({
-    label: '开机自启',
-    type: 'checkbox',
-    checked: app.getLoginItemSettings().openAtLogin,
-    click: (item) => {
-      setAutoStart(item.checked)
-      settingsStore.set({ autoStart: item.checked })
-      updateTrayMenu()
-    },
-  })
-  menuItems.push({ type: 'separator' })
-
+  // menuItems.push({ label: '调试窗口', click: () => {
+  //   if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+  //     mainPageWindow.webContents.openDevTools()
+  //     mainPageWindow.show()
+  //     mainPageWindow.focus()
+  //   }
+  // }})
+  
   // ── 手动授予麦克风/摄像头权限（兜底：对因缓存拒绝/子上下文漏放而"没声音/无画面"的机器，
   //     在主页面 origin 内分别执行 getUserMedia 把权限置 granted）。点击后系统通知回显结果。 ──
   menuItems.push({
-    label: '打开麦克风/摄像头',
+    label: '激活麦克风',
     click: async () => {
       try {
         const res = await activateMediaInMainPage()
@@ -1250,6 +1247,18 @@ function updateTrayMenu() {
       } catch (e) {
         notify('开启失败', '发生异常：' + (e && e.message ? e.message : String(e)), true)
       }
+    },
+  })
+  menuItems.push({ type: 'separator' })
+  menuItems.push({ label: '设置', click: () => openSettingsWindow() })
+  menuItems.push({
+    label: '开机自启',
+    type: 'checkbox',
+    checked: app.getLoginItemSettings().openAtLogin,
+    click: (item) => {
+      setAutoStart(item.checked)
+      settingsStore.set({ autoStart: item.checked })
+      updateTrayMenu()
     },
   })
   menuItems.push({ type: 'separator' })
@@ -1511,6 +1520,12 @@ function createHttpHandler() {
         wsPort: currentWsPort,
         version: version
       }))
+    } else if (req.url && req.url.startsWith('/api/email/')) {
+      // 邮件读取（WorkBuddy Skill 用）：仅 loopback、仅只读 GET，不暴露授权码/密码
+      const parsed = url.parse(req.url, true)
+      if (handleEmailApi(req, res, parsed)) return
+      res.writeHead(404)
+      res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }))
     } else {
       res.writeHead(404)
       res.end(JSON.stringify({ success: false, error: 'Not found' }))
@@ -1602,6 +1617,8 @@ app.whenReady().then(() => {
 
     // ── Feature init (M1+) ──────────────────────
     settingsStore.load()
+    // 若已配置阿里企业邮箱，启动后台实时同步（新邮件通知 + 推送窗口）
+    startEmailSync()
     ringtoneResolver = createRingtoneResolver({
       settingsStore,
       assetsDir: __dirname,                       // assets/ 位于项目根
@@ -1699,6 +1716,8 @@ app.on('before-quit', () => {
   if (toastWindow && !toastWindow.isDestroyed()) { toastWindow.destroy(); toastWindow = null }
   if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.destroy(); settingsWindow = null }
   if (workbenchWindow && !workbenchWindow.isDestroyed()) { workbenchWindow.destroy(); workbenchWindow = null }
+  // 关闭内置邮箱服务（PHP 子进程），避免残留
+  try { phpServer.stop() } catch (e) {}
 })
 
 // ─── System tray ──────────────────────────────────────────
@@ -1872,49 +1891,80 @@ function openMainPage() {
     else console.log(tag, message, '|', sourceId, ':', line)
   })
 
-  // ─── Ctrl+Shift+I 打开 DevTools ───
-  // 让用户能直接在主页面窗口里打开 Chrome DevTools，查看 TRTC SDK 的真实调用日志。
-  // 窗口关闭时注销快捷键；重新打开时重新注册。
-  try {
-    globalShortcut.register('CommandOrControl+Shift+I', function () {
-      if (mainPageWindow && !mainPageWindow.isDestroyed()) {
-        mainPageWindow.webContents.toggleDevTools()
-      }
-    })
-  } catch (e) {
-    console.warn('[DevTools] 快捷键注册失败:', e && e.message)
+  // ─── 主窗口快捷键「白名单 + 防火墙」（窗口级，仅主页面聚焦时生效）───
+  // 设计要点：
+  //  1) 全部走 webContents 的 before-input-event（窗口级），而非 globalShortcut（OS 级全局）。
+  //     原先的 Ctrl+Shift+I 用 globalShortcut 注册，会在「其它软件里按」也触发本应用 DevTools，
+  //     干扰其它软件——现已移除全局注册，改由下方窗口级处理（仅本应用聚焦时开/关 DevTools）。
+  //  2) 允许列表：F5 / F11 / F12 + 窗口内 Ctrl/⌘+Shift+I（DevTools）+ 「显示/隐藏窗口」热键。
+  //  3) 放行文本编辑组合键（Ctrl/⌘+C/V/X/A/Z，可带 Shift，不可带 Alt），保证输入框正常复制粘贴。
+  //  4) 其余带修饰键（Ctrl/Alt/Meta）或功能键（F1–F4/F6–F10/F13+）一律 preventDefault 屏蔽，
+  //     阻止浏览器/系统默认行为（Ctrl+R/W/T/P/S/U、F1 帮助、F3 查找等）；普通字符输入放行。
+  const _isTextEditCombo = (input) => {
+    const k = (input.key || '').toUpperCase()
+    const isCVXAZ = k === 'C' || k === 'V' || k === 'X' || k === 'A' || k === 'Z'
+    return isCVXAZ && (input.control || input.meta) && !input.alt
   }
-
-  // ─── F5 / F11 / F12 主窗口快捷键（窗口级，仅主页面聚焦时生效，不劫持全局）───
-  // 用 webContents 的 before-input-event 在「渲染进程 keydown 派发前」拦截，
-  // 并 preventDefault 阻止网页自身或浏览器默认行为重复触发。
-  //   F5  → 刷新主页面（reload 当前已加载的 URL）
-  //   F11 → 切换系统级全屏（setFullScreen 取反；菜单栏显隐由 enter/leave-full-screen 处理）
-  //   F12 → 打开 / 关闭 DevTools（toggleDevTools，与 Ctrl/⌘+Shift+I 行为一致）
-  // 注意：before-input-event 仅在该窗口 webContents 聚焦时触发，故天然限定在主页面，
-  // 不会像 globalShortcut 那样在其它窗口或外部应用里误触发。
+  // 判断按键是否匹配某个 Electron 加速器串（如 "CommandOrControl+Shift+M"），用于放行「显示/隐藏窗口」热键
+  const _matchesAccel = (input, accel) => {
+    if (!accel) return false
+    const tokens = String(accel).split('+').map((t) => t.trim().toUpperCase())
+    const key = tokens.pop()
+    const has = (t) => tokens.includes(t)
+    const coc = has('COMMANDORCONTROL') || has('CMDORCTRL')
+    const wantCtrl = has('CONTROL') || has('CTRL') || coc
+    const wantCmd = has('COMMAND') || has('CMD') || has('META') || has('SUPER') || coc
+    const wantAlt = has('ALT')
+    const wantShift = has('SHIFT')
+    const ctrlOk = coc ? (input.control || input.meta) : (wantCtrl ? input.control : !input.control)
+    const cmdOk = coc ? true : (wantCmd ? input.meta : !input.meta)
+    const altOk = wantAlt ? input.alt : !input.alt
+    const shiftOk = wantShift ? input.shift : !input.shift
+    return (input.key || '').toUpperCase() === key && ctrlOk && cmdOk && altOk && shiftOk
+  }
   try {
     mainPageWindow.webContents.on('before-input-event', (event, input) => {
       if (!mainPageWindow || mainPageWindow.isDestroyed()) return
       if (input.type !== 'keyDown') return
-      switch (input.key) {
-        case 'F5':
-          event.preventDefault()
-          if (mainPageWindow.isVisible()) mainPageWindow.reload()
+      const key = input.key
+
+      // ── 允许项 1：F5 / F11 / F12 ──
+      if (key === 'F5' || key === 'F11' || key === 'F12') {
+        event.preventDefault()
+        if (key === 'F5') {
+          // 完全重新加载：忽略缓存，确保所有静态资源（图片/css/字体/json 等）重新拉取，不被缓存加载
+          if (mainPageWindow.isVisible()) mainPageWindow.webContents.reloadIgnoringCache()
           else openMainPage()
-          break
-        case 'F11':
-          event.preventDefault()
+        } else if (key === 'F11') {
           mainPageWindow.setFullScreen(!mainPageWindow.isFullScreen())
-          break
-        case 'F12':
-          event.preventDefault()
+        } else if (key === 'F12') {
           mainPageWindow.webContents.toggleDevTools()
-          break
+        }
+        return
+      }
+
+      // ── 允许项 2：窗口内 Ctrl/⌘+Shift+I 打开/关闭 DevTools（替代原全局注册，避免干扰其它软件）──
+      if ((input.control || input.meta) && input.shift && !input.alt && (input.key || '').toUpperCase() === 'I') {
+        event.preventDefault()
+        if (mainPageWindow.isVisible()) mainPageWindow.webContents.toggleDevTools()
+        return
+      }
+
+      // ── 放行：文本编辑组合键（输入框复制粘贴等）──
+      if (_isTextEditCombo(input)) return
+
+      // ── 放行：「显示/隐藏窗口」热键（默认 Ctrl/⌘+Shift+M，可在设置自定义），保持全局生效、不在此重复处理 ──
+      if (_matchesAccel(input, mainPageHotkeyAccel)) return
+
+      // ── 屏蔽：其余带修饰键或功能键的快捷键一律拦截；普通字符输入放行 ──
+      const isFunctionKey = /^F([1-9]|1[0-9]|2[0-4])$/.test(key)
+      const hasModifier = input.control || input.alt || input.meta
+      if (hasModifier || isFunctionKey) {
+        event.preventDefault()
       }
     })
   } catch (e) {
-    console.warn('[Shortcut] F5/F11/F12 注册失败:', e && e.message)
+    console.warn('[Shortcut] 主窗口快捷键拦截注册失败:', e && e.message)
   }
 
   // 主页面显隐快捷键（默认 Ctrl/⌘+Shift+M，可在「设置-通用」中自定义，修改后即时生效）
@@ -1922,7 +1972,6 @@ function openMainPage() {
 
   mainPageWindow.on('closed', () => {
     mainPageWindow = null
-    try { globalShortcut.unregister('CommandOrControl+Shift+I') } catch (e) {}
     try { globalShortcut.unregister(mainPageHotkeyAccel) } catch (e) {}
   })
 
@@ -3095,6 +3144,77 @@ function openDownloadsWindow() {
   })
 }
 
+// ─── Email window（SnappyMail：成熟开源邮箱界面，与邮箱服务商无关）──
+// 说明：邮箱界面不再自研，改用随包分发的 SnappyMail（AGPL-3.0）+ 便携版 PHP（免费开源）。
+// 主进程负责拉起本机 PHP 服务（见 lib/phpServer.js），窗口加载 http://127.0.0.1:<port>/。
+// 因为 SnappyMail 是第三方应用，本窗口**不注入**我们的 preload，避免把 IPC 桥暴露给它。
+let emailServerPort = 0
+
+function openEmailWindow() {
+  if (emailWindow && !emailWindow.isDestroyed()) {
+    if (emailWindow.isVisible()) emailWindow.focus()
+    else emailWindow.show()
+    return
+  }
+  const loadingPage = path.join(__dirname, 'src', 'email-loading.html')
+  emailWindow = new BrowserWindow({
+    width: 1180, height: 780,
+    minWidth: 900, minHeight: 600,
+    show: true, frame: true, autoHideMenuBar: true,
+    backgroundColor: '#F6F8FA',
+    title: '邮箱',
+    icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      autoplayPolicy: 'no-user-gesture-required',
+    },
+  })
+  emailWindow.loadFile(loadingPage)
+
+  // 邮箱组件自身的地址（本机回环 + 指定端口）——只有它能留在窗口内导航
+  const isMailAppUrl = (url) => {
+    try {
+      const u = new URL(url)
+      const loopback = u.hostname === '127.0.0.1' || u.hostname === 'localhost'
+      return !!(loopback && (!emailServerPort || u.port === String(emailServerPort)))
+    } catch (e) { return false }
+  }
+  // 邮件里的链接一律交给系统默认浏览器；仅放行 http/https/mailto
+  const openMailLink = (url) => {
+    try {
+      const u = new URL(url)
+      if (u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:') shell.openExternal(url)
+    } catch (e) {}
+  }
+  emailWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openMailLink(url)
+    return { action: 'deny' }
+  })
+  emailWindow.webContents.on('will-navigate', (e, url) => {
+    if (isMailAppUrl(url)) return       // 邮箱组件自身的前端路由
+    if (/^file:\/\//i.test(url)) return // 本地启动页 / 错误页
+    e.preventDefault()
+    openMailLink(url)
+  })
+  emailWindow.on('closed', () => { emailWindow = null; emailServerPort = 0 })
+
+  // 拉起内置邮箱服务并加载界面
+  phpServer.ensureStarted().then((st) => {
+    if (!emailWindow || emailWindow.isDestroyed()) return
+    if (st && st.ok) {
+      emailServerPort = st.port
+      emailWindow.loadURL('http://127.0.0.1:' + st.port + '/')
+    } else {
+      emailWindow.loadFile(loadingPage, { query: { error: (st && st.error) || '未知错误' } })
+    }
+  }).catch((err) => {
+    if (!emailWindow || emailWindow.isDestroyed()) return
+    emailWindow.loadFile(loadingPage, { query: { error: String((err && err.message) || err) } })
+  })
+}
+
 // 广播下载列表给面板（剥离 item 引用，只发可序列化字段）
 function publicDownloads() {
   return downloads.map(({ item, ...rest }) => rest)
@@ -3133,6 +3253,295 @@ ipcMain.handle('downloads:cancel', (e, id) => {
   if (d && d.item && typeof d.item.cancel === 'function') { try { d.item.cancel() } catch (err) {} }
 })
 ipcMain.handle('downloads:clear', () => { clearDownloads() })
+
+// ─── Email (阿里企业邮箱：收件 + 查看) ──────────────
+// 阿里云报错翻译成中文，降低用户困惑
+function humanizeImapError(err) {
+  const m = (err && (err.message || String(err))) || '未知错误'
+  if (/Authentication failed|Invalid credentials|LOGIN/i.test(m)) return '认证失败：请确认填的是「客户端授权码」而非登录密码，且授权码有效、未被重置。'
+  if (/ECONNREFUSED|ENOTFOUND|getaddrinfo|ETIMEDOUT|timeout/i.test(m)) return '无法连接服务器：请检查网络，并确认 IMAP 地址/端口正确（标准：imap.qiye.aliyun.com:993）。'
+  if (/Certificate|SSL|TLS/i.test(m)) return 'SSL/TLS 握手失败：请确认端口 993 且勾选了安全连接（SSL）。'
+  return '连接出错：' + m
+}
+
+// 组装完整配置（含解密后的授权码）；未配置或解密失败返回 null
+function getEmailConfig() {
+  const s = settingsStore.get()
+  const e = (s && s.email) || {}
+  if (!e.configured) return null
+  const auth = emailCreds.loadAuthCode()
+  if (!auth) return null
+  return Object.assign({}, e, { authCode: auth })
+}
+
+// 启动后台 IDLE 实时监听（仅在已配置时）
+let emailSyncStarted = false
+function startEmailSync(force) {
+  if (force) emailSyncStarted = false
+  const cfg = getEmailConfig()
+  if (!cfg || emailSyncStarted) return
+  emailSyncStarted = true
+  emailClient.startIdle(cfg, cfg.authCode, (msgs) => {
+    try {
+      for (const m of (msgs || [])) {
+        const who = m.from ? (m.from.name || m.from.address) : '未知发件人'
+        notify('新邮件：' + who, m.subject || '')
+      }
+      if (emailWindow && !emailWindow.isDestroyed()) {
+        emailWindow.webContents.send('email:new-mail', msgs)
+      }
+    } catch (e) {}
+  }).catch((e) => {
+    emailSyncStarted = false
+    console.error('[Email] idle start failed:', e && e.message)
+  })
+}
+
+ipcMain.handle('email:config-load', () => {
+  const s = settingsStore.get()
+  const e = (s && s.email) || {}
+  return {
+    configured: !!e.configured,
+    email: e.email || '',
+    imapHost: e.imapHost || 'imap.qiye.aliyun.com',
+    imapPort: e.imapPort || 993,
+    imapSecure: e.imapSecure !== false,
+  }
+})
+
+ipcMain.handle('email:config-save', (e, cfg) => {
+  const store = {
+    configured: true,
+    email: cfg.email,
+    imapHost: cfg.imapHost || 'imap.qiye.aliyun.com',
+    imapPort: cfg.imapPort || 993,
+    imapSecure: cfg.imapSecure !== false,
+    smtpHost: cfg.smtpHost || 'smtp.qiye.aliyun.com',
+    smtpPort: cfg.smtpPort || 465,
+    smtpSecure: cfg.smtpSecure !== false,
+  }
+  settingsStore.set({ email: store })
+  if (cfg.authCode) {
+    try { emailCreds.saveAuthCode(cfg.authCode) } catch (err) { return { ok: false, error: '授权码加密保存失败：' + err.message } }
+  }
+  // 凭据可能变化：先复位旧连接，再用新凭据重启后台同步
+  emailClient.resetClients().catch(() => {}).then(() => startEmailSync(true))
+  return { ok: true }
+})
+
+ipcMain.handle('email:test', async (e, cfg) => {
+  try {
+    const auth = cfg.authCode || emailCreds.loadAuthCode()
+    if (!auth) return { ok: false, error: '缺少授权码' }
+    const config = Object.assign({}, cfg)
+    if (!config.imapHost || !config.imapPort) return { ok: false, error: '请填写 IMAP 服务器与端口' }
+    const res = await emailClient.testConnection(config, auth)
+    return { ok: true, folderCount: res.folderCount }
+  } catch (err) {
+    return { ok: false, error: humanizeImapError(err) }
+  }
+})
+
+ipcMain.handle('email:mailboxes', async () => {
+  const cfg = getEmailConfig()
+  if (!cfg) return { ok: false, error: '未配置邮箱' }
+  try { return { ok: true, mailboxes: await emailClient.listMailboxes(cfg, cfg.authCode) } }
+  catch (err) { return { ok: false, error: humanizeImapError(err) } }
+})
+
+ipcMain.handle('email:messages', async (e, folder, limit) => {
+  const cfg = getEmailConfig()
+  if (!cfg) return { ok: false, error: '未配置邮箱' }
+  try { return { ok: true, messages: await emailClient.fetchMessages(cfg, cfg.authCode, folder, limit || 60) } }
+  catch (err) { return { ok: false, error: humanizeImapError(err) } }
+})
+
+ipcMain.handle('email:message', async (e, folder, uid) => {
+  const cfg = getEmailConfig()
+  if (!cfg) return { ok: false, error: '未配置邮箱' }
+  try { return { ok: true, message: await emailClient.fetchMessage(cfg, cfg.authCode, folder, uid) } }
+  catch (err) { return { ok: false, error: humanizeImapError(err) } }
+})
+
+// 附件路径必须落在邮箱附件目录内（防止渲染层传入任意路径被打开/复制）
+function isEmailAttachmentPath(file) {
+  try {
+    if (!file || typeof file !== 'string') return false
+    const dir = path.join(app.getPath('userData'), 'emailAttachments')
+    const resolved = path.resolve(file)
+    const rel = path.relative(dir, resolved)
+    return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel) && fs.existsSync(resolved)
+  } catch (e) { return false }
+}
+
+ipcMain.handle('email:open-attachment', async (e, file) => {
+  try {
+    if (!isEmailAttachmentPath(file)) return { ok: false, error: '附件文件不存在或路径非法' }
+    const err = await shell.openPath(file)
+    return err ? { ok: false, error: err } : { ok: true }
+  } catch (err) { return { ok: false, error: err.message } }
+})
+
+ipcMain.handle('email:save-attachment', async (e, file) => {
+  try {
+    if (!isEmailAttachmentPath(file)) return { ok: false, error: '附件文件不存在或路径非法' }
+    const opts = { defaultPath: path.basename(file) }
+    const parent = (emailWindow && !emailWindow.isDestroyed()) ? emailWindow : (BrowserWindow.getFocusedWindow() || null)
+    const { canceled, filePath } = parent
+      ? await dialog.showSaveDialog(parent, opts)
+      : await dialog.showSaveDialog(opts)
+    if (canceled || !filePath) return { ok: false, canceled: true }
+    fs.copyFileSync(file, filePath)
+    return { ok: true, filePath }
+  } catch (err) { return { ok: false, error: err.message } }
+})
+
+// 网页侧边栏「邮箱」入口 → 打开邮箱窗口（与托盘右键「邮箱」同源，复用 openEmailWindow）
+ipcMain.on('email:open-window', () => {
+  console.log('[Email] 网页侧边栏请求打开邮箱窗口')
+  openEmailWindow()
+})
+
+// ─── Email HTTP API（供 WorkBuddy Skill 本地读取邮件；仅 loopback、仅只读 GET）───
+// 路由：/api/email/mailboxes | /api/email/messages | /api/email/message
+// 安全：仅接受来自 127.0.0.1 / ::1 的请求；只读 GET；绝不在响应里暴露授权码/密码。
+// 注：HTTP 服务 listen 未限定 host，故这里用 remoteAddress 强制回环，避免被局域网访问。
+function handleEmailApi(req, res, parsed) {
+  const remote = (req.socket && (req.socket.remoteAddress || '')) || ''
+  const isLoopback =
+    remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+  if (!isLoopback) {
+    res.writeHead(403)
+    res.end(JSON.stringify({ ok: false, error: 'FORBIDDEN: only loopback allowed' }))
+    return true
+  }
+  // 方法校验：send 仅 POST，其余仅 GET（loopback 已在上方校验）
+  const p = parsed.pathname
+  if (p === '/api/email/send') {
+    if (req.method !== 'POST') {
+      res.writeHead(405)
+      res.end(JSON.stringify({ ok: false, error: 'METHOD_NOT_ALLOWED' }))
+      return true
+    }
+  } else if (req.method !== 'GET') {
+    res.writeHead(405)
+    res.end(JSON.stringify({ ok: false, error: 'METHOD_NOT_ALLOWED' }))
+    return true
+  }
+
+  const q = parsed.query || {}
+  const num = (v, d) => {
+    const n = Number(v)
+    return Number.isFinite(n) && n > 0 ? n : d
+  }
+  const str = (v) => (typeof v === 'string' ? v.trim() : '')
+
+  ;(async () => {
+    try {
+      if (p === '/api/email/mailboxes') {
+        const cfg = getEmailConfig()
+        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
+        const mailboxes = await emailClient.listMailboxes(cfg, cfg.authCode)
+        return res.end(JSON.stringify({ ok: true, mailboxes }))
+      }
+      if (p === '/api/email/messages') {
+        const cfg = getEmailConfig()
+        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
+        const folder = str(q.folder) || 'INBOX'
+        const limit = num(q.limit, 60)
+        const list = await emailClient.fetchMessages(cfg, cfg.authCode, folder, limit)
+        // 服务端预筛：未读 / 发件人关键字 / 时间范围，减少回传体积
+        let out = list || []
+        if (q.unreadOnly === '1' || q.unreadOnly === 'true') out = out.filter((m) => !m.seen)
+        if (str(q.from)) {
+          const kw = str(q.from).toLowerCase()
+          out = out.filter(
+            (m) =>
+              m.from &&
+              ((m.from.name || '').toLowerCase().includes(kw) ||
+                (m.from.address || '').toLowerCase().includes(kw)),
+          )
+        }
+        if (str(q.to)) {
+          const kw = str(q.to).toLowerCase()
+          out = out.filter((m) =>
+            (m.to || []).some(
+              (a) =>
+                ((a.name || '').toLowerCase().includes(kw) ||
+                  (a.address || '').toLowerCase().includes(kw)),
+            ),
+          )
+        }
+        if (str(q.since)) {
+          const t = new Date(str(q.since)).getTime()
+          if (!isNaN(t)) out = out.filter((m) => m.date >= t)
+        }
+        if (str(q.before)) {
+          const t = new Date(str(q.before)).getTime()
+          if (!isNaN(t)) out = out.filter((m) => m.date <= t)
+        }
+        return res.end(JSON.stringify({ ok: true, folder, count: out.length, messages: out }))
+      }
+      if (p === '/api/email/message') {
+        const cfg = getEmailConfig()
+        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
+        const folder = str(q.folder) || 'INBOX'
+        const uid = str(q.uid)
+        if (!uid) return res.end(JSON.stringify({ ok: false, error: 'MISSING_UID' }))
+        const msg = await emailClient.fetchMessage(cfg, cfg.authCode, folder, uid)
+        return res.end(JSON.stringify({ ok: true, message: msg }))
+      }
+      if (p === '/api/email/whoami') {
+        const cfg = getEmailConfig()
+        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
+        return res.end(JSON.stringify({ ok: true, email: cfg.email }))
+      }
+      if (p === '/api/email/send') {
+        let body = ''
+        try {
+          for await (const chunk of req) body += chunk
+        } catch (e) { /* 忽略读取异常 */ }
+        let payload = {}
+        try { payload = JSON.parse(body || '{}') }
+        catch (e) {
+          res.writeHead(400)
+          return res.end(JSON.stringify({ ok: false, error: 'BAD_JSON_BODY' }))
+        }
+        const cfg = getEmailConfig()
+        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
+        try {
+          const out = await emailSender.sendMail(cfg, cfg.authCode, {
+            to: payload.to,
+            subject: payload.subject,
+            text: payload.text,
+            html: payload.html,
+            from: payload.from,
+          })
+          return res.end(JSON.stringify({ ok: true, ...out }))
+        } catch (e) {
+          return res.end(JSON.stringify({
+            ok: false,
+            error: 'SEND_FAIL: ' + (e && e.message),
+            detail: e && e.response,
+            code: e && e.code,
+          }))
+        }
+      }
+      res.writeHead(404)
+      res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }))
+    } catch (err) {
+      res.writeHead(500)
+      res.end(JSON.stringify({
+        ok: false,
+        error: humanizeImapError(err),
+        detail: err && err.message,
+        code: err && err.code,
+        responseText: err && err.responseText,
+      }))
+    }
+  })()
+  return true
+}
 
 // ─── Workbench window (个人工作台：四象限 + 日历) ──────
 function openWorkbenchWindow() {

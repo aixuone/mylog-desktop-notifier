@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>邮箱 · e日志</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #F6F8FA; color: #1F2933;
+    display: flex; align-items: center; justify-content: center;
+    -webkit-user-select: none; user-select: none;
+  }
+  .box { text-align: center; max-width: 520px; padding: 24px; }
+  .spinner {
+    width: 42px; height: 42px; margin: 0 auto 20px;
+    border: 3px solid #D8E1EA; border-top-color: #185FA5;
+    border-radius: 50%; animation: spin .9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 17px; font-weight: 600; margin: 0 0 8px; }
+  p { font-size: 13px; line-height: 1.7; color: #5A6672; margin: 0; }
+  .err-icon {
+    width: 46px; height: 46px; margin: 0 auto 16px; border-radius: 50%;
+    background: #FDECEC; color: #C0392B; font-size: 26px; line-height: 46px;
+    text-align: center; font-weight: 700;
+  }
+  .detail {
+    margin-top: 14px; padding: 10px 12px; text-align: left;
+    background: #FFFFFF; border: 1px solid #E3E9EF; border-radius: 8px;
+    font-size: 12px; color: #7A8794; word-break: break-all;
+    font-family: ui-monospace, Consolas, monospace;
+    max-height: 180px; overflow: auto;
+  }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <div id="loading">
+      <div class="spinner"></div>
+      <h1>正在启动邮箱…</h1>
+      <p>首次打开需要初始化，请稍候几秒。</p>
+    </div>
+
+    <div id="failed" class="hide">
+      <div class="err-icon">!</div>
+      <h1>邮箱组件启动失败</h1>
+      <p>请关闭本窗口后重试；若反复失败，请把下面的信息反馈给管理员。</p>
+      <div class="detail" id="detail"></div>
+    </div>
+  </div>
+
+<script>
+  (function () {
+    var q = new URLSearchParams(location.search || '');
+    var err = q.get('error');
+    if (err) {
+      document.getElementById('loading').classList.add('hide');
+      document.getElementById('failed').classList.remove('hide');
+      document.getElementById('detail').textContent = err;
+    }
+  })();
+</script>
+</body>
+</html>

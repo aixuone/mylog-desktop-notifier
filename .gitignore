@@ -17,3 +17,7 @@ p12/
 *.p12
 *.cer
 *.certSigningRequest
+
+# 第三方运行时（便携版 PHP + SnappyMail 邮箱界面），体积约 58MB，不入库。
+# 本地/CI 首次构建前执行：python scripts/fetch-vendor.py
+vendor/
