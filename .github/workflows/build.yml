@@ -18,10 +18,45 @@ jobs:
         with:
           node-version: 22
 
+      # 邮箱功能的第三方运行时（便携 PHP 8.4 + SnappyMail，约 58MB）不在 git 里。
+      # 缺了它 electron-builder 只打一行 "file source doesn't exist" 就跳过，
+      # 出来的安装包没有邮箱功能，而且构建还是绿的 —— 必须自己补+自己验。
+      - name: Cache email vendor
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/php
+            vendor/snappymail
+          key: vendor-win-${{ hashFiles('scripts/fetch-vendor.py') }}
+
+      - name: Fetch email vendor
+        shell: bash
+        run: |
+          if [ -f vendor/php/php.exe ] && [ -f vendor/snappymail/index.php ]; then
+            echo "缓存命中，跳过下载"
+          else
+            python scripts/fetch-vendor.py
+          fi
+
       - run: npm ci
+
       - run: npx electron-builder --win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 缺 vendor 时 electron-builder 不报错，所以必须自己验一次
+      - name: Verify email vendor in package
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in dist-installer-new/win-unpacked/resources/vendor/php/php.exe \
+                   dist-installer-new/win-unpacked/resources/vendor/snappymail/index.php; do
+            if [ ! -f "$f" ]; then
+              echo "::error::安装包里缺少邮箱运行时：$f"
+              exit 1
+            fi
+            echo "OK $f ($(stat -c%s "$f") bytes)"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
