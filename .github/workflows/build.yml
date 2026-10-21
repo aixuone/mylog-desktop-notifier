@@ -32,10 +32,26 @@ jobs:
       - name: Fetch email vendor
         shell: bash
         run: |
+          set -o pipefail
           if [ -f vendor/php/php.exe ] && [ -f vendor/snappymail/index.php ]; then
             echo "缓存命中，跳过下载"
-          else
-            python scripts/fetch-vendor.py
+            exit 0
+          fi
+          rc=1
+          for attempt in 1 2; do
+            echo "== 第 $attempt 次尝试 =="
+            python -u scripts/fetch-vendor.py 2>&1 | tee "$RUNNER_TEMP/fetch.log"
+            rc=${PIPESTATUS[0]}
+            [ "$rc" -eq 0 ] && break
+            echo "第 $attempt 次失败（rc=$rc），5s 后重试"
+            sleep 5
+          done
+          if [ "$rc" -ne 0 ]; then
+            # job 日志要 admin 才能下载，把失败原因转成注解
+            tail -15 "$RUNNER_TEMP/fetch.log" | while IFS= read -r l; do
+              [ -n "$l" ] && echo "::error::${l:0:380}"
+            done
+            exit "$rc"
           fi
 
       - run: npm ci
