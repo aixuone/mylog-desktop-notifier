@@ -1,0 +1,80 @@
+name: Notary Log (diagnose)
+
+# 用途：公证返回 Invalid 时，Apple 不会在 submit 的输出里给原因，
+# 必须先拿 submission id 再 `notarytool log <id>`。
+# 这里做成手动触发，不用 Mac、不用重跑构建，30 秒出 issues 明细。
+on:
+  workflow_dispatch:
+    inputs:
+      submission_id:
+        description: 'submit 输出里的 id（例如 bcfeae68-d880-4fd0-8017-ee434d43a19d）'
+        required: true
+      show_history:
+        description: '同时列出最近 20 次提交记录（找 id 用）'
+        type: boolean
+        default: false
+
+jobs:
+  fetch:
+    runs-on: macos-latest
+    env:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - name: History（可选）
+        if: inputs.show_history
+        run: |
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID"
+
+      - name: Fetch notarytool log
+        run: |
+          set -euo pipefail
+          xcrun notarytool log "${{ inputs.submission_id }}" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" | tee notary-log.json
+
+      - name: 摘要（issues 一条一行）
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          p = 'notary-log.json'
+          if not os.path.exists(p):
+              print('没有日志文件')
+              raise SystemExit(0)
+          try:
+              d = json.load(open(p))
+          except Exception as e:
+              print('日志不是合法 JSON:', e)
+              print(open(p).read()[:4000])
+              raise SystemExit(0)
+
+          print('status     :', d.get('status'))
+          print('createdAt  :', d.get('createdDate'))
+          print('sha256     :', d.get('sha256'))
+          print()
+          issues = d.get('issues') or []
+          print(f'issues: {len(issues)}')
+          for i in issues:
+              print('---')
+              print('severity:', i.get('severity'))
+              print('path    :', i.get('path') or '(整个包)')
+              print('message :', i.get('message'))
+              if i.get('docUrl'):
+                  print('doc     :', i.get('docUrl'))
+          if not issues:
+              print('（没有 issues —— 说明不是内容问题，重点查签名身份/证书链/team）')
+          PY
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notary-log
+          path: notary-log.json
+          if-no-files-found: ignore

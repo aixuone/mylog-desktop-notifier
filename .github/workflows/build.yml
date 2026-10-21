@@ -30,9 +30,23 @@ jobs:
           if-no-files-found: error
 
 
-  # ── macOS build (signed + notarized) ───────────────────
+  # ── macOS build (sign + notarize + staple) ─────────────
+  #
+  # 签名交给 electron-builder 自己处理（CSC_LINK 就是 base64 的 .p12），
+  # 公证由 package.json 的 mac.notarize=true 在签名之后、打 DMG 之前完成。
+  # electron-builder 的时序是：pack → sign → (afterSign) notarize + staple → build dmg，
+  # 所以 DMG 里的 .app 天然是已 staple 的，不需要事后再跑一次构建
+  # （旧流程「先公证 .app 再 npx electron-builder --mac 重建 DMG」会把 staple 覆盖掉）。
   build-mac:
     runs-on: macos-latest
+    env:
+      # electron-builder 直接用这两个变量自己建临时 keychain 并签名
+      CSC_LINK: ${{ secrets.MAC_CERTS }}
+      CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
+      # mac.notarize=true 读取这三个变量
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -40,95 +54,133 @@ jobs:
         with:
           node-version: 22
 
-      # ── Install Apple certificate ──
-      - name: Install Apple certificate
-        env:
-          MAC_CERTS: ${{ secrets.MAC_CERTS }}
-          MAC_CERTS_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
+      # ── 预检证书：把「身份不对/没有私钥」这类问题挡在构建之前 ──
+      - name: Preflight - inspect signing certificate
         run: |
-          # Decode p12 from base64
-          echo "$MAC_CERTS" | base64 --decode > certificate.p12
-
-          # Create keychain
-          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Import certificate into keychain
-          security import certificate.p12 \
-            -P "$MAC_CERTS_PASSWORD" \
-            -A \
-            -t cert \
-            -f pkcs12 \
-            -k "$KEYCHAIN_PATH"
-
-          security set-key-partition-list \
-            -S apple-tool:,apple:,codesign: \
-            -k "$KEYCHAIN_PASSWORD" \
-            "$KEYCHAIN_PATH"
-
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-
-          # Clean up
-          rm -f certificate.p12
-
-      # ── Build + sign + notarize ──
-      - run: npm ci
-      - run: npx electron-builder --mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ── Notarize the app ──
-      - name: Notarize macOS app
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          # Find the .app bundle inside dist
-          APP_PATH=$(find dist-installer-new/mac-arm64 -name "*.app" -maxdepth 1 2>/dev/null || find dist-installer-new/mac -name "*.app" -maxdepth 1 2>/dev/null || find dist-installer-new -name "*.app" -maxdepth 2 | head -1)
-
-          if [ -z "$APP_PATH" ]; then
-            echo "⚠️ No .app bundle found, skipping notarization"
-            exit 0
+          set -euo pipefail
+          if [ -z "${CSC_LINK:-}" ]; then
+            echo "::error::secrets.MAC_CERTS 为空"
+            exit 1
           fi
 
-          echo "Notarizing: $APP_PATH"
+          printf '%s' "$CSC_LINK" | tr -d '\r\n ' | python3 -c "import base64,sys;open('$RUNNER_TEMP/cert.p12','wb').write(base64.b64decode(sys.stdin.read()))"
 
-          # Create zip for notarization
-          ditto -c -k --keepParent "$APP_PATH" app.zip
+          # LibreSSL(macOS 自带) 不认 -legacy；OpenSSL 3 解 RC2 老 p12 又必须加 -legacy
+          if ! openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$CSC_KEY_PASSWORD" \
+                 -nokeys -out "$RUNNER_TEMP/cert.pem" 2>/dev/null; then
+            openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$CSC_KEY_PASSWORD" \
+                 -nokeys -legacy -out "$RUNNER_TEMP/cert.pem"
+          fi
 
-          # Submit for notarization
-          xcrun notarytool submit app.zip \
+          echo "--- 证书主体 ---"
+          openssl x509 -in "$RUNNER_TEMP/cert.pem" -noout -subject -issuer -dates | tee /dev/stderr
+
+          SUBJECT="$(openssl x509 -in "$RUNNER_TEMP/cert.pem" -noout -subject)"
+          case "$SUBJECT" in
+            *"Developer ID Application"*) ;;
+            *)
+              echo "::error::证书不是 Developer ID Application（Apple Development / Apple Distribution / Mac Installer 都无法通过公证）: $SUBJECT"
+              exit 1
+              ;;
+          esac
+
+          if [ -n "${APPLE_TEAM_ID:-}" ] && ! printf '%s' "$SUBJECT" | grep -qF "($APPLE_TEAM_ID)"; then
+            echo "::error::证书 Team ID 与 secrets.APPLE_TEAM_ID=$APPLE_TEAM_ID 不一致: $SUBJECT"
+            exit 1
+          fi
+
+          # 私钥必须随 p12 一起导出，否则 codesign 找不到身份
+          if ! openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$CSC_KEY_PASSWORD" \
+                 -nocerts -nodes 2>/dev/null | grep -q "PRIVATE KEY"; then
+            echo "::error::p12 里没有私钥（导出证书时未勾选私钥），签名会被静默跳过"
+            exit 1
+          fi
+
+      # ── 装上 Developer ID 中间证书，避免 "unable to build chain" 导致签名失败 ──
+      - name: Preflight - ensure Developer ID intermediate CA
+        run: |
+          set -euo pipefail
+          if security find-certificate -c "Developer ID Certification Authority" /Library/Keychains/System.keychain >/dev/null 2>&1; then
+            echo "中间证书已存在，跳过"
+          else
+            curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+            sudo security add-trusted-cert -d -r trustRoot \
+              -k /Library/Keychains/System.keychain "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          fi
+
+      - run: npm ci
+
+      # 邮箱功能的 vendor/ 不在 git 里（.gitignore 第 23 行），CI 上不存在，
+      # 缺了它 dist 里就不带 PHP/SnappyMail。需要在 CI 里重建时打开下面这步。
+      # - name: Fetch email vendor
+      #   run: python3 scripts/fetch-vendor.py
+
+      - name: Build / Sign / Notarize / Staple
+        run: npx electron-builder --mac --publish never
+
+      # ── 验收：把「公证没生效」变成明确的红叉，而不是发出去才发现打不开 ──
+      - name: Verify signature and notarization
+        run: |
+          set -euo pipefail
+          APP="$(find dist-installer-new -maxdepth 2 -name '*.app' -type d | sort | head -1)"
+          if [ -z "$APP" ]; then
+            echo "::error::没有产出 .app"
+            exit 1
+          fi
+          echo "APP=$APP"
+
+          echo "--- codesign -dv ---"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee /dev/stderr
+
+          if codesign -dv "$APP" 2>&1 | grep -q "Signature=adhoc"; then
+            echo "::error::$APP 是 adhoc 签名 —— 没找到签名身份，公证必然返回 Invalid"
+            exit 1
+          fi
+          codesign -dv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" \
+            || { echo "::error::签名链不是 Developer ID Application"; exit 1; }
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          xcrun stapler validate "$APP"
+          spctl -a -vvv --type execute "$APP"
+
+      # ── 失败时重新提交一次，只为拿到 submission id 和 issues 明细 ──
+      # 公证返回 Invalid 时 notarytool 本身不给原因，必须 notarytool log <id>。
+      - name: Dump notarization issues (on failure)
+        if: failure()
+        run: |
+          set +e
+          APP="$(find dist-installer-new -maxdepth 2 -name '*.app' -type d | sort | head -1)"
+          if [ -z "$APP" ]; then echo "无 .app，跳过"; exit 0; fi
+          echo "APP=$APP"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/app.zip"
+
+          xcrun notarytool submit "$RUNNER_TEMP/app.zip" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait \
-            --timeout 10m
+            --wait --output-format json > "$RUNNER_TEMP/submit.json" 2>&1
+          cat "$RUNNER_TEMP/submit.json"
 
-          # Staple the ticket
-          xcrun stapler staple "$APP_PATH"
+          ID="$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/submit.json')).get('id',''))" 2>/dev/null)"
+          if [ -n "$ID" ]; then
+            echo "=== notarytool log $ID ==="
+            xcrun notarytool log "$ID" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" > notary-issues.json 2>&1
+            cat notary-issues.json
+          fi
 
-          echo "✅ Notarization complete"
-
-          # Clean up zip
-          rm -f app.zip
-
-      # ── Rebuild DMG with notarized app ──
-      - name: Rebuild DMG with notarized app
-        run: |
-          # electron-builder already created the DMG before notarization
-          # We need to recreate it with the now-notarized .app
-          npx electron-builder --mac --config.compression=store
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload notarization issues
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notary-issues
+          path: notary-issues.json
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v4
         with:
           name: MyLogNotifier-macOS
           path: dist-installer-new/*.dmg
           if-no-files-found: warn
-
