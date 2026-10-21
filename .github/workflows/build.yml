@@ -190,6 +190,9 @@ jobs:
           if summary:
               with open(summary, 'a', encoding='utf-8') as f:
                   f.write('## Signing diagnostics\n' + text + '\n')
+          # 日志末尾才是 electron-builder 的报错，转成 warning 注解（公开可读）
+          for l in [x.strip() for x in lines if x.strip()][-8:]:
+              print('::warning::' + l[:400])
           PY
 
       # ── 逐个二进制的签名详情，压缩成注解上报 ──
