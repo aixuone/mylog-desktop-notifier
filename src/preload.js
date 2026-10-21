@@ -153,6 +153,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloadsClear: () => ipcRenderer.invoke('downloads:clear'),
   /** 订阅下载列表实时变化（进度/状态） */
   onDownloadsChanged: (callback) => ipcRenderer.on('downloads-changed', (_, list) => callback(list)),
+  /** 获取当前登录用户（用于下载记录归属显示） */
+  downloadsCurrentUser: () => ipcRenderer.invoke('downloads:current-user'),
+  /** 订阅当前用户变化（切换账号时刷新归属标识） */
+  onDownloadsUserChanged: (callback) => ipcRenderer.on('downloads-user-changed', (_, u) => callback(u)),
 
   // ─── Titlebar (自绘标题栏：头像/状态/快捷区/窗口控制) ──
   /** 窗口控制（minimize / maximize / close） */

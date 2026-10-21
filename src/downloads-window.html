@@ -35,6 +35,7 @@ body {
 .titlebar .logo { font-size: 15px; }
 .titlebar .title { font-size: 13px; font-weight: 700; letter-spacing: .2px; flex: 1; }
 .titlebar .count { font-size: 11px; color: #9A9893; font-weight: 400; }
+.titlebar .who { font-size: 11px; color: #185FA5; font-weight: 600; white-space: nowrap; }
 .titlebar .close {
   -webkit-app-region: no-drag;
   width: 26px; height: 26px; border: none; border-radius: 7px;
@@ -110,6 +111,7 @@ body {
   <div class="titlebar">
     <span class="logo">⬇️</span>
     <span class="title">下载中心</span>
+    <span class="who" id="dl-who"></span>
     <span class="count" id="dl-count"></span>
     <button class="close" id="btn-close" title="关闭">✕</button>
   </div>
@@ -117,7 +119,7 @@ body {
   <div class="list" id="dl-list"></div>
 
   <div class="footer">
-    <span class="tip">下载完成后自动保存到「下载」文件夹</span>
+    <span class="tip">下载记录按当前账号隔离保存</span>
     <button id="btn-clear">清空已完成</button>
   </div>
 
@@ -126,8 +128,14 @@ body {
   var api = window.electronAPI || {}
   var listEl = document.getElementById('dl-list')
   var countEl = document.getElementById('dl-count')
+  var whoEl = document.getElementById('dl-who')
   var clearBtn = document.getElementById('btn-clear')
   var closeBtn = document.getElementById('btn-close')
+
+  // 当前账号标识：下载记录按用户隔离，标题处展示归属账号
+  function setUser(u) {
+    whoEl.textContent = (u && u.userName) ? ('· ' + u.userName) : ''
+  }
 
   var ICONS = {
     progressing: '⏳', completed: '✅', interrupted: '⚠️', cancelled: '🚫',
@@ -229,6 +237,9 @@ body {
   // 首次拉取 + 实时订阅
   if (api.downloadsList) { api.downloadsList().then(render).catch(function () { render([]) }) }
   if (api.onDownloadsChanged) { api.onDownloadsChanged(render) }
+  // 当前账号：展示归属 + 切换账号时刷新
+  if (api.downloadsCurrentUser) { api.downloadsCurrentUser().then(setUser).catch(function () {}) }
+  if (api.onDownloadsUserChanged) { api.onDownloadsUserChanged(setUser) }
 })();
 </script>
 </body>

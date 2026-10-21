@@ -35,10 +35,25 @@
     <button class="btn" id="retry">重试</button>
   </div>
   <script>
-    var url = new URLSearchParams(location.search).get('url') || ''
-    document.getElementById('url').textContent = url ? ('地址：' + url) : ''
-    document.getElementById('retry').onclick = function () {
-      if (url) window.location.href = url
+    var q = new URLSearchParams(location.search)
+    var url = q.get('url') || ''
+    var reason = q.get('reason') || ''
+    var home = q.get('home') || ''
+    var btn = document.getElementById('retry')
+    if (reason === 'blocked') {
+      // 主页首屏就被重定向到站外（如 patrol.tygps.com）时，主窗口不允许加载该站点，
+      // 这里给出说明而不是留一个空白窗口；按钮直接回主页，避免用户手动改地址。
+      document.title = '已阻止打开外部页面'
+      document.querySelector('.title').textContent = '已阻止打开外部页面'
+      document.querySelector('.icon').textContent = '🛡️'
+      document.getElementById('url').textContent = url
+        ? ('该地址不属于主页所在站点，已阻止在主窗口中打开：' + url)
+        : '目标地址不属于主页所在站点，已阻止在主窗口中打开'
+      btn.textContent = '返回主页'
+      btn.onclick = function () { if (home) window.location.href = home }
+    } else {
+      document.getElementById('url').textContent = url ? ('地址：' + url) : ''
+      btn.onclick = function () { if (url) window.location.href = url }
     }
   </script>
 </body>
