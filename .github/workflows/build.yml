@@ -32,18 +32,16 @@ jobs:
 
   # ── macOS build (sign + notarize + staple) ─────────────
   #
-  # 签名交给 electron-builder 自己处理（CSC_LINK 就是 base64 的 .p12），
-  # 公证由 package.json 的 mac.notarize=true 在签名之后、打 DMG 之前完成。
-  # electron-builder 的时序是：pack → sign → (afterSign) notarize + staple → build dmg，
-  # 所以 DMG 里的 .app 天然是已 staple 的，不需要事后再跑一次构建
-  # （旧流程「先公证 .app 再 npx electron-builder --mac 重建 DMG」会把 staple 覆盖掉）。
+  # 签名交给 electron-builder（CSC_LINK 就是 base64 的 .p12），公证由
+  # package.json 的 mac.notarize=true 在签名之后、打 DMG 之前完成。
+  # electron-builder 时序：pack → sign → (afterSign) notarize + staple → build dmg，
+  # 所以 DMG 里的 .app 天然已 staple。旧流程「公证完再 electron-builder --mac
+  # 重建 DMG」会把 staple 覆盖掉，已去掉。
   build-mac:
     runs-on: macos-latest
     env:
-      # electron-builder 直接用这两个变量自己建临时 keychain 并签名
       CSC_LINK: ${{ secrets.MAC_CERTS }}
       CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
-      # mac.notarize=true 读取这三个变量
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -54,8 +52,11 @@ jobs:
         with:
           node-version: 22
 
-      # ── 预检证书：把「身份不对/没有私钥」这类问题挡在构建之前 ──
-      - name: Preflight - inspect signing certificate
+      # ── 预检 1：p12 能解开，证书类型 / Team 正确 ──
+      # 这里只读证书（-nokeys）。私钥不由 openssl 判定：本仓库 p12 的私钥是
+      # RC2-40 老 PBE，macOS 自带 LibreSSL 解不开，会误报「没有私钥」。
+      # 私钥可用性交给下一步用 security 判定。
+      - name: Preflight - certificate type and team
         run: |
           set -euo pipefail
           if [ -z "${CSC_LINK:-}" ]; then
@@ -64,39 +65,58 @@ jobs:
           fi
 
           printf '%s' "$CSC_LINK" | tr -d '\r\n ' | python3 -c "import base64,sys;open('$RUNNER_TEMP/cert.p12','wb').write(base64.b64decode(sys.stdin.read()))"
+          ls -l "$RUNNER_TEMP/cert.p12"
 
-          # LibreSSL(macOS 自带) 不认 -legacy；OpenSSL 3 解 RC2 老 p12 又必须加 -legacy
           if ! openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$CSC_KEY_PASSWORD" \
                  -nokeys -out "$RUNNER_TEMP/cert.pem" 2>/dev/null; then
             openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$CSC_KEY_PASSWORD" \
-                 -nokeys -legacy -out "$RUNNER_TEMP/cert.pem"
+                 -legacy -nokeys -out "$RUNNER_TEMP/cert.pem" \
+              || { echo "::error::p12 解不开：密码错误，或文件不是 PKCS#12"; exit 1; }
           fi
 
-          echo "--- 证书主体 ---"
-          openssl x509 -in "$RUNNER_TEMP/cert.pem" -noout -subject -issuer -dates | tee /dev/stderr
+          openssl x509 -in "$RUNNER_TEMP/cert.pem" -noout -subject -issuer -dates
+          openssl x509 -in "$RUNNER_TEMP/cert.pem" -noout -subject > "$RUNNER_TEMP/subject.txt"
 
-          SUBJECT="$(openssl x509 -in "$RUNNER_TEMP/cert.pem" -noout -subject)"
-          case "$SUBJECT" in
-            *"Developer ID Application"*) ;;
-            *)
-              echo "::error::证书不是 Developer ID Application（Apple Development / Apple Distribution / Mac Installer 都无法通过公证）: $SUBJECT"
-              exit 1
-              ;;
-          esac
-
-          if [ -n "${APPLE_TEAM_ID:-}" ] && ! printf '%s' "$SUBJECT" | grep -qF "($APPLE_TEAM_ID)"; then
-            echo "::error::证书 Team ID 与 secrets.APPLE_TEAM_ID=$APPLE_TEAM_ID 不一致: $SUBJECT"
+          if ! grep -q "Developer ID Application" "$RUNNER_TEMP/subject.txt"; then
+            echo "::error::证书不是 Developer ID Application（Apple Development / Apple Distribution 无法公证）"
+            exit 1
+          fi
+          if [ -n "${APPLE_TEAM_ID:-}" ] && ! grep -qF "($APPLE_TEAM_ID)" "$RUNNER_TEMP/subject.txt"; then
+            echo "::error::证书 Team ID 与 secrets.APPLE_TEAM_ID 不一致"
+            cat "$RUNNER_TEMP/subject.txt"
             exit 1
           fi
 
-          # 私钥必须随 p12 一起导出，否则 codesign 找不到身份
-          if ! openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$CSC_KEY_PASSWORD" \
-                 -nocerts -nodes 2>/dev/null | grep -q "PRIVATE KEY"; then
-            echo "::error::p12 里没有私钥（导出证书时未勾选私钥），签名会被静默跳过"
+      # ── 预检 2：用 security 验「codesign 真能用这个身份」 ──
+      # 等价于签名真正需要的能力：p12 导入后必须能以「含私钥的
+      # Developer ID Application」身份被找到。
+      - name: Preflight - signing identity is usable
+        run: |
+          set -euo pipefail
+          KC="$RUNNER_TEMP/verify.keychain-db"
+          KCP="$(openssl rand -hex 16)"
+
+          security create-keychain -p "$KCP" "$KC"
+          security set-keychain-settings "$KC"
+          security unlock-keychain -p "$KCP" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CSC_KEY_PASSWORD" \
+            -A -T /usr/bin/codesign -T /usr/bin/security \
+            || { echo "::error::security import 失败：p12 密码错误，或私钥无法导入"; exit 1; }
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -k "$KCP" "$KC" >/dev/null 2>&1 || true
+
+          # 写文件再 grep；不要 grep -q 直接接管道（pipefail 下上游 SIGPIPE 会误判）
+          security find-identity -v -p codesigning "$KC" > "$RUNNER_TEMP/ids.txt" || true
+          cat "$RUNNER_TEMP/ids.txt"
+
+          if ! grep -q "Developer ID Application" "$RUNNER_TEMP/ids.txt"; then
+            echo "::error::keychain 里没有可用的 Developer ID Application 身份（有证书但无配对私钥）"
+            security delete-keychain "$KC" >/dev/null 2>&1 || true
             exit 1
           fi
 
-      # ── 装上 Developer ID 中间证书，避免 "unable to build chain" 导致签名失败 ──
+          security delete-keychain "$KC" >/dev/null 2>&1 || true
+
+      # ── 预检 3：Developer ID 中间证书，避免 "unable to build chain" ──
       - name: Preflight - ensure Developer ID intermediate CA
         run: |
           set -euo pipefail
@@ -110,15 +130,15 @@ jobs:
 
       - run: npm ci
 
-      # 邮箱功能的 vendor/ 不在 git 里（.gitignore 第 23 行），CI 上不存在，
-      # 缺了它 dist 里就不带 PHP/SnappyMail。需要在 CI 里重建时打开下面这步。
+      # 邮箱功能的 vendor/ 不在 git 里（.gitignore），CI 上不存在，
+      # 缺了它 dist 里就不带 PHP/SnappyMail。需要随包发布时打开这步。
       # - name: Fetch email vendor
       #   run: python3 scripts/fetch-vendor.py
 
       - name: Build / Sign / Notarize / Staple
         run: npx electron-builder --mac --publish never
 
-      # ── 验收：把「公证没生效」变成明确的红叉，而不是发出去才发现打不开 ──
+      # ── 验收：把「公证没生效」变成明确红叉 ──
       - name: Verify signature and notarization
         run: |
           set -euo pipefail
@@ -129,22 +149,24 @@ jobs:
           fi
           echo "APP=$APP"
 
-          echo "--- codesign -dv ---"
-          codesign -dv --verbose=4 "$APP" 2>&1 | tee /dev/stderr
+          codesign -dv --verbose=4 "$APP" > "$RUNNER_TEMP/codesign.txt" 2>&1 || true
+          cat "$RUNNER_TEMP/codesign.txt"
 
-          if codesign -dv "$APP" 2>&1 | grep -q "Signature=adhoc"; then
-            echo "::error::$APP 是 adhoc 签名 —— 没找到签名身份，公证必然返回 Invalid"
+          if grep -q "Signature=adhoc" "$RUNNER_TEMP/codesign.txt"; then
+            echo "::error::$APP 是 adhoc 签名：没找到签名身份，公证必然 Invalid"
             exit 1
           fi
-          codesign -dv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" \
-            || { echo "::error::签名链不是 Developer ID Application"; exit 1; }
+          if ! grep -q "Authority=Developer ID Application" "$RUNNER_TEMP/codesign.txt"; then
+            echo "::error::签名链不是 Developer ID Application"
+            exit 1
+          fi
 
           codesign --verify --deep --strict --verbose=2 "$APP"
           xcrun stapler validate "$APP"
           spctl -a -vvv --type execute "$APP"
 
-      # ── 失败时重新提交一次，只为拿到 submission id 和 issues 明细 ──
-      # 公证返回 Invalid 时 notarytool 本身不给原因，必须 notarytool log <id>。
+      # ── 失败时重投一次，把 issues 打出来并转成注解 ──
+      # job 日志需要 admin 权限才能下载，注解是公开可读的，所以关键信息走 ::error::
       - name: Dump notarization issues (on failure)
         if: failure()
         run: |
@@ -162,14 +184,32 @@ jobs:
           cat "$RUNNER_TEMP/submit.json"
 
           ID="$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/submit.json')).get('id',''))" 2>/dev/null)"
-          if [ -n "$ID" ]; then
-            echo "=== notarytool log $ID ==="
-            xcrun notarytool log "$ID" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" > notary-issues.json 2>&1
-            cat notary-issues.json
-          fi
+          if [ -z "$ID" ]; then echo "拿不到 submission id"; exit 0; fi
+
+          echo "=== notarytool log $ID ==="
+          xcrun notarytool log "$ID" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" > notary-issues.json 2>&1
+          cat notary-issues.json
+
+          python3 - <<'PY'
+          import json, os
+          p = 'notary-issues.json'
+          if not os.path.exists(p):
+              raise SystemExit(0)
+          try:
+              d = json.load(open(p))
+          except Exception:
+              print('::error::notarytool log 不是合法 JSON，看上面原始输出')
+              raise SystemExit(0)
+          issues = d.get('issues') or []
+          print('::error::公证 status=%s issues=%d' % (d.get('status'), len(issues)))
+          for i in issues[:8]:
+              msg = (i.get('message') or '').replace('\n', ' ')[:200]
+              path = (i.get('path') or '(整个包)')
+              print('::error::[%s] %s - %s' % (i.get('severity'), path, msg))
+          PY
 
       - name: Upload notarization issues
         if: failure()
