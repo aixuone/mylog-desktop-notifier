@@ -192,6 +192,34 @@ jobs:
                   f.write('## Signing diagnostics\n' + text + '\n')
           PY
 
+      # ── 逐个二进制的签名详情，压缩成注解上报 ──
+      # job 日志要 admin 才能下载，注解公开可读，所以关键字段走 ::error::
+      - name: Codesign detail
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, subprocess
+          apps = sorted(glob.glob('dist-installer-new/*/*.app'))
+          if not apps:
+              print('没有产出 .app')
+              raise SystemExit(0)
+          app = apps[0]
+          name = os.path.basename(app)[:-4]
+          targets = [app, '%s/Contents/MacOS/%s' % (app, name)]
+          targets += sorted(glob.glob(os.path.join(app, 'Contents/Frameworks/*.app')))
+          targets += sorted(glob.glob(os.path.join(app, 'Contents/Frameworks/*.framework')))
+          key = re.compile(r'^(Identifier|Format|CodeDirectory|Signature|Authority|Timestamp|TeamIdentifier)=')
+          for t in targets[:5]:
+              r = subprocess.run(['codesign', '-dv', '--verbose=4', t],
+                                 capture_output=True, text=True)
+              raw = (r.stdout or '') + (r.stderr or '')
+              picked = [l.strip() for l in raw.splitlines() if key.match(l.strip())]
+              msg = ' ; '.join(picked)
+              if not msg:
+                  msg = raw.strip().replace('\n', ' ')[:220] or '无输出(rc=%d)' % r.returncode
+              print('::error::[%s] %s' % (os.path.relpath(t, app), msg[:380].replace('\n', ' ')))
+          PY
+
       # ── 验收：把「公证没生效」变成明确红叉 ──
       - name: Verify signature and notarization
         if: always()
@@ -203,17 +231,6 @@ jobs:
             exit 1
           fi
           echo "APP=$APP"
-
-          # 逐层 dump 签名详情到 summary：主包 + Frameworks 下所有 Mach-O
-          {
-            echo '## codesign 详情'
-            echo "### $APP"
-            codesign -dv --verbose=4 "$APP" 2>&1 | sed 's/^/    /'
-            find "$APP/Contents/Frameworks" -type f -path '*/Contents/MacOS/*' 2>/dev/null | while read -r f; do
-              echo "### ${f#$APP/}"
-              codesign -dv --verbose=4 "$f" 2>&1 | sed 's/^/    /'
-            done
-          } >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
 
           codesign -dv --verbose=4 "$APP" > "$RUNNER_TEMP/codesign.txt" 2>&1 || true
           cat "$RUNNER_TEMP/codesign.txt"
@@ -271,7 +288,7 @@ jobs:
               raise SystemExit(0)
           issues = d.get('issues') or []
           print('::error::公证 status=%s issues=%d' % (d.get('status'), len(issues)))
-          for i in issues[:8]:
+          for i in issues[:2]:
               msg = (i.get('message') or '').replace('\n', ' ')[:200]
               path = (i.get('path') or '(整个包)')
               print('::error::[%s] %s - %s' % (i.get('severity'), path, msg))
