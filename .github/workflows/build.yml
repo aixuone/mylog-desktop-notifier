@@ -43,6 +43,13 @@ jobs:
       # 故意不设 CSC_LINK：让 electron-builder 自己建临时 keychain 导入 p12
       # 在本仓库实测失败且只警告不报错（结果 .app 仍是 adhoc，公证 Invalid）。
       # 改为自己导入 keychain + 显式 CSC_NAME，见 "Import signing certificate"。
+      # ★ 关键：electron-builder 的 isPullRequest() 用 GITHUB_BASE_REF 判 PR
+      # （builder-util/out/util.js:459），而 GitHub Actions 只在 pull_request
+      # 事件里设这个变量。命中后它只打一行 warning 就跳过整包签名，包维持
+      # Electron 自带的 adhoc 签名 → Helper 无 hardened runtime/时间戳 →
+      # Apple 公证 Invalid。本仓库的 PR 都来自同一仓库的分支、secrets 可用，
+      # 不存在「不可信 fork」风险，故显式打开。
+      CSC_FOR_PULL_REQUEST: "true"
       MAC_CERTS_B64: ${{ secrets.MAC_CERTS }}
       CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -145,8 +152,17 @@ jobs:
 
       - name: Build / Sign / Notarize / Staple
         run: |
-          set -o pipefail
+          set -eo pipefail
+          # 双保险：清掉 electron-builder 判定 PR 的唯一依据，
+          # 不依赖 CSC_FOR_PULL_REQUEST 的行为是否随版本变化。
+          unset GITHUB_BASE_REF
           npx electron-builder --mac --publish never 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+          # 宁可这里红叉，也不要发出一个 adhoc 签名的包。
+          if grep -q "code signing will be skipped" "$RUNNER_TEMP/build.log"; then
+            echo "::error::electron-builder 跳过了签名（仍会产出 adhoc 包），构建无效"
+            exit 1
+          fi
 
       # electron-builder 找不到身份时只 warning 不失败，必须主动核实它到底签没签。
       # 这里把构建日志里的签名决策行转成注解（job 日志需 admin 才能下载，注解公开可读）。
