@@ -40,7 +40,10 @@ jobs:
   build-mac:
     runs-on: macos-latest
     env:
-      CSC_LINK: ${{ secrets.MAC_CERTS }}
+      # 故意不设 CSC_LINK：让 electron-builder 自己建临时 keychain 导入 p12
+      # 在本仓库实测失败且只警告不报错（结果 .app 仍是 adhoc，公证 Invalid）。
+      # 改为自己导入 keychain + 显式 CSC_NAME，见 "Import signing certificate"。
+      MAC_CERTS_B64: ${{ secrets.MAC_CERTS }}
       CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -59,12 +62,12 @@ jobs:
       - name: Preflight - certificate type and team
         run: |
           set -euo pipefail
-          if [ -z "${CSC_LINK:-}" ]; then
+          if [ -z "${MAC_CERTS_B64:-}" ]; then
             echo "::error::secrets.MAC_CERTS 为空"
             exit 1
           fi
 
-          printf '%s' "$CSC_LINK" | tr -d '\r\n ' | python3 -c "import base64,sys;open('$RUNNER_TEMP/cert.p12','wb').write(base64.b64decode(sys.stdin.read()))"
+          printf '%s' "$MAC_CERTS_B64" | tr -d '\r\n ' | python3 -c "import base64,sys;open('$RUNNER_TEMP/cert.p12','wb').write(base64.b64decode(sys.stdin.read()))"
           ls -l "$RUNNER_TEMP/cert.p12"
 
           if ! openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$CSC_KEY_PASSWORD" \
@@ -87,34 +90,39 @@ jobs:
             exit 1
           fi
 
-      # ── 预检 2：用 security 验「codesign 真能用这个身份」 ──
-      # 等价于签名真正需要的能力：p12 导入后必须能以「含私钥的
-      # Developer ID Application」身份被找到。
-      - name: Preflight - signing identity is usable
+      # ── 导入签名证书并显式指定身份 ──
+      # 这一步同时兼作预检：p12 导入后必须能以「含私钥的 Developer ID
+      # Application」身份被找到，否则后面 electron-builder 会静默跳过签名。
+      - name: Import signing certificate
         run: |
           set -euo pipefail
-          KC="$RUNNER_TEMP/verify.keychain-db"
+          KC="$RUNNER_TEMP/signing.keychain-db"
           KCP="$(openssl rand -hex 16)"
+          echo "KEYCHAIN_PATH=$KC" >> "$GITHUB_ENV"
 
           security create-keychain -p "$KCP" "$KC"
-          security set-keychain-settings "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
           security unlock-keychain -p "$KCP" "$KC"
           security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CSC_KEY_PASSWORD" \
             -A -T /usr/bin/codesign -T /usr/bin/security \
             || { echo "::error::security import 失败：p12 密码错误，或私钥无法导入"; exit 1; }
           security set-key-partition-list -S apple-tool:,apple:,codesign: -k "$KCP" "$KC" >/dev/null 2>&1 || true
 
+          # 设为用户搜索列表（替换掉 login），codesign / electron-builder 才找得到
+          security list-keychains -d user -s "$KC"
+
           # 写文件再 grep；不要 grep -q 直接接管道（pipefail 下上游 SIGPIPE 会误判）
-          security find-identity -v -p codesigning "$KC" > "$RUNNER_TEMP/ids.txt" || true
+          security find-identity -v -p codesigning > "$RUNNER_TEMP/ids.txt" 2>&1 || true
           cat "$RUNNER_TEMP/ids.txt"
 
-          if ! grep -q "Developer ID Application" "$RUNNER_TEMP/ids.txt"; then
-            echo "::error::keychain 里没有可用的 Developer ID Application 身份（有证书但无配对私钥）"
-            security delete-keychain "$KC" >/dev/null 2>&1 || true
+          IDENTITY="$(grep -m1 'Developer ID Application' "$RUNNER_TEMP/ids.txt" | sed -E 's/^[[:space:]]*[0-9]+\)[[:space:]]*[0-9A-Fa-f]+[[:space:]]+"(.*)"/\1/' || true)"
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::keychain 里没有可用的 Developer ID Application 身份（证书无配对私钥，或导入未生效）"
             exit 1
           fi
 
-          security delete-keychain "$KC" >/dev/null 2>&1 || true
+          echo "CSC_NAME=$IDENTITY" >> "$GITHUB_ENV"
+          echo "用签名身份: $IDENTITY"
 
       # ── 预检 3：Developer ID 中间证书，避免 "unable to build chain" ──
       - name: Preflight - ensure Developer ID intermediate CA
@@ -136,7 +144,31 @@ jobs:
       #   run: python3 scripts/fetch-vendor.py
 
       - name: Build / Sign / Notarize / Staple
-        run: npx electron-builder --mac --publish never
+        run: |
+          set -o pipefail
+          npx electron-builder --mac --publish never 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      # electron-builder 找不到身份时只 warning 不失败，必须主动核实它到底签没签。
+      # 这里把构建日志里的签名决策行转成注解（job 日志需 admin 才能下载，注解公开可读）。
+      - name: Signing diagnostics
+        if: always()
+        run: |
+          python3 - "$RUNNER_TEMP/build.log" <<'PY'
+          import re, sys
+          try:
+              lines = open(sys.argv[1], encoding='utf-8', errors='replace').read().splitlines()
+          except FileNotFoundError:
+              print('没有 build.log')
+              raise SystemExit(0)
+          pat = re.compile(r'identity|sign(ing)?|notariz|certificate|keychain|codesign', re.I)
+          hits = [l.strip() for l in lines if pat.search(l)]
+          print('=== 命中 %d 行，末尾 30 行 ===' % len(hits))
+          for l in hits[-30:]:
+              print(l)
+          key = [l for l in hits if re.search(r'skip|cannot|fail|error|identity|notariz', l, re.I)][-8:]
+          for l in key:
+              print('::warning::' + l[:240])
+          PY
 
       # ── 验收：把「公证没生效」变成明确红叉 ──
       - name: Verify signature and notarization
