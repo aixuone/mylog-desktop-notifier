@@ -207,10 +207,38 @@ jobs:
 
       - run: npm ci
 
-      # 邮箱功能的 vendor/ 不在 git 里（.gitignore），CI 上不存在，
-      # 缺了它 dist 里就不带 PHP/SnappyMail。需要随包发布时打开这步。
-      # - name: Fetch email vendor
-      #   run: python3 scripts/fetch-vendor.py
+      # 邮箱运行时（macOS）：Windows 那份是 php.exe + DLL，mac 上跑不了，
+      # 必须用静态编译的 PHP（static-php-cli bulk 预编译，双架构各约 100MB）。
+      # 两份二进制都放在 vendor/php-mac/bin，由 build/after-pack.js 按架构挑一份，
+      # 再通过 package.json 的 mac.binaries 交给 osx-sign 签名 —— 漏签公证必 Invalid。
+      - name: Cache email vendor (mac)
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/php-mac
+            vendor/snappymail
+          key: vendor-mac-${{ hashFiles('scripts/fetch-vendor-mac.py') }}
+
+      - name: Fetch email vendor (mac)
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
+        run: |
+          set +e
+          set -o pipefail
+          if [ -f vendor/php-mac/bin/php-arm64 ] && [ -f vendor/php-mac/bin/php-x64 ] \
+             && [ -f vendor/snappymail/index.php ]; then
+            echo "缓存命中，跳过下载"
+            exit 0
+          fi
+          python3 -u scripts/fetch-vendor-mac.py 2>&1 | tee "$RUNNER_TEMP/fetchmac.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            tail -15 "$RUNNER_TEMP/fetchmac.log" | while IFS= read -r l; do
+              [ -n "$l" ] && echo "::error::${l:0:380}"
+            done
+            exit "$rc"
+          fi
 
       - name: Build / Sign / Notarize / Staple
         run: |
@@ -285,33 +313,76 @@ jobs:
               print('::error::[%s] %s' % (os.path.relpath(t, app), msg[:380].replace('\n', ' ')))
           PY
 
-      # ── 验收：把「公证没生效」变成明确红叉 ──
+      # ── 验收：把「公证没生效」变成明确红叉（x64 与 arm64 两份都验） ──
       - name: Verify signature and notarization
         if: always()
         run: |
           set -euo pipefail
-          APP="$(find dist-installer-new -maxdepth 2 -name '*.app' -type d | sort | head -1)"
-          if [ -z "$APP" ]; then
+          APPS="$(find dist-installer-new -maxdepth 2 -name '*.app' -type d | sort)"
+          if [ -z "$APPS" ]; then
             echo "::error::没有产出 .app"
             exit 1
           fi
-          echo "APP=$APP"
+          NATIVE="$(uname -m)"
 
-          codesign -dv --verbose=4 "$APP" > "$RUNNER_TEMP/codesign.txt" 2>&1 || true
-          cat "$RUNNER_TEMP/codesign.txt"
+          for APP in $APPS; do
+            echo "==================== $APP ===================="
 
-          if grep -q "Signature=adhoc" "$RUNNER_TEMP/codesign.txt"; then
-            echo "::error::$APP 是 adhoc 签名：没找到签名身份，公证必然 Invalid"
-            exit 1
-          fi
-          if ! grep -q "Authority=Developer ID Application" "$RUNNER_TEMP/codesign.txt"; then
-            echo "::error::签名链不是 Developer ID Application"
-            exit 1
-          fi
+            codesign -dv --verbose=4 "$APP" > "$RUNNER_TEMP/codesign.txt" 2>&1 || true
+            cat "$RUNNER_TEMP/codesign.txt"
 
-          codesign --verify --deep --strict --verbose=2 "$APP"
-          xcrun stapler validate "$APP"
-          spctl -a -vvv --type execute "$APP"
+            if grep -q "Signature=adhoc" "$RUNNER_TEMP/codesign.txt"; then
+              echo "::error::$APP 是 adhoc 签名：没找到签名身份，公证必然 Invalid"
+              exit 1
+            fi
+            if ! grep -q "Authority=Developer ID Application" "$RUNNER_TEMP/codesign.txt"; then
+              echo "::error::$APP 的签名链不是 Developer ID Application"
+              exit 1
+            fi
+
+            # ── 邮箱运行时：必须存在、可执行、架构匹配、且被签名 ──
+            PHP="$APP/Contents/Resources/vendor/php/php"
+            if [ ! -f "$PHP" ]; then
+              echo "::error::mac 包缺少邮箱运行时：Contents/Resources/vendor/php/php"
+              exit 1
+            fi
+            if [ ! -x "$PHP" ]; then
+              echo "::error::内置 php 没有可执行权限"
+              exit 1
+            fi
+
+            APP_ARCH="$(lipo -archs "$APP/Contents/MacOS/$(basename "$APP" .app)" 2>/dev/null || echo unknown)"
+            PHP_ARCH="$(lipo -archs "$PHP" 2>/dev/null || echo unknown)"
+            echo "app arch=$APP_ARCH | php arch=$PHP_ARCH"
+            case "$APP_ARCH" in
+              *arm64*)  echo "$PHP_ARCH" | grep -q arm64  || { echo "::error::php 架构与 app 不匹配（app=$APP_ARCH php=$PHP_ARCH）"; exit 1; } ;;
+              *x86_64*) echo "$PHP_ARCH" | grep -q x86_64 || { echo "::error::php 架构与 app 不匹配（app=$APP_ARCH php=$PHP_ARCH）"; exit 1; } ;;
+            esac
+
+            codesign -dv --verbose=4 "$PHP" > "$RUNNER_TEMP/php-codesign.txt" 2>&1 || true
+            cat "$RUNNER_TEMP/php-codesign.txt"
+            if ! grep -q "Authority=Developer ID Application" "$RUNNER_TEMP/php-codesign.txt"; then
+              echo "::error::内置 php 没有被 Developer ID 签名（公证会 Invalid）"
+              exit 1
+            fi
+            grep -qE "flags=.*runtime" "$RUNNER_TEMP/php-codesign.txt" \
+              || echo "::warning::内置 php 未启用 hardened runtime"
+
+            # 只有与 runner 同架构时才真跑一次，否则（x64 包在 arm64 runner 上）需要 Rosetta
+            if echo "$PHP_ARCH" | grep -q "$NATIVE"; then
+              "$PHP" -m 2>&1 | tr 'A-Z' 'a-z' > "$RUNNER_TEMP/phpm.txt" || true
+              echo "php -v: $("$PHP" -v 2>&1 | head -1)"
+              for e in mbstring openssl sodium curl zip fileinfo pdo_sqlite sqlite3 sockets; do
+                grep -qx "$e" "$RUNNER_TEMP/phpm.txt" || echo "::warning::内置 php 缺少扩展 $e"
+              done
+            else
+              echo "php 架构($PHP_ARCH)与本机($NATIVE)不同，跳过执行检查"
+            fi
+
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            xcrun stapler validate "$APP"
+            spctl -a -vvv --type execute "$APP"
+          done
 
       # ── 失败时重投一次，把 issues 打出来并转成注解 ──
       # job 日志需要 admin 权限才能下载，注解是公开可读的，所以关键信息走 ::error::

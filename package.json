@@ -26,16 +26,7 @@
     "asarUnpack": [
       "assets/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "vendor/php",
-        "to": "vendor/php"
-      },
-      {
-        "from": "vendor/snappymail",
-        "to": "vendor/snappymail"
-      }
-    ],
+    "afterPack": "build/after-pack.js",
     "directories": {
       "output": "dist-installer-new"
     },
@@ -58,7 +49,17 @@
         }
       ],
       "icon": "assets/icon.ico",
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "extraResources": [
+        {
+          "from": "vendor/php",
+          "to": "vendor/php"
+        },
+        {
+          "from": "vendor/snappymail",
+          "to": "vendor/snappymail"
+        }
+      ]
     },
     "mac": {
       "target": [
@@ -78,6 +79,23 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "notarize": true,
+      "extraResources": [
+        {
+          "from": "vendor/php-mac",
+          "to": "vendor/php",
+          "filter": [
+            "**/*",
+            "!bin/**"
+          ]
+        },
+        {
+          "from": "vendor/snappymail",
+          "to": "vendor/snappymail"
+        }
+      ],
+      "binaries": [
+        "Contents/Resources/vendor/php/php"
+      ],
       "extendInfo": {
         "LSUIElement": true,
         "NSHighResolutionCapable": true,
