@@ -123,6 +123,11 @@ jobs:
           cat "$RUNNER_TEMP/ids.txt"
 
           IDENTITY="$(grep -m1 'Developer ID Application' "$RUNNER_TEMP/ids.txt" | sed -E 's/^[[:space:]]*[0-9]+\)[[:space:]]*[0-9A-Fa-f]+[[:space:]]+"(.*)"/\1/' || true)"
+          # ★ 必须剥掉前缀：macCodeSign.checkPrefix() 见到 CSC_NAME 以
+          # "Developer ID Application:" 开头会直接抛 InvalidConfigurationError
+          # （日志里表现为 "⨯ Please remove prefix ..."），随后整包不签名，
+          # 但构建步骤看起来只是 exit 1，很容易被当成公证问题。
+          IDENTITY="${IDENTITY#Developer ID Application: }"
           if [ -z "$IDENTITY" ]; then
             echo "::error::keychain 里没有可用的 Developer ID Application 身份（证书无配对私钥，或导入未生效）"
             exit 1
