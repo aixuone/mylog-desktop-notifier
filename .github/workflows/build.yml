@@ -31,7 +31,13 @@ jobs:
 
       - name: Fetch email vendor
         shell: bash
+        # Windows runner 上 Python 的 stdout 是 cp1252，脚本 print 中文会直接
+        # UnicodeEncodeError（连下载都没开始）。必须强制 UTF-8。
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
         run: |
+          set +e
           set -o pipefail
           if [ -f vendor/php/php.exe ] && [ -f vendor/snappymail/index.php ]; then
             echo "缓存命中，跳过下载"
@@ -42,7 +48,7 @@ jobs:
             echo "== 第 $attempt 次尝试 =="
             python -u scripts/fetch-vendor.py 2>&1 | tee "$RUNNER_TEMP/fetch.log"
             rc=${PIPESTATUS[0]}
-            [ "$rc" -eq 0 ] && break
+            if [ "$rc" -eq 0 ]; then break; fi
             echo "第 $attempt 次失败（rc=$rc），5s 后重试"
             sleep 5
           done
