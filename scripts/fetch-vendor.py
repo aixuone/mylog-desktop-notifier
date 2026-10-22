@@ -33,9 +33,15 @@ import sys
 import urllib.request
 import zipfile
 
+# 仓库内维护的 SnappyMail 定制层应用器（Windows / macOS 共用）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from email_overlay import apply_overlay as _apply_overlay  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENDOR = os.path.join(ROOT, "vendor")
 DL = os.path.join(VENDOR, "_dl")
+# 仓库内维护的 SnappyMail 定制层（UI 主题注入 / 插件 / 域名配置），入 git
+OVERLAY = os.path.join(ROOT, "email-overlay")
 
 # 优先用这个版本；官方 releases 目录只留最近几个小版本，下架后自动
 # 回退到目录里最新的 8.4.x（见 discover_latest_php）。绝不让脚本因为
@@ -310,6 +316,12 @@ def dir_size_mb(d):
     return total / 1048576
 
 
+def apply_overlay(snap_ver):
+    """薄包装：真正实现见 scripts/email_overlay.py（macOS 脚本共用同一份）。"""
+    ok, _ = _apply_overlay(ROOT, VENDOR, snap_ver, log)
+    return ok
+
+
 def verify_vendor(php_dir):
     """产物自检：缺任何一项都直接失败，不要靠安装包事后才发现。
 
@@ -368,6 +380,42 @@ def verify_vendor(php_dir):
     return True
 
 
+def verify_snappymail():
+    """SnappyMail 定制层自检：overlay 是否真的落上了。
+
+    这几项丢了不会让 PHP 起不来，但用户会看到「原版界面」或「无法连接服务器」，
+    而构建照样是绿的 —— 所以必须单独断言。
+    """
+    snap = os.path.join(VENDOR, "snappymail")
+    problems = []
+
+    idx = os.path.join(snap, "snappymail", "v", SNAPPY_VERSION, "app", "templates", "Index.html")
+    if not os.path.isfile(idx):
+        problems.append("缺少 SnappyMail 模板：" + idx)
+    else:
+        html = io.open(idx, encoding="utf-8", errors="replace").read()
+        if "eb-mail-theme" not in html:
+            problems.append("Index.html 里没有 eb-mail-theme 注入层（邮箱会显示原版界面）")
+        else:
+            log("  UI 注入层 OK：Index.html {:.1f} KB 含 eb-mail-theme".format(len(html) / 1024))
+
+    for rel in ("plugins/mylog-provider/index.php",
+                "plugins/mylog-provider/providers.php",
+                "plugins/mylog-provider/mylog-provider.js",
+                "data/_data_/_default_/configs/application.ini",
+                "data/_data_/_default_/domains/default.json",
+                "data/_data_/_default_/domains/disabled"):
+        if not os.path.isfile(os.path.join(snap, *rel.split("/"))):
+            problems.append("缺少 " + rel + "（插件或阿里邮箱域名配置没落上）")
+
+    if problems:
+        for p in problems:
+            log("  [自检失败] " + p)
+        return False
+    log("  SnappyMail 定制层 OK：UI 注入 + mylog-provider 插件 + 阿里域名配置")
+    return True
+
+
 def discover_latest_php():
     """抓官方 releases 目录，返回其中最新的 8.4.x（拿不到返回 None）。"""
     pat = re.compile(r"php-(8\.4\.\d+)-nts-Win32-vs17-x64\.zip")
@@ -408,19 +456,19 @@ def fetch_php():
 def main():
     os.makedirs(DL, exist_ok=True)
 
-    log("== 1/5 下载便携版 PHP（PHP License v3.01）")
+    log("== 1/6 下载便携版 PHP（PHP License v3.01）")
     php_ver, php_zip = fetch_php()
     if not php_zip:
         log("PHP 下载失败，请检查网络后重试。")
         return 1
 
-    log("== 2/5 下载 SnappyMail {}（AGPL-3.0）".format(SNAPPY_VERSION))
+    log("== 2/6 下载 SnappyMail {}（AGPL-3.0）".format(SNAPPY_VERSION))
     snap_zip = os.path.join(DL, SNAPPY_ZIP)
     if not download(SNAPPY_URLS, snap_zip, "SnappyMail " + SNAPPY_VERSION):
         log("SnappyMail 下载失败，请检查网络后重试。")
         return 1
 
-    log("== 3/5 解压")
+    log("== 3/6 解压")
     php_dir = os.path.join(VENDOR, "php")
     snap_dir = os.path.join(VENDOR, "snappymail")
     extract_zip(php_zip, php_dir)
@@ -428,7 +476,7 @@ def main():
     extract_zip(snap_zip, snap_dir)
     log("  SnappyMail -> vendor/snappymail")
 
-    log("== 4/5 裁剪与配置")
+    log("== 4/6 裁剪与配置 PHP")
     trim_php(php_dir)
     with open(os.path.join(php_dir, "php.ini"), "w", encoding="utf-8", newline="\n") as f:
         f.write(php_ini(php_ver))
@@ -437,15 +485,19 @@ def main():
     with open(os.path.join(snap_dir, "include.php"), "w", encoding="utf-8", newline="\n") as f:
         f.write(SNAPPY_INCLUDE_PHP)
 
+    log("== 5/6 应用 email-overlay（邮箱 UI / 插件 / 域名配置）")
+    apply_overlay(SNAPPY_VERSION)
+
     # CA 根证书（约 220KB，故 min_size 用小阈值）
     cacert = os.path.join(php_dir, "cacert.pem")
     if not download(CACERT_URLS, cacert, "Mozilla CA 根证书", min_size=100 * 1024):
         log("CA 根证书下载失败：IMAP over SSL 将无法校验证书。请检查网络后重试。")
         return 1
 
-    log("== 5/5 自检")
-    ok = verify_vendor(php_dir)
-    if not ok:
+    log("== 6/6 自检")
+    ok_php = verify_vendor(php_dir)
+    ok_snap = verify_snappymail()
+    if not (ok_php and ok_snap):
         log("产物不完整，已中止（不要用它打包）。")
         return 1
 

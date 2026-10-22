@@ -105,6 +105,26 @@ jobs:
           done
           echo "OK 内置 PHP 扩展齐全"
 
+          # ── 邮箱 UI 定制层（email-overlay）──
+          # 这些文件来自仓库 email-overlay/，由 fetch-vendor.py 覆盖到官方包里。
+          # 丢了 PHP 照样起得来、构建也照样绿，但用户看到的是原版 SnappyMail 界面。
+          IDX="$(ls "$V"/snappymail/snappymail/v/*/app/templates/Index.html 2>/dev/null | head -1)"
+          if [ -z "$IDX" ]; then
+            echo "::error::安装包里缺少 SnappyMail Index.html"
+            exit 1
+          fi
+          if ! grep -q "eb-mail-theme" "$IDX"; then
+            echo "::error::Index.html 缺 eb-mail-theme 注入层：email-overlay 没应用，邮箱会显示原版界面"
+            exit 1
+          fi
+          for f in "$V/snappymail/plugins/mylog-provider/index.php" \
+                   "$V/snappymail/plugins/mylog-provider/providers.php" \
+                   "$V/snappymail/data/_data_/_default_/configs/application.ini" \
+                   "$V/snappymail/data/_data_/_default_/domains/default.json"; do
+            [ -f "$f" ] || { echo "::error::安装包缺少 $f（email-overlay 没应用）"; exit 1; }
+          done
+          echo "OK 邮箱 UI 定制层（eb-mail-theme + mylog-provider + 域名配置）"
+
       - uses: actions/upload-artifact@v4
         with:
           name: MyLogNotifier-Windows
@@ -375,6 +395,24 @@ jobs:
               echo "::error::内置 php 没有可执行权限"
               exit 1
             fi
+
+            # ── 邮箱 UI 定制层（email-overlay）：丢了 PHP 照样起得来，但界面是原版 ──
+            SNAP="$APP/Contents/Resources/vendor/snappymail"
+            IDX="$(ls "$SNAP"/snappymail/v/*/app/templates/Index.html 2>/dev/null | head -1)"
+            if [ -z "$IDX" ]; then
+              echo "::error::mac 包缺少 SnappyMail Index.html"
+              exit 1
+            fi
+            if ! grep -q "eb-mail-theme" "$IDX"; then
+              echo "::error::mac 包 Index.html 缺 eb-mail-theme 注入层（email-overlay 没应用，界面会是原版）"
+              exit 1
+            fi
+            for f in "$SNAP/plugins/mylog-provider/index.php" \
+                     "$SNAP/data/_data_/_default_/configs/application.ini" \
+                     "$SNAP/data/_data_/_default_/domains/default.json"; do
+              [ -f "$f" ] || { echo "::error::mac 包缺少 $f（email-overlay 没应用）"; exit 1; }
+            done
+            echo "OK mac 邮箱 UI 定制层"
 
             APP_ARCH="$(lipo -archs "$APP/Contents/MacOS/$(basename "$APP" .app)" 2>/dev/null || echo unknown)"
             PHP_ARCH="$(lipo -archs "$PHP" 2>/dev/null || echo unknown)"

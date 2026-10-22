@@ -34,6 +34,10 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENDOR = os.path.join(ROOT, "vendor")
+
+# 仓库内维护的 SnappyMail 定制层应用器（与 fetch-vendor.py 共用同一份）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from email_overlay import apply_overlay  # noqa: E402
 PHP_DIR = os.path.join(VENDOR, "php-mac")
 BIN_DIR = os.path.join(PHP_DIR, "bin")
 DL = os.path.join(VENDOR, "_dl")
@@ -259,6 +263,9 @@ def main():
         log("  SnappyMail -> vendor/snappymail")
 
     log("== 3/3 生成配置并验证")
+    log("  --- 应用 email-overlay（邮箱 UI / 插件 / 域名配置）---")
+    apply_overlay(ROOT, VENDOR, SNAPPY_VERSION, log)
+
     with open(os.path.join(PHP_DIR, "php.ini"), "w", encoding="utf-8", newline="\n") as f:
         f.write(PHP_INI)
     with open(os.path.join(PHP_DIR, "router.php"), "w", encoding="utf-8", newline="\n") as f:
@@ -268,6 +275,25 @@ def main():
             f.write(SNAPPY_INCLUDE_PHP)
 
     ok = True
+
+    # SnappyMail 定制层：这几项丢了 PHP 照样起得来，但用户看到的是原版界面
+    _idx = os.path.join(snap_dir, "snappymail", "v", SNAPPY_VERSION, "app", "templates", "Index.html")
+    if not os.path.isfile(_idx):
+        log("  [失败] 缺少 SnappyMail 模板 Index.html")
+        ok = False
+    elif "eb-mail-theme" not in io.open(_idx, encoding="utf-8", errors="replace").read():
+        log("  [失败] Index.html 缺 eb-mail-theme 注入层（邮箱会显示原版界面）")
+        ok = False
+    else:
+        log("  UI 注入层 OK：eb-mail-theme 存在")
+    for _rel in ("plugins/mylog-provider/index.php",
+                 "plugins/mylog-provider/providers.php",
+                 "data/_data_/_default_/configs/application.ini",
+                 "data/_data_/_default_/domains/default.json"):
+        if not os.path.isfile(os.path.join(snap_dir, *_rel.split("/"))):
+            log("  [失败] 缺少 " + _rel)
+            ok = False
+
     for arch in ("arm64", "x64"):
         log("  --- 校验 php-{} ---".format(arch))
         ok = check_extensions(os.path.join(BIN_DIR, "php-" + arch)) and ok

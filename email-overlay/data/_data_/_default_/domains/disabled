@@ -1,0 +1,4 @@
+; 【e日志】原版会在这里列出被禁止登录的公共邮箱域名：
+;   outlook.com / qq.com / yahoo.com / gmail.com / hotmail.com
+; 桌面端需要支持用户自选服务商（含 Gmail / Outlook / QQ），因此清空本名单。
+; 服务器地址由插件 mylog-provider 按用户选择决定，不依赖这里的限制。
