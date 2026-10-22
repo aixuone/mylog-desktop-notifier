@@ -151,8 +151,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloadsCancel: (id) => ipcRenderer.invoke('downloads:cancel', id),
   /** 清空已完成/失败/取消的任务记录 */
   downloadsClear: () => ipcRenderer.invoke('downloads:clear'),
+  /** 读取当前下载目录 */
+  downloadsGetDir: () => ipcRenderer.invoke('downloads:get-dir'),
+  /** 弹出文件夹选择器更改下载目录（返回 { ok, dir } 或 { ok:false, canceled:true }） */
+  downloadsPickDir: () => ipcRenderer.invoke('downloads:pick-dir'),
+  /** 订阅下载目录变更（主进程更改后推送新路径） */
+  onDownloadsDirChanged: (callback) => ipcRenderer.on('downloads-dir-changed', (_, dir) => callback(dir)),
   /** 订阅下载列表实时变化（进度/状态） */
   onDownloadsChanged: (callback) => ipcRenderer.on('downloads-changed', (_, list) => callback(list)),
+  /** 获取当前登录用户（用于下载记录归属显示） */
+  downloadsCurrentUser: () => ipcRenderer.invoke('downloads:current-user'),
+  /** 订阅当前用户变化（切换账号时刷新归属标识） */
+  onDownloadsUserChanged: (callback) => ipcRenderer.on('downloads-user-changed', (_, u) => callback(u)),
 
   // ─── Titlebar (自绘标题栏：头像/状态/快捷区/窗口控制) ──
   /** 窗口控制（minimize / maximize / close） */
@@ -211,6 +221,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Browser ──────────────────────────────────
   /** Open browser to conversation page */
   openBrowser: (url) => ipcRenderer.send('open-browser', url),
+
+  // ─── Email (阿里企业邮箱：收件 + 查看) ──────────
+  /** 读取邮箱配置（不含明文授权码），返回 { configured, email, imapHost, imapPort, imapSecure } */
+  emailConfigLoad: () => ipcRenderer.invoke('email:config-load'),
+  /** 保存配置 + 加密授权码：cfg = { email, imapHost, imapPort, imapSecure, authCode } */
+  emailConfigSave: (cfg) => ipcRenderer.invoke('email:config-save', cfg),
+  /** 临时测试连接（向导用，不落盘）：cfg 含 authCode */
+  emailTest: (cfg) => ipcRenderer.invoke('email:test', cfg),
+  /** 列出服务器文件夹 */
+  emailMailboxes: () => ipcRenderer.invoke('email:mailboxes'),
+  /** 拉取某文件夹邮件列表：folder, limit */
+  emailMessages: (folder, limit) => ipcRenderer.invoke('email:messages', folder, limit),
+  /** 拉取单封邮件详情：folder, uid */
+  emailMessage: (folder, uid) => ipcRenderer.invoke('email:message', folder, uid),
+  /** 用系统程序打开已落盘的附件文件 */
+  emailOpenAttachment: (file) => ipcRenderer.invoke('email:open-attachment', file),
+  /** 另存附件到用户选择的位置 */
+  emailSaveAttachment: (file) => ipcRenderer.invoke('email:save-attachment', file),
+  /** 订阅后台新邮件推送（数组） */
+  onEmailNewMail: (callback) => ipcRenderer.on('email:new-mail', (_, msgs) => callback(msgs)),
+  /** 网页侧边栏「邮箱」入口：请求主进程打开邮箱窗口（与托盘「邮箱」同源） */
+  openEmailWindow: () => ipcRenderer.send('email:open-window'),
 
   // ─── Clipboard (复制图片到系统剪贴板) ──────────
   /** 将图片字节写入系统剪贴板（主进程原生 clipboard.writeImage），供粘贴到钉钉 / 其他会话 */

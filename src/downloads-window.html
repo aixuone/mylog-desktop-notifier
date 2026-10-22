@@ -13,9 +13,26 @@
        local(system-ui), local(sans-serif);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --brand: #185FA5;
+  --brand-soft: rgba(24,95,165,.10);
+  --brand-soft2: rgba(24,95,165,.06);
+  --green: #16A34A;
+  --red: #DC2626;
+  --ink: #2C2C2A;
+  --ink-2: #6B6864;
+  --ink-3: #9A9893;
+  --ink-4: #A5A29C;
+  --line: rgba(24,95,165,0.10);
+  --line-2: rgba(24,95,165,0.06);
+  --card: rgba(255,255,255,0.72);
+  --card-line: rgba(255,255,255,0.85);
+}
+
 body {
   font-family: 'System UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
-  color: #2C2C2A; height: 100vh; overflow: hidden;
+  color: var(--ink); height: 100vh; overflow: hidden;
   background:
     radial-gradient(520px 300px at 100% 0%, rgba(24,95,165,0.13), transparent 60%),
     radial-gradient(420px 260px at 0% 100%, rgba(255,149,0,0.10), transparent 55%),
@@ -25,109 +42,219 @@ body {
   border-radius: 12px;
   user-select: none;
 }
+
 /* ── 标题栏（可拖拽） ── */
 .titlebar {
   display: flex; align-items: center; gap: 8px;
-  height: 42px; padding: 0 10px 0 14px;
+  height: 44px; padding: 0 10px 0 14px;
   -webkit-app-region: drag;
-  border-bottom: 1px solid rgba(24,95,165,0.10);
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255,255,255,0.5), rgba(255,255,255,0));
 }
-.titlebar .logo { font-size: 15px; }
-.titlebar .title { font-size: 13px; font-weight: 700; letter-spacing: .2px; flex: 1; }
-.titlebar .count { font-size: 11px; color: #9A9893; font-weight: 400; }
+.titlebar .logo { display: flex; align-items: center; color: var(--brand); }
+.titlebar .title { font-size: 13px; font-weight: 700; letter-spacing: .3px; flex: 1; }
+.titlebar .who {
+  font-size: 11px; color: var(--brand); font-weight: 600; white-space: nowrap;
+  background: var(--brand-soft); padding: 2px 9px; border-radius: 9px;
+}
+.titlebar .count { font-size: 11px; color: var(--ink-3); font-weight: 500; white-space: nowrap; margin-left: 2px; }
 .titlebar .close {
   -webkit-app-region: no-drag;
   width: 26px; height: 26px; border: none; border-radius: 7px;
-  background: transparent; color: #8A8883; font-size: 14px; cursor: pointer;
+  background: transparent; color: var(--ink-3); font-size: 14px; cursor: pointer;
   line-height: 1; display: flex; align-items: center; justify-content: center;
   transition: background .15s, color .15s;
 }
-.titlebar .close:hover { background: rgba(220,38,38,.12); color: #DC2626; }
+.titlebar .close:hover { background: rgba(220,38,38,.12); color: var(--red); }
 
 /* ── 列表 ── */
-.list { height: calc(100vh - 92px); overflow-y: auto; padding: 8px 10px; }
+.list { height: calc(100vh - 132px); overflow-y: auto; padding: 10px; }
+.list::-webkit-scrollbar { width: 8px; }
+.list::-webkit-scrollbar-thumb { background: rgba(24,95,165,.18); border-radius: 4px; }
+.list::-webkit-scrollbar-thumb:hover { background: rgba(24,95,165,.30); }
+.list::-webkit-scrollbar-track { background: transparent; }
 .item {
-  display: flex; align-items: center; gap: 10px;
-  background: rgba(255,255,255,0.72);
-  border: 1px solid rgba(255,255,255,0.8);
+  display: flex; align-items: center; gap: 11px;
+  background: var(--card);
+  border: 1px solid var(--card-line);
   box-shadow: 0 4px 14px rgba(31,45,61,0.06);
-  border-radius: 10px; padding: 9px 10px; margin-bottom: 8px;
+  border-radius: 11px; padding: 10px 11px; margin-bottom: 9px;
+  transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease;
 }
-.item .icon { font-size: 17px; width: 24px; text-align: center; flex-shrink: 0; }
+.item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(31,45,61,0.10);
+  border-color: rgba(24,95,165,0.22);
+}
+.item .icon {
+  font-size: 16px; width: 34px; height: 34px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(24,95,165,.07); border-radius: 9px;
+}
 .item .body { flex: 1; min-width: 0; }
 .item .fname {
   font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   display: flex; align-items: center; gap: 6px;
+  text-decoration: none; /* 防止删除线误伤子徽标 */
 }
 .item .fname .badge {
-  flex-shrink: 0; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 8px;
+  flex-shrink: 0; font-size: 10px; font-weight: 700; padding: 1.5px 7px; border-radius: 8px;
+  text-decoration: none;
 }
-.badge.going { background: rgba(24,95,165,.12); color: #185FA5; }
-.badge.done  { background: rgba(22,163,74,.14); color: #16A34A; }
-.badge.fail  { background: rgba(220,38,38,.12); color: #DC2626; }
-.item .meta { font-size: 11px; color: #9A9893; margin-top: 2px; }
+.badge.going { background: var(--brand-soft); color: var(--brand); }
+.badge.done  { background: rgba(22,163,74,.14); color: var(--green); }
+.badge.fail  { background: rgba(220,38,38,.12); color: var(--red); }
+.item .meta { font-size: 11px; color: var(--ink-3); margin-top: 3px; }
 /* 进度条 */
-.pbar { height: 4px; border-radius: 2px; background: #E7E5E0; margin-top: 6px; overflow: hidden; }
-.pbar > i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, #185FA5, #2F7FD0); transition: width .3s; }
+.pbar { height: 4px; border-radius: 4px; background: #E7E5E0; margin-top: 7px; overflow: hidden; }
+.pbar > i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #185FA5, #2F7FD0); transition: width .3s; }
 .pbar.done > i { background: linear-gradient(90deg, #16A34A, #4ADE80); }
-.pbar.fail > i { background: #DC2626; }
+.pbar.fail > i { background: var(--red); }
+/* 下载中：流动条纹，强调“进行中” */
+.pbar:not(.done):not(.fail) > i {
+  background-image: linear-gradient(45deg, rgba(255,255,255,.25) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.25) 50%, rgba(255,255,255,.25) 75%, transparent 75%, transparent);
+  background-size: 16px 16px;
+  animation: pstripe 1s linear infinite;
+}
+@keyframes pstripe { from { background-position: 0 0; } to { background-position: 16px 0; } }
 
 /* 操作按钮 */
-.ops { display: flex; gap: 4px; flex-shrink: 0; }
+.ops { display: flex; gap: 5px; flex-shrink: 0; }
 .ops button {
-  border: 1px solid #D8D5CF; background: #fff; color: #6B6864;
-  font-family: inherit; padding: 0; width: 28px; height: 28px; border-radius: 7px; cursor: pointer;
-  transition: border-color .15s, color .15s, background .15s, transform .1s;
+  border: 1px solid #D8D5CF; background: #fff; color: var(--ink-2);
+  font-family: inherit; padding: 0; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s, transform .1s, box-shadow .15s;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.ops button:hover { border-color: #185FA5; color: #185FA5; background: rgba(24,95,165,.06); }
+.ops button:hover { border-color: var(--brand); color: var(--brand); background: var(--brand-soft2); box-shadow: 0 2px 8px rgba(24,95,165,.12); }
 .ops button:active { transform: scale(.92); }
-.ops button.danger:hover { border-color: #DC2626; color: #DC2626; background: rgba(220,38,38,.06); }
-.ops button:disabled { opacity: .45; cursor: not-allowed; }
+.ops button.danger:hover { border-color: var(--red); color: var(--red); background: rgba(220,38,38,.06); box-shadow: 0 2px 8px rgba(220,38,38,.12); }
+.ops button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 
 /* 空状态 */
 .empty {
-  height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
-  color: #A5A29C; font-size: 12.5px;
+  height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  color: var(--ink-4); font-size: 12.5px; text-align: center; padding: 0 30px;
 }
-.empty .big { font-size: 30px; }
+.empty .big {
+  width: 64px; height: 64px; border-radius: 18px; display: flex; align-items: center; justify-content: center;
+  background: rgba(24,95,165,.06); color: var(--brand); margin-bottom: 4px;
+}
+.empty .sub { font-size: 11px; color: var(--ink-4); opacity: .85; max-width: 240px; }
 
 /* ── 底部操作栏 ── */
 .footer {
   height: 50px; display: flex; align-items: center; justify-content: space-between;
-  padding: 0 12px; border-top: 1px solid rgba(24,95,165,0.10);
+  padding: 0 12px; border-top: 1px solid var(--line);
 }
-.footer .tip { font-size: 11px; color: #A5A29C; }
+.footer .tip { font-size: 11px; color: var(--ink-4); }
 .footer button {
-  border: 1px solid #D8D5CF; background: #fff; color: #2C2C2A;
-  font-family: inherit; font-size: 12px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
-  transition: border-color .15s, color .15s;
+  border: 1px solid #D8D5CF; background: #fff; color: var(--ink);
+  font-family: inherit; font-size: 12px; padding: 6px 13px; border-radius: 8px; cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s, box-shadow .15s;
 }
-.footer button:hover { border-color: #185FA5; color: #185FA5; }
+.footer button:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); background: var(--brand-soft2); box-shadow: 0 2px 8px rgba(24,95,165,.12); }
+.footer button:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── 下载位置栏 ── */
+.dl-path {
+  height: 38px; display: flex; align-items: center; gap: 8px;
+  padding: 0 12px; border-top: 1px solid var(--line-2);
+  font-size: 11px; background: rgba(255,255,255,0.35);
+}
+.dl-path .pico { color: var(--brand); display: flex; align-items: center; flex-shrink: 0; }
+.dl-path .lbl { flex-shrink: 0; color: var(--ink-3); }
+.dl-path .val {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.dl-path button {
+  flex-shrink: 0; border: 1px solid #D8D5CF; background: #fff; color: var(--brand); font-weight: 600;
+  font-family: inherit; font-size: 12px; padding: 4px 11px; border-radius: 7px; cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.dl-path button:hover:not(:disabled) { border-color: var(--brand); background: var(--brand-soft2); box-shadow: 0 2px 8px rgba(24,95,165,.12); }
+.dl-path button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── 已不可访问的下载项（文件被移动/删除）── */
+.item.inaccessible { opacity: .6; background: rgba(245,245,244,0.7); }
+.item.inaccessible .icon,
+.item.inaccessible .meta { filter: grayscale(1); opacity: .8; }
+.item.inaccessible .fname { text-decoration: line-through; text-decoration-color: #C0BDB8; color: var(--ink-3); }
+.item.inaccessible .fname .badge,
+.item.inaccessible .fname .inac { text-decoration: none; }
+.item.inaccessible .inac {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10px; font-weight: 700; padding: 1.5px 7px; border-radius: 8px;
+  background: rgba(220,38,38,.12); color: var(--red); margin-left: 6px;
+}
+
+/* 操作结果提示（打开文件/所在目录等失败反馈，避免“点了没反应”） */
+.toast {
+  position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%) translateY(8px);
+  max-width: 320px; padding: 9px 14px; border-radius: 10px;
+  background: rgba(30,32,38,0.92); color: #fff; font-size: 12px; line-height: 1.45;
+  box-shadow: 0 8px 28px rgba(0,0,0,.24); opacity: 0; pointer-events: none;
+  transition: opacity .2s, transform .2s; z-index: 9; text-align: center;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.err { background: rgba(185,28,28,0.95); }
 </style>
 </head>
 <body>
   <div class="titlebar">
-    <span class="logo">⬇️</span>
+    <span class="logo"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
     <span class="title">下载中心</span>
+    <span class="who" id="dl-who"></span>
     <span class="count" id="dl-count"></span>
     <button class="close" id="btn-close" title="关闭">✕</button>
   </div>
 
   <div class="list" id="dl-list"></div>
 
+  <div class="dl-path">
+    <span class="pico"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
+    <span class="lbl">下载位置</span>
+    <span class="val" id="dl-path-val" title=""></span>
+    <button id="btn-path">更改</button>
+  </div>
+
   <div class="footer">
-    <span class="tip">下载完成后自动保存到「下载」文件夹</span>
+    <span class="tip">下载记录按当前账号隔离保存</span>
     <button id="btn-clear">清空已完成</button>
   </div>
+
+  <div id="dl-toast" class="toast"></div>
 
 <script>
 ;(function () {
   var api = window.electronAPI || {}
   var listEl = document.getElementById('dl-list')
   var countEl = document.getElementById('dl-count')
+  var whoEl = document.getElementById('dl-who')
   var clearBtn = document.getElementById('btn-clear')
   var closeBtn = document.getElementById('btn-close')
+  var toastEl = document.getElementById('dl-toast')
+  var pathVal = document.getElementById('dl-path-val')
+  var pathBtn = document.getElementById('btn-path')
+  var toastTimer = null
+  function showToast(msg, isErr) {
+    if (!toastEl) return
+    toastEl.textContent = msg
+    toastEl.className = 'toast show' + (isErr ? ' err' : '')
+    if (toastTimer) clearTimeout(toastTimer)
+    toastTimer = setTimeout(function () { toastEl.className = 'toast' }, 2600)
+  }
+  function setPath(p) {
+    if (!pathVal) return
+    pathVal.textContent = p || ''
+    pathVal.title = p || ''
+  }
+
+  // 当前账号标识：下载记录按用户隔离，标题处展示归属账号
+  function setUser(u) {
+    whoEl.textContent = (u && u.userName) ? ('· ' + u.userName) : ''
+  }
 
   var ICONS = {
     progressing: '⏳', completed: '✅', interrupted: '⚠️', cancelled: '🚫',
@@ -168,8 +295,9 @@ body {
 
     if (!list.length) {
       listEl.innerHTML =
-        '<div class="empty"><span class="big">📭</span><span>暂无下载任务</span>' +
-        '<span>在网页里点击附件 / 文件链接即可下载到这里</span></div>'
+        '<div class="empty"><span class="big"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>' +
+        '<span>暂无下载任务</span>' +
+        '<span class="sub">在网页里点击附件 / 文件链接即可下载到这里</span></div>'
       clearBtn.disabled = true
       return
     }
@@ -181,26 +309,30 @@ body {
       var doneOk = d.state === 'completed'
       var fail = d.state === 'interrupted'
       var cancelled = d.state === 'cancelled'
+      var inac = !!d.inaccessible
       var barCls = doneOk ? 'pbar done' : (fail || cancelled ? 'pbar fail' : 'pbar')
       var ops = '<div class="ops">'
-      if (isGoing) {
+      if (inac) {
+        // 已不可访问：隐藏「打开文件 / 打开文件所在文件夹」，仅保留浏览器重新下载
+        ops += '<button data-act="browser" data-id="' + d.id + '" title="用系统浏览器重新下载">' + BTN.browser + '</button>'
+      } else if (isGoing) {
         ops += '<button data-act="cancel" data-id="' + d.id + '" class="danger" title="取消本次下载">' + BTN.cancel + '</button>'
       } else if (doneOk) {
-        ops += '<button data-act="open" data-id="' + d.id + '" title="用系统默认程序打开该文件">' + BTN.open + '</button>' +
-               '<button data-act="folder" data-id="' + d.id + '" title="在资源管理器中定位该文件">' + BTN.folder + '</button>' +
+        ops += '<button data-act="open" data-id="' + d.id + '" title="打开文件">' + BTN.open + '</button>' +
+               '<button data-act="folder" data-id="' + d.id + '" title="打开文件所在文件夹">' + BTN.folder + '</button>' +
                '<button data-act="browser" data-id="' + d.id + '" title="用系统浏览器重新下载">' + BTN.browser + '</button>'
       } else if (fail) {
-        ops += '<button data-act="folder" data-id="' + d.id + '" title="在资源管理器中定位该文件">' + BTN.folder + '</button>' +
+        ops += '<button data-act="folder" data-id="' + d.id + '" title="打开文件所在文件夹">' + BTN.folder + '</button>' +
                '<button data-act="browser" data-id="' + d.id + '" title="用系统浏览器重新下载">' + BTN.browser + '</button>'
       } else if (cancelled) {
         ops += '<button data-act="browser" data-id="' + d.id + '" title="用系统浏览器重新下载">' + BTN.browser + '</button>'
       }
       ops += '</div>'
-      return '<div class="item">' +
+      return '<div class="item' + (inac ? ' inaccessible' : '') + '">' +
         '<span class="icon">' + (ICONS[d.state] || '📄') + '</span>' +
         '<div class="body">' +
-          '<div class="fname">' + escapeHtml(d.filename || '未知文件') + BADGE[d.state] + '</div>' +
-          '<div class="meta">' + fmtSize(d) + (isGoing ? ' · ' + pct(d) + '%' : '') + '</div>' +
+          '<div class="fname">' + escapeHtml(d.filename || '未知文件') + BADGE[d.state] + (inac ? '<span class="inac">不可访问</span>' : '') + '</div>' +
+          '<div class="meta">' + fmtSize(d) + (isGoing ? ' · ' + pct(d) + '%' : '') + (inac ? ' · 文件已不可访问' : '') + '</div>' +
           '<div class="' + barCls + '"><i style="width:' + pct(d) + '%"></i></div>' +
         '</div>' + ops + '</div>'
     }).join('')
@@ -212,23 +344,59 @@ body {
     })
   }
 
+  // 文件被标记为「不可访问」后，主动重新拉取列表并重渲染，确保置灰 + 删除线必定出现
+  function refetchAfterInaccessible() {
+    if (api.downloadsList) { api.downloadsList().then(render).catch(function () {}) }
+  }
   // 事件委托：按钮
   listEl.addEventListener('click', function (e) {
     var btn = e.target.closest('button')
     if (!btn) return
     var id = btn.getAttribute('data-id')
     var act = btn.getAttribute('data-act')
-    if (act === 'open' && api.downloadsOpen) api.downloadsOpen(id)
-    else if (act === 'folder' && api.downloadsOpenFolder) api.downloadsOpenFolder(id)
-    else if (act === 'browser' && api.downloadsOpenInBrowser) api.downloadsOpenInBrowser(id)
+    if (act === 'open' && api.downloadsOpen) {
+      Promise.resolve(api.downloadsOpen(id)).then(function (r) {
+        if (r && r.inaccessible) refetchAfterInaccessible()
+        if (r && r.ok === false) showToast(r.reason || '打开失败', true)
+      }).catch(function () { showToast('打开失败', true) })
+    }
+    else if (act === 'folder' && api.downloadsOpenFolder) {
+      Promise.resolve(api.downloadsOpenFolder(id)).then(function (r) {
+        if (r && r.inaccessible) refetchAfterInaccessible()
+        if (r && r.ok === false) showToast(r.reason || '打开所在目录失败', true)
+        else if (r && r.note) showToast(r.note, false)
+      }).catch(function () { showToast('打开所在目录失败', true) })
+    }
+    else if (act === 'browser' && api.downloadsOpenInBrowser) {
+      Promise.resolve(api.downloadsOpenInBrowser(id)).then(function (r) {
+        if (r && r.ok === false) showToast(r.reason || '浏览器打开失败', true)
+      }).catch(function () { showToast('浏览器打开失败', true) })
+    }
     else if (act === 'cancel' && api.downloadsCancel) { btn.disabled = true; api.downloadsCancel(id) }
   })
   clearBtn.addEventListener('click', function () { if (api.downloadsClear) api.downloadsClear() })
   closeBtn.addEventListener('click', function () { window.close() })
+  // 更改下载位置：弹出文件夹选择器保存，并刷新展示
+  if (pathBtn) pathBtn.addEventListener('click', function () {
+    if (!api.downloadsPickDir) { showToast('下载路径功能不可用', true); return }
+    pathBtn.disabled = true
+    Promise.resolve(api.downloadsPickDir()).then(function (r) {
+      if (r && r.ok && r.dir) setPath(r.dir)
+      else if (r && r.ok === false && !r.canceled) showToast('更改失败：' + (r.reason || '未知错误'), true)
+      // 取消（r.canceled）则不打扰
+    }).catch(function (err) { showToast('更改失败：' + (err && err.message ? err.message : err), true) })
+      .then(function () { pathBtn.disabled = false })
+  })
 
   // 首次拉取 + 实时订阅
   if (api.downloadsList) { api.downloadsList().then(render).catch(function () { render([]) }) }
   if (api.onDownloadsChanged) { api.onDownloadsChanged(render) }
+  // 当前账号：展示归属 + 切换账号时刷新
+  if (api.downloadsCurrentUser) { api.downloadsCurrentUser().then(setUser).catch(function () {}) }
+  if (api.onDownloadsUserChanged) { api.onDownloadsUserChanged(setUser) }
+  // 下载位置：首次拉取 + 主进程广播变更时刷新展示
+  if (api.downloadsGetDir) { api.downloadsGetDir().then(setPath).catch(function () {}) }
+  if (api.onDownloadsDirChanged) { api.onDownloadsDirChanged(setPath) }
 })();
 </script>
 </body>

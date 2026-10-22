@@ -1,13 +1,14 @@
 // main.js - Electron main process: tray + WS server + HTTP server + notification windows
 process.env.ELECTRON_NO_ATTACH_CONSOLE = '1'
 
-const { app, Tray, Menu, BrowserWindow, ipcMain, shell, nativeImage, dialog, session, desktopCapturer, globalShortcut, clipboard, Notification, screen } = require('electron')
+const { app, Tray, Menu, BrowserWindow, ipcMain, shell, nativeImage, dialog, session, desktopCapturer, globalShortcut, clipboard, Notification, screen, safeStorage } = require('electron')
 const path = require('path')
 const crypto = require('crypto')
 const { WebSocketServer } = require('ws')
 const http = require('http')
 const https = require('https')
 const fs = require('fs')
+const url = require('url')
 const net = require('net')
 const zlib = require('zlib')
 const { execFile } = require('child_process')
@@ -17,6 +18,10 @@ const settingsStore = require('./lib/settingsStore')
 const workbenchStore = require('./lib/workbenchStore')
 const { createRingtoneResolver } = require('./lib/ringtoneResolver')
 const { createNotificationCenter } = require('./lib/notificationCenter')
+const emailCreds = require('./lib/emailCreds')
+const emailClient = require('./lib/emailClient')
+const emailSender = require('./lib/emailSender')
+const phpServer = require('./lib/phpServer')
 
 // ─── Single instance lock ──────────────────────────
 // Prevent multiple instances of the notifier from running,
@@ -91,6 +96,9 @@ let diagnosticsWindow = null   // 诊断测试窗口单例
 let workbenchWindow = null     // 个人工作台窗口单例
 let downloadsWindow = null     // 下载中心面板窗口单例
 let boardOverlayWindow = null  // 画板「真·OS 全屏」透明覆盖窗口单例
+let emailWindow = null         // 邮箱窗口单例
+let emailWindowHidden = false  // 当前是否为隐藏后台窗（Skill 按需拉起）
+let emailAutoWindow = false    // 邮箱窗是否由邮件 API 自动拉起（仅此类可被空闲回收）
 let lastSharedScreen = null    // 共享源（选源窗口路径，优先级高）：{ type:'screen'|'window', displayId, name }
 let shimShareSource = null     // 共享源（shim 路径：SDK 实际共享的那个源，桌面端的主路径）
 // 本机（桌面端）当前是否真的在共享屏幕。
@@ -317,9 +325,9 @@ function endRingingState() {
 
 /** Derive the correct icon state based on current conditions */
 function deriveTrayState() {
-  // Priority: ringing > unread > default/gray
+  // Priority: ringing > unread(IM+邮件) > default/gray
   if (isRinging) return 'ringing'  // Don't auto-override ringing
-  if (unreadCount > 0) return 'unread'
+  if (unreadCount > 0 || emailUnreadCount > 0) return 'unread'
   return hasConnectedClients() ? 'default' : 'gray'
 }
 
@@ -836,6 +844,8 @@ function hasAppClient() {
 const AGENT_REQUEST_TIMEOUT_MS = 30000
 // requestId -> { ws: 来自 Agent 的连接, timer }
 const pendingAgentRequests = new Map()
+// requestId -> { resolve, reject, timer }：HTTP /api/agent/intent 发起的请求（复用同一 WS 中继，供轻量客户端如 curl 直连）
+const pendingHttpRequests = new Map()
 
 // 向所有已识别的 Agent 连接广播（用于 AGENT_EVENT 异步事件）
 function broadcastToAgentClients(msg) {
@@ -859,26 +869,61 @@ function clearAgentRequestsFor(ws) {
 }
 
 // 置前主页面窗口，并可选地跳转到指定 url（SPA 路由跳转，不刷新页面）
-function focusMainWindow(url) {
+//
+// ⚠️ 2026-10 修复「点未读提醒进入会话，聊天记录空白」：
+//   url 由网页端拼成 `origin + '/message?conv=' + encodeURIComponent(convID)`。
+//   C2C 会话 id 形如 `C2Cadministrator`、群会话形如 `@TGS#aBcDe`，encode 后分别变成
+//   `C2Cadministrator` / `%40TGS%23aBcDe` —— **`:` `@` `#` `/` `?` `%` 在路径/查询里都可能被浏览器再解码一次**，
+//   一旦会话 id 被改写，网页端 setActiveConversation 找不到会话 → 右侧空白。
+//   （v5 → v6 换 IM SDK 后会话 id 口径变了，这个隐患才被暴露出来，见 docs 说明。）
+//   所以这里**不再靠字符串拼接猜会话 id**，而是把 convId 作为独立参数注入：
+//     · 优先用调用方直接给的 convId（通知中心从 unreadMap 里拿的原始会话 id，最权威）；
+//     · 否则从 url 里解析 `conv=` 再 decodeURIComponent；
+//     · history API 不经过 URL 规范化，`?conv=` 用原文（未 encode）写入；
+//     · 网页端优先读 `window.__MYLOG_FOCUS_CONV__`（最稳），读不到再退回 route.query.conv。
+//   仅当 url 与 convId 都没有时直接返回。
+function focusMainWindow(url, convId) {
   if (!mainPageWindow || mainPageWindow.isDestroyed()) return
   if (mainPageWindow.isMinimized()) mainPageWindow.restore()
   mainPageWindow.show()
   mainPageWindow.focus()
-  // 如果有 url，用 executeJavaScript 在页面内触发 SPA 路由跳转
-  // 网页端可能未处理 FOCUS_CONVERSATION 消息，直接用 history.pushState + popstate 最可靠
-  if (url) {
-    try {
-      mainPageWindow.webContents.executeJavaScript(
-        "(function(u){" +
-        "  try {" +
-        "    if (window.location.pathname + window.location.search === u.split('//')[1].split('/').slice(1).join('/')) return;" +
-        "    window.history.pushState({}, '', u);" +
-        "    window.dispatchEvent(new PopStateEvent('popstate'));" +
-        "  } catch(e) { window.location.href = u; }" +
-        "})(" + JSON.stringify(url) + ")"
-      )
-    } catch (e) { console.warn('[FocusMain] executeJavaScript failed:', e && e.message) }
-  }
+  const hint = convId ? String(convId) : ''
+  if (!url && !hint) return
+  try {
+    mainPageWindow.webContents.executeJavaScript(
+      '(function(full, hint){' +
+      '  try {' +
+      '    var u = full || "";' +
+      '    var cid = hint || "";' +
+      '    if (!cid) {' +
+      '      var m = /[?&]conv=([^&]*)/.exec(u);' +
+      '      var raw = m ? m[1] : "";' +
+      '      try { cid = raw ? decodeURIComponent(raw) : ""; } catch (e0) { cid = raw }' +
+      '    }' +
+      // origin 去掉后取 path（保留部署 base，如 /mylog-pc）
+      '    var path = u.replace(/^https?:\\/\\/[^/]+/i, "").replace(/\\?[^#]*$/, "");' +
+      '    if (!path || path.charAt(0) !== "/") path = "";' +
+      '    var target = cid ? ((path && path.indexOf("/message") !== -1 ? path : (path ? path.replace(/\\/[^\\/]*$/, "") : "") + "/message") || "/message") + "?conv=" + cid : (u.replace(/^https?:\\/\\/[^/]+/i, "") || "/message");' +
+      '    if (cid) window.__MYLOG_FOCUS_CONV__ = { conversationId: cid, at: Date.now() };' +
+      '    var cur = window.location.pathname + window.location.search;' +
+      // 已是同一个会话：不重复 pushState（相同 URL 不触发路由更新），改为派发事件让网页端聚焦。
+      // 判定只看 pathname 是否停在 /message + conv 是否一致（不比较 base，防止部署路径差异导致误判）。
+      '    var curConv = "";' +
+      '    try { curConv = new URLSearchParams(window.location.search).get("conv") || ""; } catch (e3) {}' +
+      '    if (cid && curConv === cid) {' +
+      '      try { window.dispatchEvent(new CustomEvent("mylog:focus-conversation", { detail: { conversationId: cid } })) } catch (e1) {}' +
+      '      return "same";' +
+      '    }' +
+      '    window.history.pushState({}, "", target);' +
+      '    window.dispatchEvent(new PopStateEvent("popstate"));' +
+      '    return "navigated:" + target;' +
+      '  } catch (e) {' +
+      '    try { window.location.href = full } catch (e2) {}' +
+      '    return "fallback";' +
+      '  }' +
+      '})(' + JSON.stringify(url || '') + ',' + JSON.stringify(hint) + ')'
+    ).catch((e) => { console.warn('[FocusMain] deep-link evaluate failed:', e && e.message) })
+  } catch (e) { console.warn('[FocusMain] executeJavaScript failed:', e && e.message) }
 }
 
 // ─── Safe open external ──
@@ -1000,22 +1045,28 @@ function updateUnreadCount(count) {
   // ringing 状态优先级最高，不自动覆盖
   if (trayIconState === 'ringing') return
 
-  if (unreadCount > 0) {
+  if (unreadCount > 0 || emailUnreadCount > 0) {
     setTrayState('unread')
   } else if (trayIconState === 'unread') {
     setTrayState(deriveTrayState())
   }
 
-  // Update tooltip
+  updateTrayTooltip()
+}
+
+// 托盘 tooltip 统一出口：IM 未读 + 邮件未读 都体现在这里
+function updateTrayTooltip() {
+  if (!tray) return
   const onlineCount = Array.from(connectedClients.values()).filter(u => u.connected).length
+  const mailPart = emailUnreadCount > 0 ? ` | ${emailUnreadCount} 封未读邮件` : ''
   if (onlineCount > 0) {
     const names = Array.from(connectedClients.values())
       .filter(u => u.connected)
       .map(u => u.userName || u.userId)
       .join(', ')
-    tray?.setToolTip(`e日志-通知助手 | ${onlineCount} 人在线${unreadCount > 0 ? ` | ${unreadCount} 条未读` : ''}`)
+    tray.setToolTip(`e日志-通知助手 | ${onlineCount} 人在线${unreadCount > 0 ? ` | ${unreadCount} 条未读` : ''}${mailPart}`)
   } else {
-    tray?.setToolTip('e日志-通知助手 | 未连接')
+    tray.setToolTip(`e日志-通知助手 | 未连接${unreadCount > 0 ? ` | ${unreadCount} 条未读` : ''}${mailPart}`)
   }
 }
 
@@ -1123,7 +1174,7 @@ function buildWindowMenu() {
     },
     { label: '刷新', click: () => reloadMainPage() },
     (() => {
-      const n = downloads.filter(d => d.state === 'progressing').length
+      const n = visibleDownloads().filter(d => d.state === 'progressing').length
       return { label: n > 0 ? `下载 (${n})` : '下载', submenu: buildDownloadsMenu() }
     })(),
   ])
@@ -1132,7 +1183,8 @@ function buildWindowMenu() {
 // 下载菜单：进行中任务快速入口 + 下载中心（每次 setMenu 重建，保持最新状态）
 function buildDownloadsMenu() {
   const items = []
-  const active = downloads.filter(d => d.state === 'progressing')
+  const vis = visibleDownloads()
+  const active = vis.filter(d => d.state === 'progressing')
   if (active.length > 0) {
     active.slice(0, 8).forEach((d) => {
       const pct = d.totalBytes > 0 ? Math.round((d.receivedBytes / d.totalBytes) * 100) : 0
@@ -1144,7 +1196,7 @@ function buildDownloadsMenu() {
     items.push({ type: 'separator' })
   }
   items.push({ label: '下载中心', click: () => openDownloadsWindow() })
-  const finished = downloads.filter(d => d.state === 'completed')
+  const finished = vis.filter(d => d.state === 'completed')
   if (finished.length > 0) {
     items.push({ type: 'separator' })
     items.push({ label: `清空已完成 (${finished.length})`, click: () => clearDownloads() })
@@ -1181,52 +1233,55 @@ function updateTrayMenu() {
   }
 
   // ── Actions ──
-  menuItems.push({ label: '设置', click: () => openSettingsWindow() })
+
   // 下载中心：查看网页下载任务，打开文件 / 打开所在目录
   menuItems.push({ label: '下载中心', click: () => openDownloadsWindow() })
+  // 邮箱：阿里企业邮箱收件查看（仅收件，不发信）
+  menuItems.push({ label: '邮箱', click: () => openEmailWindow() })
+  // 邮件同步状态透出：失败可见、可点击重试（其余状态为禁用展示项）
+  const sync = emailSyncState || { state: 'off' }
+  const syncLabel =
+    sync.state === 'online' ? '邮件同步：已连接' :
+    sync.state === 'connecting' ? '邮件同步：连接中…' :
+    sync.state === 'error' ? `邮件同步：失败（${(sync.error || '未知错误').slice(0, 40)}，点击重试）` :
+    sync.state === 'off' ? '邮件同步：未启用' : '邮件同步：未知'
+  menuItems.push({
+    label: syncLabel,
+    enabled: sync.state === 'error',
+    click: sync.state === 'error' ? () => startEmailSync(true) : undefined,
+  })
   // 屏幕画板（桌面端专属）：把透明涂鸦层开到被共享的屏幕 / 当前显示器上。
   // 仅手动入口（需求4：开启屏幕共享不再自动开屏板，必须用户主动点击才开）。
-  menuItems.push({
-    label: '屏幕画板（开/关）',
-    click: () => {
-      if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) closeBoardOverlay()
-      else safeOpenBoardOverlay()
-    },
-  })
-  // 网页画板（测试）：独立打开画板浮层 —— 不必先开一个会议就能直接用/自测画板
-  menuItems.push({
-    label: '网页画板（测试）',
-    click: () => {
-      if (mainPageWindow && !mainPageWindow.isDestroyed()) {
-        mainPageWindow.show()
-        mainPageWindow.webContents.send('quick-action', 'open-board')
-      }
-    },
-  })
+  // menuItems.push({
+  //   label: '屏幕画板（开/关）',
+  //   click: () => {
+  //     if (boardOverlayWindow && !boardOverlayWindow.isDestroyed()) closeBoardOverlay()
+  //     else safeOpenBoardOverlay()
+  //   },
+  // })
+  // // 网页画板（测试）：独立打开画板浮层 —— 不必先开一个会议就能直接用/自测画板
+  // menuItems.push({
+  //   label: '网页画板（测试）',
+  //   click: () => {
+  //     if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+  //       mainPageWindow.show()
+  //       mainPageWindow.webContents.send('quick-action', 'open-board')
+  //     }
+  //   },
+  // })
   // 调试窗口：打开主页面窗口的 Chrome DevTools，查看 TRTC SDK 内部日志（或用 Ctrl+Shift+I）
-  menuItems.push({ label: '调试窗口', click: () => {
-    if (mainPageWindow && !mainPageWindow.isDestroyed()) {
-      mainPageWindow.webContents.openDevTools()
-      mainPageWindow.show()
-      mainPageWindow.focus()
-    }
-  }})
-  menuItems.push({
-    label: '开机自启',
-    type: 'checkbox',
-    checked: app.getLoginItemSettings().openAtLogin,
-    click: (item) => {
-      setAutoStart(item.checked)
-      settingsStore.set({ autoStart: item.checked })
-      updateTrayMenu()
-    },
-  })
-  menuItems.push({ type: 'separator' })
-
+  // menuItems.push({ label: '调试窗口', click: () => {
+  //   if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+  //     mainPageWindow.webContents.openDevTools()
+  //     mainPageWindow.show()
+  //     mainPageWindow.focus()
+  //   }
+  // }})
+  
   // ── 手动授予麦克风/摄像头权限（兜底：对因缓存拒绝/子上下文漏放而"没声音/无画面"的机器，
   //     在主页面 origin 内分别执行 getUserMedia 把权限置 granted）。点击后系统通知回显结果。 ──
   menuItems.push({
-    label: '打开麦克风/摄像头',
+    label: '激活麦克风',
     click: async () => {
       try {
         const res = await activateMediaInMainPage()
@@ -1250,6 +1305,18 @@ function updateTrayMenu() {
       } catch (e) {
         notify('开启失败', '发生异常：' + (e && e.message ? e.message : String(e)), true)
       }
+    },
+  })
+  menuItems.push({ type: 'separator' })
+  menuItems.push({ label: '设置', click: () => openSettingsWindow() })
+  menuItems.push({
+    label: '开机自启',
+    type: 'checkbox',
+    checked: app.getLoginItemSettings().openAtLogin,
+    click: (item) => {
+      setAutoStart(item.checked)
+      settingsStore.set({ autoStart: item.checked })
+      updateTrayMenu()
     },
   })
   menuItems.push({ type: 'separator' })
@@ -1300,8 +1367,15 @@ function setUserInfo(userData, wsClient) {
   const now = Date.now()
 
   // Legacy single-user reference update (use most recently registered)
+  const prevUserId = (currentUser && currentUser.userId) || ''
   currentUser = { userId, userName, userIcon, browserType }
   console.log('[User] Updated:', userName, browserType)
+  // 切换登录用户时，下载中心需立即刷新为对应用户的记录（避免不同用户记录混显）
+  if (prevUserId !== userId) {
+    broadcastDownloads()
+    try { if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.setMenu(buildWindowMenu()) } catch (e) {}
+    sendDownloadsUser()
+  }
 
   if (wsClient) {
     // ── Multi-user: userId-based deduplication ─────────────
@@ -1511,6 +1585,71 @@ function createHttpHandler() {
         wsPort: currentWsPort,
         version: version
       }))
+    } else if (req.url === '/api/agent/intent' && req.method === 'POST') {
+      // 常驻进程直连：轻量客户端（如 curl）POST 到这里，复用桌面端已常驻的 WS 中继
+      // 把意图转给应用窗口执行，省去每次新起 Node 进程（冷启动 ~0.8s）与 WS 重连。
+      // 安全：本接口可执行任意意图，必须阻止浏览器跨域滥用（Csrf）——
+      //   ① 去掉 CORS 通配头；② 要求自定义头 X-ELog-Client（触发预检且浏览器无法凭空添加），curl 可带。
+      res.removeHeader('Access-Control-Allow-Origin')
+      if (!req.headers['x-elog-client']) {
+        res.writeHead(403)
+        return res.end(JSON.stringify({ ok: false, error: 'FORBIDDEN: missing X-ELog-Client header' }))
+      }
+      let body = ''
+      req.on('data', (c) => { body += c })
+      req.on('end', async () => {
+        let pl = {}
+        try { pl = JSON.parse(body || '{}') } catch (e) {
+          res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: 'BAD_JSON_BODY' }))
+        }
+        const intent = pl.intent
+        if (!intent) return res.end(JSON.stringify({ ok: false, error: 'MISSING_INTENT' }))
+        if (!hasAppClient()) return res.end(JSON.stringify({ ok: false, error: 'WEB_OFFLINE' }))
+        const requestId = crypto.randomUUID()
+        const timeoutMs = Math.min(Math.max(Number(pl.timeoutMs) || AGENT_REQUEST_TIMEOUT_MS, 1000), 120000)
+        try {
+          const data = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+              pendingHttpRequests.delete(requestId)
+              reject(new Error('TIMEOUT'))
+            }, timeoutMs)
+            pendingHttpRequests.set(requestId, { resolve, reject, timer })
+            sendToAppClient({ type: 'AGENT_INTENT', payload: { requestId, intent, slots: pl.slots || {} }, timestamp: Date.now() })
+          })
+          res.end(JSON.stringify({ ok: true, data }))
+        } catch (e) {
+          res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }))
+        }
+      })
+    } else if (req.url && req.url.startsWith('/api/email/')) {
+      // 邮件读取/发送（WorkBuddy Skill 用）：仅 loopback；复用桌面端邮箱窗口已登录会话
+      const parsed = url.parse(req.url, true)
+      if (handleEmailApiProxy(req, res, parsed)) return
+      res.writeHead(404)
+      res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }))
+    } else if (req.url === '/api/desktop/activate' && req.method === 'GET') {
+      // 大文件上传等场景：激活桌面端窗口，提示用户在桌面窗口操作
+      try {
+        let activated = null
+        if (emailWindow && !emailWindow.isDestroyed()) {
+          if (!emailWindow.isVisible()) emailWindow.show()
+          emailWindow.focus()
+          activated = 'email'
+        } else {
+          openEmailWindow()
+          activated = 'email-opened'
+        }
+        if (mainPageWindow && !mainPageWindow.isDestroyed()) {
+          if (!mainPageWindow.isVisible()) mainPageWindow.show()
+          mainPageWindow.focus()
+          activated = activated ? activated + '+main' : 'main'
+        }
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true, activated }))
+      } catch (e) {
+        res.writeHead(500)
+        res.end(JSON.stringify({ ok: false, error: String(e && e.message || e) }))
+      }
     } else {
       res.writeHead(404)
       res.end(JSON.stringify({ success: false, error: 'Not found' }))
@@ -1602,6 +1741,12 @@ app.whenReady().then(() => {
 
     // ── Feature init (M1+) ──────────────────────
     settingsStore.load()
+    // 回灌上次会话的下载历史（终态记录），重启后下载中心仍有记录
+    downloads = settingsStore.loadDownloads()
+    // 若已配置阿里企业邮箱，启动后台实时同步（新邮件通知 + 推送窗口）
+    startEmailSync()
+    // 未读邮件角标轮询（未配置时内部自动跳过）
+    startEmailUnreadPolling()
     ringtoneResolver = createRingtoneResolver({
       settingsStore,
       assetsDir: __dirname,                       // assets/ 位于项目根
@@ -1699,6 +1844,8 @@ app.on('before-quit', () => {
   if (toastWindow && !toastWindow.isDestroyed()) { toastWindow.destroy(); toastWindow = null }
   if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.destroy(); settingsWindow = null }
   if (workbenchWindow && !workbenchWindow.isDestroyed()) { workbenchWindow.destroy(); workbenchWindow = null }
+  // 关闭内置邮箱服务（PHP 子进程），避免残留
+  try { phpServer.stop() } catch (e) {}
 })
 
 // ─── System tray ──────────────────────────────────────────
@@ -1872,49 +2019,80 @@ function openMainPage() {
     else console.log(tag, message, '|', sourceId, ':', line)
   })
 
-  // ─── Ctrl+Shift+I 打开 DevTools ───
-  // 让用户能直接在主页面窗口里打开 Chrome DevTools，查看 TRTC SDK 的真实调用日志。
-  // 窗口关闭时注销快捷键；重新打开时重新注册。
-  try {
-    globalShortcut.register('CommandOrControl+Shift+I', function () {
-      if (mainPageWindow && !mainPageWindow.isDestroyed()) {
-        mainPageWindow.webContents.toggleDevTools()
-      }
-    })
-  } catch (e) {
-    console.warn('[DevTools] 快捷键注册失败:', e && e.message)
+  // ─── 主窗口快捷键「白名单 + 防火墙」（窗口级，仅主页面聚焦时生效）───
+  // 设计要点：
+  //  1) 全部走 webContents 的 before-input-event（窗口级），而非 globalShortcut（OS 级全局）。
+  //     原先的 Ctrl+Shift+I 用 globalShortcut 注册，会在「其它软件里按」也触发本应用 DevTools，
+  //     干扰其它软件——现已移除全局注册，改由下方窗口级处理（仅本应用聚焦时开/关 DevTools）。
+  //  2) 允许列表：F5 / F11 / F12 + 窗口内 Ctrl/⌘+Shift+I（DevTools）+ 「显示/隐藏窗口」热键。
+  //  3) 放行文本编辑组合键（Ctrl/⌘+C/V/X/A/Z，可带 Shift，不可带 Alt），保证输入框正常复制粘贴。
+  //  4) 其余带修饰键（Ctrl/Alt/Meta）或功能键（F1–F4/F6–F10/F13+）一律 preventDefault 屏蔽，
+  //     阻止浏览器/系统默认行为（Ctrl+R/W/T/P/S/U、F1 帮助、F3 查找等）；普通字符输入放行。
+  const _isTextEditCombo = (input) => {
+    const k = (input.key || '').toUpperCase()
+    const isCVXAZ = k === 'C' || k === 'V' || k === 'X' || k === 'A' || k === 'Z'
+    return isCVXAZ && (input.control || input.meta) && !input.alt
   }
-
-  // ─── F5 / F11 / F12 主窗口快捷键（窗口级，仅主页面聚焦时生效，不劫持全局）───
-  // 用 webContents 的 before-input-event 在「渲染进程 keydown 派发前」拦截，
-  // 并 preventDefault 阻止网页自身或浏览器默认行为重复触发。
-  //   F5  → 刷新主页面（reload 当前已加载的 URL）
-  //   F11 → 切换系统级全屏（setFullScreen 取反；菜单栏显隐由 enter/leave-full-screen 处理）
-  //   F12 → 打开 / 关闭 DevTools（toggleDevTools，与 Ctrl/⌘+Shift+I 行为一致）
-  // 注意：before-input-event 仅在该窗口 webContents 聚焦时触发，故天然限定在主页面，
-  // 不会像 globalShortcut 那样在其它窗口或外部应用里误触发。
+  // 判断按键是否匹配某个 Electron 加速器串（如 "CommandOrControl+Shift+M"），用于放行「显示/隐藏窗口」热键
+  const _matchesAccel = (input, accel) => {
+    if (!accel) return false
+    const tokens = String(accel).split('+').map((t) => t.trim().toUpperCase())
+    const key = tokens.pop()
+    const has = (t) => tokens.includes(t)
+    const coc = has('COMMANDORCONTROL') || has('CMDORCTRL')
+    const wantCtrl = has('CONTROL') || has('CTRL') || coc
+    const wantCmd = has('COMMAND') || has('CMD') || has('META') || has('SUPER') || coc
+    const wantAlt = has('ALT')
+    const wantShift = has('SHIFT')
+    const ctrlOk = coc ? (input.control || input.meta) : (wantCtrl ? input.control : !input.control)
+    const cmdOk = coc ? true : (wantCmd ? input.meta : !input.meta)
+    const altOk = wantAlt ? input.alt : !input.alt
+    const shiftOk = wantShift ? input.shift : !input.shift
+    return (input.key || '').toUpperCase() === key && ctrlOk && cmdOk && altOk && shiftOk
+  }
   try {
     mainPageWindow.webContents.on('before-input-event', (event, input) => {
       if (!mainPageWindow || mainPageWindow.isDestroyed()) return
       if (input.type !== 'keyDown') return
-      switch (input.key) {
-        case 'F5':
-          event.preventDefault()
-          if (mainPageWindow.isVisible()) mainPageWindow.reload()
+      const key = input.key
+
+      // ── 允许项 1：F5 / F11 / F12 ──
+      if (key === 'F5' || key === 'F11' || key === 'F12') {
+        event.preventDefault()
+        if (key === 'F5') {
+          // 完全重新加载：忽略缓存，确保所有静态资源（图片/css/字体/json 等）重新拉取，不被缓存加载
+          if (mainPageWindow.isVisible()) mainPageWindow.webContents.reloadIgnoringCache()
           else openMainPage()
-          break
-        case 'F11':
-          event.preventDefault()
+        } else if (key === 'F11') {
           mainPageWindow.setFullScreen(!mainPageWindow.isFullScreen())
-          break
-        case 'F12':
-          event.preventDefault()
+        } else if (key === 'F12') {
           mainPageWindow.webContents.toggleDevTools()
-          break
+        }
+        return
+      }
+
+      // ── 允许项 2：窗口内 Ctrl/⌘+Shift+I 打开/关闭 DevTools（替代原全局注册，避免干扰其它软件）──
+      if ((input.control || input.meta) && input.shift && !input.alt && (input.key || '').toUpperCase() === 'I') {
+        event.preventDefault()
+        if (mainPageWindow.isVisible()) mainPageWindow.webContents.toggleDevTools()
+        return
+      }
+
+      // ── 放行：文本编辑组合键（输入框复制粘贴等）──
+      if (_isTextEditCombo(input)) return
+
+      // ── 放行：「显示/隐藏窗口」热键（默认 Ctrl/⌘+Shift+M，可在设置自定义），保持全局生效、不在此重复处理 ──
+      if (_matchesAccel(input, mainPageHotkeyAccel)) return
+
+      // ── 屏蔽：其余带修饰键或功能键的快捷键一律拦截；普通字符输入放行 ──
+      const isFunctionKey = /^F([1-9]|1[0-9]|2[0-4])$/.test(key)
+      const hasModifier = input.control || input.alt || input.meta
+      if (hasModifier || isFunctionKey) {
+        event.preventDefault()
       }
     })
   } catch (e) {
-    console.warn('[Shortcut] F5/F11/F12 注册失败:', e && e.message)
+    console.warn('[Shortcut] 主窗口快捷键拦截注册失败:', e && e.message)
   }
 
   // 主页面显隐快捷键（默认 Ctrl/⌘+Shift+M，可在「设置-通用」中自定义，修改后即时生效）
@@ -1922,14 +2100,94 @@ function openMainPage() {
 
   mainPageWindow.on('closed', () => {
     mainPageWindow = null
-    try { globalShortcut.unregister('CommandOrControl+Shift+I') } catch (e) {}
     try { globalShortcut.unregister(mainPageHotkeyAccel) } catch (e) {}
   })
 
   // 顶部菜单栏（在线用户 + 设置），复用托盘菜单逻辑；在线用户列表会随连接状态刷新
   try { mainPageWindow.setMenu(null) } catch (e) { console.warn('[Menu] 顶部菜单设置失败:', e && e.message) }
 
+  // ─── 主窗口导航边界：只允许停在「主页地址所在站点」内，跨站一律不进入主窗口 ───
+  // 线上问题：网页里存在指向 patrol.tygps.com（另一套系统）的跳转，无论它是同窗 <a>、
+  //   location.href 还是服务端 302，主窗口都会被整体替换成那个站点——e日志 界面直接消失，
+  //   托盘/会议状态与页面脱节，用户只能去设置里把地址改回来。
+  // 规则：主框架（main frame）的导航目标必须与「当前主页地址」同站点——host + port 一致，
+  //   http/https 互认（openMainPage 有 http→https 升级与失败回退）。只堵"主窗口自己被换掉"的两条通道：
+  //     ① 渲染进程发起的跳转   → will-navigate
+  //     ② 服务端 302/307 重定向 → will-redirect
+  // 不涉及新开窗口：window.open / _blank 弹出来的窗口不受站点限制（见下方 setWindowOpenHandler）。
+  // 只约束主框架：不注册 will-frame-navigate，页面内嵌的第三方 iframe 照常工作。
+  // 站点信息每次实时读 settingsStore——用户在「设置」里改主页地址后立即生效，不吃启动快照。
+  // 放行严格程度：false＝同站点任意路径都算"主页范围内"（默认）；
+  //   true＝还要求目标 path 落在主页地址所在目录内（如只许 /mylog-pc/ 下的页面）。
+  //   默认不收紧的原因：线上存在 /login、/sso 这类主页目录之外的同站跳转，收紧会把登录流程一起拦死。
+  const STRICT_DIR_SCOPE = false
+  const mainSite = () => {
+    const raw = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
+    try {
+      const u = new URL(raw)
+      if (!/^https?:$/i.test(u.protocol)) return null
+      // 目录前缀：去掉最后一段文件名（主页通常以 / 结尾，此时 dir 就是 pathname 本身）
+      let dir = u.pathname || '/'
+      if (!dir.endsWith('/')) dir = dir.slice(0, dir.lastIndexOf('/') + 1) || '/'
+      return { host: u.hostname.toLowerCase().replace(/\.$/, ''), port: u.port || '', dir }
+    } catch (e) { return null }
+  }
+  const inMainSite = (target) => {
+    if (!target) return false
+    let u
+    try { u = new URL(target) } catch (e) { return false }
+    if (!/^https?:$/i.test(u.protocol)) return false
+    const site = mainSite()
+    if (!site) return false
+    if (u.hostname.toLowerCase().replace(/\.$/, '') !== site.host) return false
+    if ((u.port || '') !== site.port) return false
+    if (STRICT_DIR_SCOPE && !u.pathname.startsWith(site.dir)) return false
+    return true
+  }
+  // 本地页只认本应用自带的 splash / 错误页（都在 src/ 下），其余 file:// 一并拦掉，
+  // 免得网页侧借 file:// 把主窗口导航去读本地磁盘；data:/about: 等特殊协议不参与站点校验。
+  const isLocalOrSpecialUrl = (target) => {
+    const t = target || ''
+    if (/^(about|data|blob|devtools|chrome-extension):/i.test(t)) return true
+    if (!/^file:\/\//i.test(t)) return false
+    try {
+      const p = decodeURIComponent(t.replace(/^file:\/\//i, '')).replace(/^\/+/, '')
+      return path.normalize(p).toLowerCase().startsWith(path.normalize(path.join(__dirname, 'src')).toLowerCase())
+    } catch (e) { return false }
+  }
+  const guardMainFrameNav = (kind) => (event, legacyUrl) => {
+    if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+    // Electron 32：详情挂在 event 上（event.url / event.isMainFrame），旧签名参数仍传但已废弃
+    if (event && event.isMainFrame === false) return
+    const target = (event && typeof event.url === 'string' && event.url) || (typeof legacyUrl === 'string' ? legacyUrl : '')
+    if (!target || isLocalOrSpecialUrl(target) || inMainSite(target)) return
+    // mailto:/tel: 交给系统邮件客户端 / 拨号器，别在主窗口里当"被拦截"静默吞掉
+    if (/^(mailto|tel):/i.test(target)) {
+      event.preventDefault()
+      try { shell.openExternal(target) } catch (e) {}
+      return
+    }
+    event.preventDefault()
+    console.warn('[MainPage] 已阻止跨站' + kind + ':', target, '| 允许站点:', (mainSite() || {}).host || '(未配置)')
+    // 首屏就被带去站外时页面还没有任何内容，别把用户留在空白窗口——给一张可读的说明页
+    try {
+      const cur = mainPageWindow.webContents.getURL() || ''
+      if (!cur || cur === 'about:blank' || cur.indexOf('splash.html') !== -1) {
+        const home = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
+        mainPageWindow.loadURL('file://' + path.join(__dirname, 'src', 'mainpage-error.html') +
+          '?reason=blocked&home=' + encodeURIComponent(home) + '&url=' + encodeURIComponent(target))
+      }
+    } catch (e) { console.warn('[MainPage] 加载拦截说明页失败:', e && e.message) }
+  }
+  try {
+    mainPageWindow.webContents.on('will-navigate', guardMainFrameNav('跳转'))
+    mainPageWindow.webContents.on('will-redirect', guardMainFrameNav('重定向'))
+  } catch (e) { console.warn('[MainPage] 导航边界注册失败:', e && e.message) }
+
   // ─── 下载 / 新窗口拦截：<a> 下载直接下载不弹新窗；外链用系统浏览器打开 ───
+  // 注意边界：这里只管"用什么方式打开"，**不做站点白名单**——新开的窗口不受主页站点限制，
+  //   网页想弹新窗就弹、想开外链就开（_blank 类走系统浏览器）。只约束主窗口自身不被换站，
+  //   那是上面 will-navigate / will-redirect 的职责。
   // 文件扩展名白名单：命中则视为"下载链接"直接下载（进下载中心），否则视为普通外链走系统浏览器
   const DOWNLOAD_EXT_RE = /\.(zip|rar|7z|tar|gz|bz2|xz|pdf|docx?|xlsx?|pptx?|mp3|wav|m4a|aac|flac|ogg|mp4|mkv|avi|mov|wmv|flv|webm|apk|exe|msi|dmg|iso|csv|json|xml|txt|png|jpe?g|gif|webp|bmp|svg|psd|dwg)(\?|$)/i
   function looksLikeDownload(url) {
@@ -2355,6 +2613,15 @@ function handleBrowserMessage(ws, msg) {
     case 'AGENT_RESULT': {
       const payload = msg.payload || {}
       const requestId = payload.requestId
+      // 优先回写 HTTP 长连接请求（/api/agent/intent）
+      const hp = pendingHttpRequests.get(requestId)
+      if (hp) {
+        pendingHttpRequests.delete(requestId)
+        clearTimeout(hp.timer)
+        if (payload.ok) hp.resolve(payload.data)
+        else hp.reject(new Error(payload.error || 'EXEC_FAIL'))
+        break
+      }
       const pending = pendingAgentRequests.get(requestId)
       if (pending) {
         clearTimeout(pending.timer)
@@ -3000,7 +3267,7 @@ ipcMain.on('titlebar:menu', (e, key) => {
 // will-download 处理：落盘到用户下载目录 + 记录任务 + 广播进度/状态
 // 注意 fs/path 已在文件顶部 require（这里可直接使用）
 function handleWillDownload(event, item) {
-  const downDir = app.getPath('downloads')
+  const downDir = settingsStore.getDownloadDir()
   try { if (!fs.existsSync(downDir)) fs.mkdirSync(downDir, { recursive: true }) } catch (e) {}
   // 同名文件自动加序号 (1)/(2)…，避免覆盖已有文件
   let name = item.getFilename() || 'download'
@@ -3019,6 +3286,8 @@ function handleWillDownload(event, item) {
     state: 'progressing',
     receivedBytes: 0,
     totalBytes: item.getTotalBytes() || 0,
+    userId: (currentUser && currentUser.userId) || '',     // 归属用户：下载记录按用户隔离
+    userName: (currentUser && currentUser.userName) || '',
     item: item, // 引用保留用于取消（广播前剥离）
   }
   downloads.unshift(rec)
@@ -3039,6 +3308,8 @@ function handleWillDownload(event, item) {
     rec.totalBytes = item.getTotalBytes()
     broadcastDownloads()
     try { if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.setMenu(buildWindowMenu()) } catch (e2) {}
+    // 终态（完成/失败/取消）落盘，使下载记录在进程重启后仍然存在
+    try { settingsStore.persistDownloadHistory(downloads) } catch (e4) {}
     // 下载完成/失败系统通知（点击通知打开文件）
     try {
       if (Notification.isSupported && Notification.isSupported()) {
@@ -3063,9 +3334,22 @@ function handleWillDownload(event, item) {
 }
 
 function openDownloadsWindow() {
+  const t0 = Date.now()
   if (downloadsWindow && !downloadsWindow.isDestroyed()) {
     if (downloadsWindow.isVisible()) downloadsWindow.focus()
-    else downloadsWindow.show()
+    else {
+      downloadsWindow.show()
+      // 复用已隐藏的窗口：重新推送最新列表与当前用户（避免显示陈旧数据）
+      try {
+        if (downloadsWindow.webContents && !downloadsWindow.webContents.isDestroyed()) {
+          downloadsWindow.webContents.send('downloads-changed', publicDownloads())
+          downloadsWindow.webContents.send('downloads-user-changed', {
+            userId: (currentUser && currentUser.userId) || '',
+            userName: (currentUser && currentUser.userName) || '',
+          })
+        }
+      } catch (e) {}
+    }
     return
   }
   const { screen } = require('electron')
@@ -3078,6 +3362,7 @@ function openDownloadsWindow() {
     icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
     webPreferences: makeWebPrefs(),
   })
+  console.log('[Downloads] 窗口对象创建耗时', Date.now() - t0, 'ms')
   // 锚定到主页面窗口右上角（菜单栏下方），主窗口隐藏时退回主屏右上角
   try {
     if (mainPageWindow && !mainPageWindow.isDestroyed() && mainPageWindow.isVisible()) {
@@ -3088,51 +3373,1084 @@ function openDownloadsWindow() {
     }
   } catch (e) {}
   downloadsWindow.loadFile(path.join(__dirname, 'src', 'downloads-window.html'))
+  // 关闭时不销毁，改为隐藏复用：渲染进程常驻，避免每次重开都经历 ~10s 渲染进程冷启动
+  // （主窗口用 splash 把同样的冷启动藏起来了，下载窗口没有，于是裸奔成"白屏 10s"）。
+  // 仅在应用退出（isQuitting）时允许真正关闭，以免阻碍进程退出。
+  downloadsWindow.on('close', (e) => {
+    if (isQuitting) return
+    e.preventDefault()
+    try { downloadsWindow.hide() } catch (err) {}
+  })
   downloadsWindow.on('closed', () => { downloadsWindow = null })
   // 打开即推送一次最新列表
   downloadsWindow.webContents.once('did-finish-load', () => {
-    if (downloadsWindow && !downloadsWindow.isDestroyed()) downloadsWindow.webContents.send('downloads-changed', publicDownloads())
+    if (downloadsWindow && !downloadsWindow.isDestroyed()) {
+      console.log('[Downloads] did-finish-load 距开窗', Date.now() - t0, 'ms')
+      downloadsWindow.webContents.send('downloads-changed', publicDownloads())
+      downloadsWindow.webContents.send('downloads-user-changed', {
+        userId: (currentUser && currentUser.userId) || '',
+        userName: (currentUser && currentUser.userName) || '',
+      })
+    }
   })
 }
 
+// ─── Email window（SnappyMail：成熟开源邮箱界面，与邮箱服务商无关）──
+// 说明：邮箱界面不再自研，改用随包分发的 SnappyMail（AGPL-3.0）+ 便携版 PHP（免费开源）。
+// 主进程负责拉起本机 PHP 服务（见 lib/phpServer.js），窗口加载 http://127.0.0.1:<port>/。
+// 因为 SnappyMail 是第三方应用，本窗口**不注入**我们的 preload，避免把 IPC 桥暴露给它。
+let emailServerPort = 0
+
+// 登录成功后把 SnappyMail 会话 cookie（含 smtoken）自动加密持久化，
+// 使后续 e日志 自动化读/发邮件可走「无窗口」路径（仅起 PHP + 重放令牌），不再创建渲染窗口。
+function attachAuthCapture(win) {
+  const sess = win.webContents.session
+  const grab = () => {
+    const baseUrl = mailSession.baseUrl || 'http://127.0.0.1:' + (mailSession.phpPort || '')
+    if (baseUrl.indexOf('127.0.0.1') < 0) return
+    sess.cookies.get({ url: baseUrl }).then((cookies) => {
+      if (cookies && cookies.some((c) => c.name === 'smtoken')) saveStoredAuthCookies(cookies)
+    }).catch(() => {})
+  }
+  sess.cookies.on('changed', () => grab())
+  win.webContents.on('did-finish-load', () => setTimeout(grab, 1500))
+  win.webContents.on('did-navigate', () => setTimeout(grab, 1500))
+}
+
+function openEmailWindow(options = {}) {
+  const hidden = !!options.hidden // 隐藏模式：Skill 按需拉起的后台窗口（不可见、不打扰用户）
+  if (emailWindow && !emailWindow.isDestroyed()) {
+    if (hidden) {
+      // 已有窗口（可见的）就直接复用，不再创建隐藏窗
+      emailWindowHidden = false
+      return
+    }
+    // 用户主动打开（菜单/侧边栏）：隐藏窗直接转为可见
+    emailWindowHidden = false
+    if (emailWindow.isVisible()) emailWindow.focus()
+    else emailWindow.show()
+    return
+  }
+  const loadingPage = path.join(__dirname, 'src', 'email-loading.html')
+  const winOpts = {
+    width: 1180, height: 780,
+    minWidth: 900, minHeight: 600,
+    show: !hidden, frame: true, autoHideMenuBar: true,
+    backgroundColor: '#F6F8FA',
+    title: '邮箱',
+    icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      autoplayPolicy: 'no-user-gesture-required',
+      // 仅此一个桥：登录成功后把账号/授权码回写给主进程（safeStorage 加密）
+      preload: path.join(__dirname, 'src', 'email-bridge-preload.js'),
+    },
+  }
+  // 隐藏窗不绘制首屏，进一步压低渲染开销（JS 仍正常运行）
+  if (hidden) winOpts.paintWhenInitiallyHidden = false
+  emailWindowHidden = hidden
+  emailWindow = new BrowserWindow(winOpts)
+  emailWindow.loadFile(loadingPage)
+
+  // 邮箱组件自身的地址（本机回环 + 指定端口）——只有它能留在窗口内导航
+  const isMailAppUrl = (url) => {
+    try {
+      const u = new URL(url)
+      const loopback = u.hostname === '127.0.0.1' || u.hostname === 'localhost'
+      return !!(loopback && (!emailServerPort || u.port === String(emailServerPort)))
+    } catch (e) { return false }
+  }
+  // 邮件里的链接一律交给系统默认浏览器；仅放行 http/https/mailto
+  const openMailLink = (url) => {
+    try {
+      const u = new URL(url)
+      if (u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:') shell.openExternal(url)
+    } catch (e) {}
+  }
+  emailWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openMailLink(url)
+    return { action: 'deny' }
+  })
+  emailWindow.webContents.on('will-navigate', (e, url) => {
+    if (isMailAppUrl(url)) return       // 邮箱组件自身的前端路由
+    if (/^file:\/\//i.test(url)) return // 本地启动页 / 错误页
+    e.preventDefault()
+    openMailLink(url)
+  })
+  emailWindow.on('closed', () => {
+    emailWindow = null
+    emailServerPort = 0
+    emailWindowHidden = false
+    emailAutoWindow = false
+    // 窗口销毁则其 Session/Cookie 随之失效，清理旧会话引用，下次按需重建
+    mailSession.baseUrl = null
+    mailSession.session = null
+    mailSession.phpPort = null
+  })
+
+  // 登录成功即自动持久化会话 cookie，供无窗口路径重放
+  attachAuthCapture(emailWindow)
+
+  // 拉起内置邮箱服务并加载界面
+  phpServer.ensureStarted().then((st) => {
+    if (!emailWindow || emailWindow.isDestroyed()) return
+    if (st && st.ok) {
+      emailServerPort = st.port
+      // 缓存 SnappyMail 会话，供 Skill 通过 /api/email/* 代理读写邮件（复用已登录会话，无需再次授权）
+      mailSession.baseUrl = 'http://127.0.0.1:' + st.port
+      mailSession.phpPort = st.port
+      mailSession.session = emailWindow.webContents.session
+      emailWindow.loadURL('http://127.0.0.1:' + st.port + '/')
+    } else {
+      emailWindow.loadFile(loadingPage, { query: { error: (st && st.error) || '未知错误' } })
+    }
+  }).catch((err) => {
+    if (!emailWindow || emailWindow.isDestroyed()) return
+    emailWindow.loadFile(loadingPage, { query: { error: String((err && err.message) || err) } })
+  })
+}
+
+// 当前用户可见的下载记录（未登录 userId 为空时回退为全部，兼容旧行为）
+function visibleDownloads() {
+  return (!currentUser || !currentUser.userId)
+    ? downloads
+    : downloads.filter(d => d.userId === currentUser.userId)
+}
 // 广播下载列表给面板（剥离 item 引用，只发可序列化字段）
 function publicDownloads() {
-  return downloads.map(({ item, ...rest }) => rest)
+  return visibleDownloads().map(({ item, ...rest }) => rest)
 }
 function broadcastDownloads() {
   if (downloadsWindow && !downloadsWindow.isDestroyed()) {
     try { downloadsWindow.webContents.send('downloads-changed', publicDownloads()) } catch (e) {}
   }
 }
+// 标记某下载记录为「不可访问」（文件被移动/删除）：置灰 + 删除线展示，隐藏打开/打开所在目录按钮。
+// 既广播给面板即时刷新，也落盘使重启后保持不可访问状态。
+function markDownloadInaccessible(id) {
+  const d = downloads.find(x => x.id === id)
+  if (!d || d.inaccessible) return
+  d.inaccessible = true
+  broadcastDownloads()
+  try { settingsStore.persistDownloadHistory(downloads) } catch (e2) {}
+  try { if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.setMenu(buildWindowMenu()) } catch (e3) {}
+}
+// 向下载中心窗口推送「当前用户」信息（切换账号时刷新归属标识）
+function sendDownloadsUser() {
+  if (downloadsWindow && !downloadsWindow.isDestroyed()) {
+    try {
+      downloadsWindow.webContents.send('downloads-user-changed', {
+        userId: (currentUser && currentUser.userId) || '',
+        userName: (currentUser && currentUser.userName) || '',
+      })
+    } catch (e) {}
+  }
+}
 function clearDownloads() {
-  downloads = downloads.filter(d => d.state === 'progressing')
+  // 只清除「当前用户」的已完成记录；保留其他用户的记录，以及所有进行中的下载（跨用户进度仍需跟踪）
+  downloads = downloads.filter(d => d.state === 'progressing' || (currentUser && d.userId !== currentUser.userId))
   broadcastDownloads()
   try { if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.setMenu(buildWindowMenu()) } catch (e) {}
+  // 「清空已完成」同时清理持久化历史
+  try { settingsStore.persistDownloadHistory(downloads) } catch (e2) {}
 }
 
 // ─── Downloads IPC ─────────────────────────────
-ipcMain.handle('downloads:list', () => publicDownloads())
+ipcMain.handle('downloads:list', () => {
+  const t = Date.now()
+  const r = publicDownloads()
+  console.log('[Downloads] downloads:list 构建', Date.now() - t, 'ms，条目', r.length)
+  return r
+})
+ipcMain.handle('downloads:current-user', () => ({
+  userId: (currentUser && currentUser.userId) || '',
+  userName: (currentUser && currentUser.userName) || '',
+}))
 ipcMain.handle('downloads:open', (e, id) => {
   const d = downloads.find(x => x.id === id)
-  if (d && fs.existsSync(d.savePath)) shell.openPath(d.savePath)
+  if (!d) return { ok: false, reason: '下载记录不存在' }
+  if (!d.savePath || !fs.existsSync(d.savePath)) {
+    markDownloadInaccessible(id) // 文件已不可访问：置灰 + 删除线，隐藏打开/打开所在目录
+    return { ok: false, reason: '文件已不存在（可能已被移动或删除）', inaccessible: true }
+  }
+  try {
+    // shell.openPath 返回 Promise<string>：空串=成功，非空=错误描述
+    return Promise.resolve(shell.openPath(d.savePath))
+      .then(err => err ? { ok: false, reason: err } : { ok: true })
+      .catch(e2 => ({ ok: false, reason: String((e2 && e2.message) || e2) }))
+  } catch (e2) { return { ok: false, reason: String((e2 && e2.message) || e2) } }
 })
 ipcMain.handle('downloads:open-folder', (e, id) => {
   const d = downloads.find(x => x.id === id)
-  if (d && fs.existsSync(d.savePath)) shell.showItemInFolder(d.savePath)
+  if (!d) return { ok: false, reason: '下载记录不存在' }
+  if (!d.savePath) return { ok: false, reason: '文件路径缺失' }
+  try {
+    if (fs.existsSync(d.savePath)) {
+      shell.showItemInFolder(d.savePath) // 同步：打开所在目录并选中文件
+      return { ok: true }
+    }
+    // 文件已不存在：标记不可访问，并退而打开所在文件夹（下载目录）便于用户自行查找
+    markDownloadInaccessible(id)
+    const dir = path.dirname(d.savePath)
+    if (fs.existsSync(dir)) { shell.openPath(dir); return { ok: true, note: '文件已不存在，已打开所在文件夹', inaccessible: true } }
+    return { ok: false, reason: '文件与所在文件夹均已不存在', inaccessible: true }
+  } catch (e2) { return { ok: false, reason: String((e2 && e2.message) || e2) } }
 })
 ipcMain.handle('downloads:open-in-browser', (e, id) => {
   const d = downloads.find(x => x.id === id)
-  if (!d || !d.url) return
+  if (!d || !d.url) return { ok: false, reason: '原始下载地址缺失' }
   let u
-  try { u = new URL(d.url) } catch (e2) { return }
+  try { u = new URL(d.url) } catch (e2) { return { ok: false, reason: '原始下载地址无效' } }
   // 仅允许 http/https 协议，避免 file:/data 等被滥用
-  if (u.protocol === 'http:' || u.protocol === 'https:') shell.openExternal(d.url)
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, reason: '仅支持 http/https 链接' }
+  try {
+    return Promise.resolve(shell.openExternal(d.url))
+      .then(() => ({ ok: true }))
+      .catch(e2 => ({ ok: false, reason: String((e2 && e2.message) || e2) }))
+  } catch (e2) { return { ok: false, reason: String((e2 && e2.message) || e2) } }
 })
 ipcMain.handle('downloads:cancel', (e, id) => {
   const d = downloads.find(x => x.id === id)
   if (d && d.item && typeof d.item.cancel === 'function') { try { d.item.cancel() } catch (err) {} }
 })
 ipcMain.handle('downloads:clear', () => { clearDownloads() })
+// 读取当前下载目录（未自定义则回落系统下载文件夹）
+ipcMain.handle('downloads:get-dir', () => settingsStore.getDownloadDir())
+// 弹出文件夹选择器，让用户更改下载目录（仅影响之后的下载）
+// 注意：必须用「无父窗口」写法（与 pick-ringtone 一致）。把 frameless + alwaysOnTop 的
+// 下载窗口当作父窗口传进去，在 Windows 上会导致模态对话框创建失败/抛错（表现为“更改位置失败”）。
+// 弹窗期间临时关闭 alwaysOnTop，确保对话框浮在下载窗口之上、可见可点。
+ipcMain.handle('downloads:pick-dir', async () => {
+  try {
+    const cur = settingsStore.getDownloadDir()
+    let defaultPath = cur
+    try { if (cur && fs.existsSync(cur)) defaultPath = cur } catch (e) {}
+    let restoreTop = false
+    try {
+      if (downloadsWindow && !downloadsWindow.isDestroyed() && downloadsWindow.isAlwaysOnTop()) {
+        downloadsWindow.setAlwaysOnTop(false)
+        restoreTop = true
+      }
+    } catch (e) {}
+    const res = await dialog.showOpenDialog({
+      title: '选择下载文件夹',
+      defaultPath: defaultPath,
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (restoreTop) { try { downloadsWindow.setAlwaysOnTop(true) } catch (e) {} }
+    if (res.canceled || !res.filePaths || !res.filePaths.length) return { ok: false, canceled: true }
+    const dir = res.filePaths[0]
+    try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }) } catch (e2) {}
+    settingsStore.setDownloadDir(dir)
+    // 切换下载目录后，广播一次让下载中心界面刷新展示
+    try { if (downloadsWindow && !downloadsWindow.isDestroyed()) downloadsWindow.webContents.send('downloads-dir-changed', dir) } catch (e3) {}
+    return { ok: true, dir }
+  } catch (err) {
+    return { ok: false, reason: String((err && err.message) || err) }
+  }
+})
+
+// ─── Email (阿里企业邮箱：收件 + 查看) ──────────────
+// 阿里云报错翻译成中文，降低用户困惑
+function humanizeImapError(err) {
+  const m = (err && (err.message || String(err))) || '未知错误'
+  if (/Authentication failed|Invalid credentials|LOGIN/i.test(m)) return '认证失败：请确认填的是「客户端授权码」而非登录密码，且授权码有效、未被重置。'
+  if (/ECONNREFUSED|ENOTFOUND|getaddrinfo|ETIMEDOUT|timeout/i.test(m)) return '无法连接服务器：请检查网络，并确认 IMAP 地址/端口正确（标准：imap.qiye.aliyun.com:993）。'
+  if (/Certificate|SSL|TLS/i.test(m)) return 'SSL/TLS 握手失败：请确认端口 993 且勾选了安全连接（SSL）。'
+  return '连接出错：' + m
+}
+
+// 组装完整配置（含解密后的授权码）；未配置或解密失败返回 null
+function getEmailConfig() {
+  const s = settingsStore.get()
+  const e = (s && s.email) || {}
+  if (!e.configured) return null
+  const auth = emailCreds.loadAuthCode()
+  if (!auth) return null
+  return Object.assign({}, e, { authCode: auth })
+}
+
+// 启动后台 IDLE 实时监听（仅在已配置时）
+let emailSyncStarted = false
+function startEmailSync(force) {
+  if (force) emailSyncStarted = false
+  const cfg = getEmailConfig()
+  if (!cfg || emailSyncStarted) return
+  emailSyncStarted = true
+  emailClient.startIdle(cfg, cfg.authCode, (msgs) => {
+    try {
+      for (const m of (msgs || [])) {
+        const who = m.from ? (m.from.name || m.from.address) : '未知发件人'
+        notifyNewMail('新邮件：' + who, m.subject || '')
+      }
+      if (emailWindow && !emailWindow.isDestroyed()) {
+        emailWindow.webContents.send('email:new-mail', msgs)
+      }
+      refreshEmailUnread() // 新邮件到达立即刷新角标
+    } catch (e) {}
+  }, (st) => {
+    // 同步状态 → 托盘菜单；首次失败弹一次系统通知（避免重复轰炸）
+    emailSyncState = st || { state: 'off', error: null, at: Date.now() }
+    try { updateTrayMenu() } catch (e) {}
+    if (emailSyncState.state === 'error' && !emailSyncErrorNotified) {
+      emailSyncErrorNotified = true
+      notify('邮件同步失败', (emailSyncState.error || '未知错误') + '｜可在托盘菜单重试', true)
+    }
+    if (emailSyncState.state === 'online') emailSyncErrorNotified = false
+  }).catch((e) => {
+    emailSyncStarted = false
+    emailSyncState = { state: 'error', error: (e && e.message) || String(e), at: Date.now() }
+    try { updateTrayMenu() } catch (e2) {}
+    console.error('[Email] idle start failed:', e && e.message)
+  })
+}
+
+// ─── 邮件同步状态（托盘透出）+ 未读角标 ───
+let emailSyncState = { state: 'off', error: null, at: 0 }
+let emailSyncErrorNotified = false
+let emailUnreadCount = 0
+let emailUnreadTimer = null
+
+// 带点击跳转的新邮件通知：点系统通知直接打开邮箱窗
+function notifyNewMail(title, body) {
+  try {
+    if (Notification.isSupported && Notification.isSupported()) {
+      const n = new Notification({ title, body })
+      n.on('click', () => {
+        try { openEmailWindow() } catch (e) { console.error('[Email] open from notification failed:', e && e.message) }
+      })
+      n.show()
+    }
+  } catch (e) { /* 通知失败不影响主流程 */ }
+}
+
+// 轮询 INBOX 未读数（60s；失败静默——连接状态由 onState 负责）
+function startEmailUnreadPolling() {
+  if (emailUnreadTimer) return
+  emailUnreadTimer = setInterval(() => {
+    const cfg = getEmailConfig()
+    if (!cfg) return
+    refreshEmailUnread().catch(() => {})
+  }, 60000)
+}
+
+async function refreshEmailUnread() {
+  const cfg = getEmailConfig()
+  if (!cfg) return setEmailUnreadCount(0)
+  try {
+    const r = await emailClient.fetchUnseen(cfg, cfg.authCode)
+    if (r && typeof r.unseen === 'number') setEmailUnreadCount(r.unseen)
+  } catch (e) { /* 静默 */ }
+}
+
+function setEmailUnreadCount(n) {
+  n = Math.max(0, n | 0)
+  if (n === emailUnreadCount) return
+  emailUnreadCount = n
+  if (trayIconState !== 'ringing') {
+    if (unreadCount > 0 || emailUnreadCount > 0) setTrayState('unread')
+    else if (trayIconState === 'unread') setTrayState(deriveTrayState())
+  }
+  updateTrayTooltip()
+}
+
+ipcMain.handle('email:config-load', () => {
+  const s = settingsStore.get()
+  const e = (s && s.email) || {}
+  return {
+    configured: !!e.configured,
+    email: e.email || '',
+    imapHost: e.imapHost || 'imap.qiye.aliyun.com',
+    imapPort: e.imapPort || 993,
+    imapSecure: e.imapSecure !== false,
+  }
+})
+
+ipcMain.handle('email:config-save', (e, cfg) => {
+  const store = {
+    configured: true,
+    email: cfg.email,
+    imapHost: cfg.imapHost || 'imap.qiye.aliyun.com',
+    imapPort: cfg.imapPort || 993,
+    imapSecure: cfg.imapSecure !== false,
+    smtpHost: cfg.smtpHost || 'smtp.qiye.aliyun.com',
+    smtpPort: cfg.smtpPort || 465,
+    smtpSecure: cfg.smtpSecure !== false,
+  }
+  settingsStore.set({ email: store })
+  if (cfg.authCode) {
+    try { emailCreds.saveAuthCode(cfg.authCode) } catch (err) { return { ok: false, error: '授权码加密保存失败：' + err.message } }
+  }
+  // 凭据可能变化：先复位旧连接，再用新凭据重启后台同步
+  emailClient.resetClients().catch(() => {}).then(() => startEmailSync(true))
+  return { ok: true }
+})
+
+ipcMain.handle('email:test', async (e, cfg) => {
+  try {
+    const auth = cfg.authCode || emailCreds.loadAuthCode()
+    if (!auth) return { ok: false, error: '缺少授权码' }
+    const config = Object.assign({}, cfg)
+    if (!config.imapHost || !config.imapPort) return { ok: false, error: '请填写 IMAP 服务器与端口' }
+    const res = await emailClient.testConnection(config, auth)
+    return { ok: true, folderCount: res.folderCount }
+  } catch (err) {
+    return { ok: false, error: humanizeImapError(err) }
+  }
+})
+
+ipcMain.handle('email:mailboxes', async () => {
+  const cfg = getEmailConfig()
+  if (!cfg) return { ok: false, error: '未配置邮箱' }
+  try { return { ok: true, mailboxes: await emailClient.listMailboxes(cfg, cfg.authCode) } }
+  catch (err) { return { ok: false, error: humanizeImapError(err) } }
+})
+
+ipcMain.handle('email:messages', async (e, folder, limit) => {
+  const cfg = getEmailConfig()
+  if (!cfg) return { ok: false, error: '未配置邮箱' }
+  try { return { ok: true, messages: await emailClient.fetchMessages(cfg, cfg.authCode, folder, limit || 60) } }
+  catch (err) { return { ok: false, error: humanizeImapError(err) } }
+})
+
+ipcMain.handle('email:message', async (e, folder, uid) => {
+  const cfg = getEmailConfig()
+  if (!cfg) return { ok: false, error: '未配置邮箱' }
+  try { return { ok: true, message: await emailClient.fetchMessage(cfg, cfg.authCode, folder, uid) } }
+  catch (err) { return { ok: false, error: humanizeImapError(err) } }
+})
+
+// 附件路径必须落在邮箱附件目录内（防止渲染层传入任意路径被打开/复制）
+function isEmailAttachmentPath(file) {
+  try {
+    if (!file || typeof file !== 'string') return false
+    const dir = path.join(app.getPath('userData'), 'emailAttachments')
+    const resolved = path.resolve(file)
+    const rel = path.relative(dir, resolved)
+    return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel) && fs.existsSync(resolved)
+  } catch (e) { return false }
+}
+
+ipcMain.handle('email:open-attachment', async (e, file) => {
+  try {
+    if (!isEmailAttachmentPath(file)) return { ok: false, error: '附件文件不存在或路径非法' }
+    const err = await shell.openPath(file)
+    return err ? { ok: false, error: err } : { ok: true }
+  } catch (err) { return { ok: false, error: err.message } }
+})
+
+ipcMain.handle('email:save-attachment', async (e, file) => {
+  try {
+    if (!isEmailAttachmentPath(file)) return { ok: false, error: '附件文件不存在或路径非法' }
+    const opts = { defaultPath: path.basename(file) }
+    const parent = (emailWindow && !emailWindow.isDestroyed()) ? emailWindow : (BrowserWindow.getFocusedWindow() || null)
+    const { canceled, filePath } = parent
+      ? await dialog.showSaveDialog(parent, opts)
+      : await dialog.showSaveDialog(opts)
+    if (canceled || !filePath) return { ok: false, canceled: true }
+    fs.copyFileSync(file, filePath)
+    return { ok: true, filePath }
+  } catch (err) { return { ok: false, error: err.message } }
+})
+
+// 网页侧边栏「邮箱」入口 → 打开邮箱窗口（与托盘右键「邮箱」同源，复用 openEmailWindow）
+ipcMain.on('email:open-window', () => {
+  console.log('[Email] 网页侧边栏请求打开邮箱窗口')
+  openEmailWindow()
+})
+
+// ─── Email HTTP API（供 WorkBuddy Skill；仅 loopback；按需复用邮箱会话）───
+// 说明：桌面端「邮箱」使用 SnappyMail（内置 PHP 服务，端口动态），登录态凭据
+// （PHP 会话 Cookie + smtoken CSRF Cookie + SnappyMail 认证 Cookie）持久保存在 userData 中。
+// 本接口不维护独立 IMAP 凭据，而是按需**拉起隐藏后台窗**（show:false）加载邮箱组件、
+// 复用其已登录会话代理 SnappyMail REST API；连续 60s 无邮件请求即销毁窗口并停止 PHP 服务，
+// **内存零常驻**。仅在从未登录过时，才弹一次可见窗引导用户登录（仅首次）。
+//
+// SnappyMail API 契约（来自源码）：
+//   入口：POST http://127.0.0.1:<phpPort>/?/Json/   body(JSON): {"Action":"<动作>", ...}
+//   动作：Folders / MessageList / Message / SendMessage / AccountsAndIdentities ...
+//   鉴权：请求自动带窗口 Session 的全部 Cookie；POST 需 CSRF = smtoken Cookie 的值，经 X-Sm-Token 头传递。
+
+// 复用邮箱窗口 Session（在 openEmailWindow 内捕获）
+const mailSession = { baseUrl: null, session: null, phpPort: null }
+
+// ── 邮件后台窗（隐藏窗）的空闲回收：Skill 用完即走，不常驻内存 ──
+// 设计：邮件窗口只对「用户主动打开」的可见窗常驻；API 按需拉起的隐藏窗，
+// 在连续 60s 无邮件请求后自动销毁，并停掉内置 PHP 服务——内存零常驻。
+let emailIdleTimer = null
+function armEmailIdleReaper() {
+  if (!emailAutoWindow || !emailWindowHidden) return
+  if (!emailWindow || emailWindow.isDestroyed()) return
+  if (emailIdleTimer) clearTimeout(emailIdleTimer)
+  emailIdleTimer = setTimeout(() => {
+    emailIdleTimer = null
+    try {
+      if (emailWindow && !emailWindow.isDestroyed() && emailWindowHidden && emailAutoWindow) {
+        emailWindow.destroy() // 触发 closed：清理 mailSession / 状态位
+      }
+    } catch (e) {}
+    try { phpServer.stop() } catch (e) {}
+    console.log('[Email] 后台邮箱窗空闲超时，已回收（PHP 服务已停止）')
+  }, 60000)
+}
+
+// ── 无窗口（headless）路径的 PHP 空闲回收 ──
+// e日志 自动化读/发邮件走「存储令牌 + 仅起 PHP」的无窗口路径：没有 Chromium 渲染窗口可回收，
+// 所以单独用计时器，连续 60s 无请求后停掉 PHP，让邮箱内存增量回到 ~0。窗口存在时不回收（避免误杀用户正用的 UI）。
+let phpIdleTimer = null
+function armPhpIdleReaper() {
+  if (phpIdleTimer) clearTimeout(phpIdleTimer)
+  phpIdleTimer = setTimeout(() => {
+    phpIdleTimer = null
+    if (emailWindow && !emailWindow.isDestroyed()) return
+    try { phpServer.stop() } catch (e) {}
+    mailSession.baseUrl = null
+    mailSession.phpPort = null
+    mailSession.session = null
+    console.log('[Email] headless 路径空闲超时，已停止 PHP 服务（内存回收）')
+  }, 60000)
+}
+
+// ── 邮箱认证令牌持久化（内存极小化核心）────────────────────────
+// 登录成功后把 SnappyMail 的会话 cookie（含 smtoken）加密落盘；
+// 之后 e日志 自动化读/发邮件走「无窗口」路径：仅起 PHP + 重放存储令牌，
+// 完全不创建 Chromium 渲染窗口，空闲即停 PHP，邮箱内存增量≈0。
+const EMAIL_AUTH_PATH = () => path.join(app.getPath('userData'), 'email', 'auth-cookies.enc')
+let cachedStoredAuth = null
+
+function saveStoredAuthCookies(cookies) {
+  try {
+    if (!cookies || !cookies.length) return
+    const payload = JSON.stringify(cookies)
+    let buf
+    if (safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable()) {
+      buf = safeStorage.encryptString(payload)
+    } else {
+      buf = Buffer.from(payload, 'utf8')
+    }
+    const dir = path.dirname(EMAIL_AUTH_PATH())
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(EMAIL_AUTH_PATH(), buf)
+    cachedStoredAuth = cookies
+  } catch (e) {
+    console.warn('[email] saveStoredAuthCookies failed:', e && e.message)
+  }
+}
+
+function loadStoredAuthCookies() {
+  if (cachedStoredAuth) return cachedStoredAuth
+  try {
+    if (!fs.existsSync(EMAIL_AUTH_PATH())) return null
+    const buf = fs.readFileSync(EMAIL_AUTH_PATH())
+    let payload
+    if (safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable()) {
+      payload = safeStorage.decryptString(buf)
+    } else {
+      payload = buf.toString('utf8')
+    }
+    cachedStoredAuth = JSON.parse(payload)
+    return cachedStoredAuth
+  } catch (e) {
+    console.warn('[email] loadStoredAuthCookies failed:', e && e.message)
+    return null
+  }
+}
+
+function clearStoredAuthCookies() {
+  cachedStoredAuth = null
+  try { fs.unlinkSync(EMAIL_AUTH_PATH()) } catch (e) {}
+}
+
+// 统一解析当前可用的认证来源：
+//   1) 优先存活窗口会话（用户正开着邮箱 UI，或刚自动拉起用于首次登录）；
+//   2) 否则回退「存储令牌 + 起 PHP」的无窗口路径（内存极小化的常态路径）。
+async function resolveEmailAuth() {
+  if (mailSession.baseUrl && mailSession.session) {
+    const cookies = await mailSession.session.cookies.get({ url: mailSession.baseUrl }).catch(() => [])
+    if (cookies.length) {
+      return {
+        baseUrl: mailSession.baseUrl,
+        cookieHeader: cookies.map((c) => c.name + '=' + c.value).join('; '),
+        smToken: (cookies.find((c) => c.name === 'smtoken') || {}).value || '',
+      }
+    }
+  }
+  const st = await phpServer.ensureStarted().catch(() => null)
+  if (st && st.ok) {
+    const baseUrl = 'http://127.0.0.1:' + st.port
+    const cookies = loadStoredAuthCookies()
+    if (cookies && cookies.length) {
+      return {
+        baseUrl,
+        cookieHeader: cookies.map((c) => c.name + '=' + c.value).join('; '),
+        smToken: (cookies.find((c) => c.name === 'smtoken') || {}).value || '',
+      }
+    }
+  }
+  return null
+}
+
+async function ensureMailSession() {
+  // 仅返回存活窗口会话；无窗口时交由 resolveEmailAuth 走存储令牌路径
+  if (!mailSession.baseUrl || !mailSession.session) {
+    try {
+      const st = phpServer.status && phpServer.status()
+      if (st && st.running && st.port) {
+        mailSession.baseUrl = 'http://127.0.0.1:' + st.port
+        mailSession.phpPort = st.port
+      }
+    } catch (e) {}
+    if (!mailSession.session && emailWindow && !emailWindow.isDestroyed()) {
+      mailSession.session = emailWindow.webContents.session
+    }
+  }
+  if (!mailSession.baseUrl || !mailSession.session) return null
+  return mailSession
+}
+
+// 代理一次 SnappyMail REST 调用：复用已登录会话（窗口或存储令牌皆可）
+async function snappyApi(action, params = {}, auth) {
+  if (!auth) auth = await resolveEmailAuth()
+  if (!auth) throw new Error('EMAIL_SESSION_MISSING')
+  const cookieHeader = auth.cookieHeader
+  const smToken = auth.smToken
+  const baseUrl = auth.baseUrl
+  const body = JSON.stringify(Object.assign({ Action: action }, params))
+  const u = new URL(baseUrl + '/?/Json/')
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: u.hostname,
+        port: u.port,
+        path: u.pathname + u.search,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          Cookie: cookieHeader,
+          'X-Sm-Token': smToken,
+        },
+      },
+      (res) => {
+        let d = ''
+        res.on('data', (c) => (d += c))
+        res.on('end', () => {
+          let json
+          try { json = JSON.parse(d) } catch (e) { return reject(new Error('BAD_RESPONSE: ' + d.slice(0, 200))) }
+          if (json && json.ErrorCode) return reject(new Error('SNAPPYMAIL_ERROR: ' + (json.ErrorMessage || json.ErrorCode)))
+          resolve(json)
+        })
+      },
+    )
+    req.on('error', reject)
+    req.write(body)
+    req.end()
+  })
+}
+
+// ── 响应归一化（把 SnappyMail 原生结构整理成 Skill 易读字段）──
+function _addr(x) {
+  if (!x) return { name: '', address: '' }
+  if (typeof x === 'string') return { name: '', address: x }
+  return { name: x.Name || x.name || '', address: x.Email || x.email || x.Address || '' }
+}
+function _arr(x) { return Array.isArray(x) ? x : x ? [x] : [] }
+function _toMs(v) {
+  if (v == null) return 0
+  const n = Number(v)
+  if (Number.isFinite(n)) return n > 1e12 ? n : n * 1000 // 秒→毫秒
+  const t = Date.parse(v)
+  return isNaN(t) ? 0 : t
+}
+function normalizeFolders(r) {
+  const res = (r && r.Result) || {}
+  return (res.Folders || []).map((f) => ({
+    name: f.FullName || f.Name || '',
+    fullName: f.FullName || f.Name || '',
+    unread: f.Unread || 0,
+    exists: f.Exists || 0,
+    isSystem: !!f.IsSystem,
+  }))
+}
+function normalizeMessages(r) {
+  const res = (r && r.Result) || {}
+  const mr = res.MessageResult || {}
+  return (mr.Messages || []).map((m) => ({
+    uid: String(m.Uid != null ? m.Uid : ''),
+    subject: m.Subject || '',
+    from: _addr(m.From),
+    to: _arr(m.To).map(_addr),
+    date: _toMs(m.TimeStamp != null ? m.TimeStamp : m.Date),
+    seen: !!m.IsSeen,
+    flagged: !!m.IsFlagged,
+    hasAttachment: !!m.HasAttachments,
+    size: m.Size || 0,
+  }))
+}
+function normalizeMessage(r) {
+  const res = (r && r.Result) || {}
+  const m = res.Message || res
+  return {
+    subject: m.Subject || '',
+    from: _addr(m.From),
+    to: _arr(m.To).map(_addr),
+    cc: _arr(m.Cc).map(_addr),
+    date: _toMs(m.TimeStamp != null ? m.TimeStamp : m.Date),
+    text: m.Text || '',
+    html: m.Html || '',
+    attachments: (m.Attachments || []).map((a) => ({
+      name: a.FileName || a.Name || '',
+      size: a.Size || 0,
+      contentType: a.MimeType || '',
+    })),
+  }
+}
+function filterMessages(out, q) {
+  const str = (v) => (typeof v === 'string' ? v.trim() : '')
+  let r = out
+  if (q.unreadOnly === '1' || q.unreadOnly === 'true') r = r.filter((m) => !m.seen)
+  if (str(q.from)) {
+    const kw = str(q.from).toLowerCase()
+    r = r.filter(
+      (m) =>
+        (m.from && ((m.from.name || '').toLowerCase().includes(kw) || (m.from.address || '').toLowerCase().includes(kw))) ||
+        (m.to || []).some((t) => ((t.name || '').toLowerCase().includes(kw) || (t.address || '').toLowerCase().includes(kw))),
+    )
+  }
+  if (str(q.to)) {
+    const kw = str(q.to).toLowerCase()
+    r = r.filter((m) => (m.to || []).some((t) => ((t.name || '').toLowerCase().includes(kw) || (t.address || '').toLowerCase().includes(kw))))
+  }
+  if (str(q.since)) {
+    const t = new Date(str(q.since)).getTime()
+    if (!isNaN(t)) r = r.filter((m) => m.date >= t)
+  }
+  if (str(q.before)) {
+    const t = new Date(str(q.before)).getTime()
+    if (!isNaN(t)) r = r.filter((m) => m.date <= t)
+  }
+  return r
+}
+
+/**
+ * 确保邮箱会话就绪：按需拉起隐藏后台窗（不可见、不打扰），等待 PHP + SnappyMail + 登录态恢复。
+ * 返回 { ready, needLogin }。首次从未登录过 → ready=false, needLogin=true（由调用方弹可见窗引导登录）。
+ * 该逻辑同时被 /api/email/open-window 与数据类接口复用，使任意邮件请求都能"自愈"会话，
+ * 无需客户端先做两阶段 open-window 调用，也无需用户手动打开邮箱页面。
+ */
+async function ensureEmailSessionReady() {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const waitReady = async (ms) => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < ms) {
+      try {
+        const r = await snappyApi('Folders')
+        if (r && r.Result && Array.isArray(r.Result.Folders)) return true
+      } catch (e) {}
+      await sleep(400)
+    }
+    return false
+  }
+  let ready = await waitReady(1000)
+  if (!ready && emailWindow && !emailWindow.isDestroyed() && !emailWindowHidden) {
+    ready = await waitReady(15000) // 用户可见窗已开：等登录/加载
+  }
+  if (!ready && (!emailWindow || emailWindow.isDestroyed())) {
+    emailAutoWindow = true
+    openEmailWindow({ hidden: true })
+    ready = await waitReady(18000) // PHP 启动 + 隐藏窗加载 + 登录态恢复
+  }
+  let needLogin = false
+  if (!ready) {
+    // 隐藏窗也未就绪 → 收掉隐藏窗，弹可见窗让用户完成首次登录
+    try {
+      if (emailWindow && !emailWindow.isDestroyed() && emailWindowHidden) emailWindow.destroy()
+    } catch (e) {}
+    emailAutoWindow = false
+    openEmailWindow({ hidden: false })
+    needLogin = true
+  }
+  // 成功路径也要臂上空闲计时器，保证隐藏窗会被回收
+  if (ready && emailAutoWindow && emailWindowHidden) armEmailIdleReaper()
+  return { ready, needLogin }
+}
+
+function handleEmailApiProxy(req, res, parsed) {
+  const remote = (req.socket && (req.socket.remoteAddress || '')) || ''
+  const isLoopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+  if (!isLoopback) {
+    res.writeHead(403)
+    res.end(JSON.stringify({ ok: false, error: 'FORBIDDEN: only loopback allowed' }))
+    return true
+  }
+  const p = parsed.pathname
+  if (p === '/api/email/send' && req.method !== 'POST') {
+    res.writeHead(405); res.end(JSON.stringify({ ok: false, error: 'METHOD_NOT_ALLOWED' })); return true
+  }
+  if (p !== '/api/email/send' && !(p === '/api/email/open-window' && req.method === 'POST') && req.method !== 'GET') {
+    res.writeHead(405); res.end(JSON.stringify({ ok: false, error: 'METHOD_NOT_ALLOWED' })); return true
+  }
+
+  const q = parsed.query || {}
+  const str = (v) => (typeof v === 'string' ? v.trim() : '')
+  const num = (v, d) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d }
+
+  ;(async () => {
+    // 每个邮件请求都刷新空闲计时器：窗口路径回收窗口+PHP；headless 路径回收 PHP（无窗口可回收）
+    armEmailIdleReaper()
+    armPhpIdleReaper()
+    try {
+      if (p === '/api/email/session') {
+        return res.end(JSON.stringify({
+          ok: true,
+          hasSession: !!mailSession.baseUrl,
+          phpPort: mailSession.phpPort,
+          windowOpen: !!(emailWindow && !emailWindow.isDestroyed()),
+          hidden: !!emailWindowHidden,
+        }))
+      }
+      if (p === '/api/email/open-window' && req.method === 'POST') {
+        // 优先无窗口存储令牌路径：已登录过则根本不建窗口（内存极小化）；
+        // 仅首次使用（无令牌、无窗口）才拉起窗口引导登录。
+        const auth = await resolveEmailAuth()
+        if (auth) {
+          return res.end(JSON.stringify({ ok: true, hasSession: true, needLogin: false, phpPort: mailSession.phpPort, windowOpen: !!(emailWindow && !emailWindow.isDestroyed()), hidden: !!emailWindowHidden }))
+        }
+        const { ready, needLogin } = await ensureEmailSessionReady()
+        return res.end(JSON.stringify({
+          ok: true,
+          hasSession: ready,
+          needLogin,
+          phpPort: mailSession.phpPort,
+          windowOpen: !!(emailWindow && !emailWindow.isDestroyed()),
+          hidden: !!emailWindowHidden,
+        }))
+      }
+      if (p === '/api/email/whoami') {
+        const cfg = getEmailConfig()
+        return res.end(JSON.stringify({ ok: true, email: cfg ? cfg.email : '' }))
+      }
+      // 以下均依赖已登录的邮箱会话。优先「无窗口」存储令牌路径（内存极小化），
+      // 仅当从未登录过（无存储令牌、无窗口）才回退到拉起窗口引导首次登录。
+      let auth = await resolveEmailAuth()
+      if (!auth) {
+        const er = await ensureEmailSessionReady()
+        if (er.needLogin) {
+          return res.end(JSON.stringify({ ok: false, error: 'EMAIL_SESSION_MISSING', needLogin: true, hint: '首次使用请在桌面端「邮箱」窗口登录一次' }))
+        }
+        auth = await resolveEmailAuth()
+      }
+      if (!auth) {
+        return res.end(JSON.stringify({ ok: false, error: 'EMAIL_SESSION_MISSING', hint: '邮箱会话未就绪，请在桌面端「邮箱」窗口登录一次' }))
+      }
+      if (p === '/api/email/mailboxes') {
+        const r = await snappyApi('Folders')
+        return res.end(JSON.stringify({ ok: true, mailboxes: normalizeFolders(r) }))
+      }
+      if (p === '/api/email/messages') {
+        const folder = str(q.folder) || 'INBOX'
+        // 带时间范围(since/before)时过滤是客户端按取样窗口做的，必须放大取样量，
+        // 否则会静默漏掉窗口早期的邮件（见 SKILL ⑧-quater）。
+        const hasRange = !!(q.since || q.before)
+        const limit = Math.min(q.limit ? num(q.limit, 200) : hasRange ? 1000 : 200, 1000)
+        const r = await snappyApi('MessageList', { folder, limit, offset: 0, search: '' })
+        let out = normalizeMessages(r)
+        out = filterMessages(out, q)
+        return res.end(JSON.stringify({ ok: true, folder, count: out.length, messages: out }))
+      }
+      if (p === '/api/email/message') {
+        const folder = str(q.folder) || 'INBOX'
+        const uid = str(q.uid)
+        if (!uid) return res.end(JSON.stringify({ ok: false, error: 'MISSING_UID' }))
+        const r = await snappyApi('Message', { folder, uid, mimeType: '', partId: '', all: 1 })
+        return res.end(JSON.stringify({ ok: true, message: normalizeMessage(r) }))
+      }
+      if (p === '/api/email/send') {
+        let body = ''
+        try { for await (const c of req) body += c } catch (e) {}
+        let pl = {}
+        try { pl = JSON.parse(body || '{}') } catch (e) {
+          res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: 'BAD_JSON_BODY' }))
+        }
+        if (!pl.to) return res.end(JSON.stringify({ ok: false, error: 'MISSING_TO' }))
+        const r = await snappyApi('SendMessage', {
+          to: pl.to,
+          subject: pl.subject || '',
+          plain: pl.text || '',
+          html: pl.html || '',
+          cc: pl.cc || '',
+          bcc: pl.bcc || '',
+          from: pl.from || '',
+        })
+        // SnappyMail 发送失败时返回 Result:false（如 InvalidToken[101]）。此处必须如实透出失败，
+        // 否则脚本/用户会误以为已发出（历史 bug：无条件 ok:true）。
+        const failed = !r || r.Result === false || (r && r.code && r.code !== 0 && r.code !== 200)
+        if (failed) {
+          const errMsg = (r && (r.message || (r.Result && r.Result.message))) || 'EMAIL_SEND_FAIL'
+          return res.end(JSON.stringify({ ok: false, error: errMsg, code: r && r.code, raw: r }))
+        }
+        return res.end(JSON.stringify({ ok: true, raw: (r && r.Result) || r }))
+      }
+      res.writeHead(404)
+      res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }))
+    } catch (err) {
+      const msg = String((err && err.message) || err)
+      // headless 路径：若存储令牌失效（过期/被服务端拒绝），清除并提示重新登录，
+      // 避免陷入「永远失败、却永不弹登录」的死局。
+      if (!mailSession.session && /SNAPPYMAIL_ERROR|EMAIL_SESSION_MISSING|EMAIL_NO_COOKIES/.test(msg)) {
+        clearStoredAuthCookies()
+        res.writeHead(200)
+        return res.end(JSON.stringify({ ok: false, error: 'EMAIL_SESSION_MISSING', needLogin: true, hint: '登录态已失效，请在桌面端「邮箱」窗口重新登录一次' }))
+      }
+      res.writeHead(500)
+      res.end(JSON.stringify({ ok: false, error: msg, detail: err && err.response }))
+    }
+  })()
+  return true
+}
+
+// ─── Email HTTP API（legacy：基于 imapflow + emailCreds.json 的独立通道，已弃用，保留仅供回退）───
+// 路由：/api/email/mailboxes | /api/email/messages | /api/email/message
+// 安全：仅接受来自 127.0.0.1 / ::1 的请求；只读 GET；绝不在响应里暴露授权码/密码。
+// 注：HTTP 服务 listen 未限定 host，故这里用 remoteAddress 强制回环，避免被局域网访问。
+function handleEmailApiLegacy(req, res, parsed) {
+  const remote = (req.socket && (req.socket.remoteAddress || '')) || ''
+  const isLoopback =
+    remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+  if (!isLoopback) {
+    res.writeHead(403)
+    res.end(JSON.stringify({ ok: false, error: 'FORBIDDEN: only loopback allowed' }))
+    return true
+  }
+  // 方法校验：send 仅 POST，其余仅 GET（loopback 已在上方校验）
+  const p = parsed.pathname
+  if (p === '/api/email/send') {
+    if (req.method !== 'POST') {
+      res.writeHead(405)
+      res.end(JSON.stringify({ ok: false, error: 'METHOD_NOT_ALLOWED' }))
+      return true
+    }
+  } else if (req.method !== 'GET') {
+    res.writeHead(405)
+    res.end(JSON.stringify({ ok: false, error: 'METHOD_NOT_ALLOWED' }))
+    return true
+  }
+
+  const q = parsed.query || {}
+  const num = (v, d) => {
+    const n = Number(v)
+    return Number.isFinite(n) && n > 0 ? n : d
+  }
+  const str = (v) => (typeof v === 'string' ? v.trim() : '')
+
+  ;(async () => {
+    try {
+      if (p === '/api/email/mailboxes') {
+        const cfg = getEmailConfig()
+        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
+        const mailboxes = await emailClient.listMailboxes(cfg, cfg.authCode)
+        return res.end(JSON.stringify({ ok: true, mailboxes }))
+      }
+      if (p === '/api/email/messages') {
+        const cfg = getEmailConfig()
+        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
+        const folder = str(q.folder) || 'INBOX'
+        const limit = num(q.limit, 60)
+        const list = await emailClient.fetchMessages(cfg, cfg.authCode, folder, limit)
+        // 服务端预筛：未读 / 发件人关键字 / 时间范围，减少回传体积
+        let out = list || []
+        if (q.unreadOnly === '1' || q.unreadOnly === 'true') out = out.filter((m) => !m.seen)
+        if (str(q.from)) {
+          const kw = str(q.from).toLowerCase()
+          out = out.filter(
+            (m) =>
+              m.from &&
+              ((m.from.name || '').toLowerCase().includes(kw) ||
+                (m.from.address || '').toLowerCase().includes(kw)),
+          )
+        }
+        if (str(q.to)) {
+          const kw = str(q.to).toLowerCase()
+          out = out.filter((m) =>
+            (m.to || []).some(
+              (a) =>
+                ((a.name || '').toLowerCase().includes(kw) ||
+                  (a.address || '').toLowerCase().includes(kw)),
+            ),
+          )
+        }
+        if (str(q.since)) {
+          const t = new Date(str(q.since)).getTime()
+          if (!isNaN(t)) out = out.filter((m) => m.date >= t)
+        }
+        if (str(q.before)) {
+          const t = new Date(str(q.before)).getTime()
+          if (!isNaN(t)) out = out.filter((m) => m.date <= t)
+        }
+        return res.end(JSON.stringify({ ok: true, folder, count: out.length, messages: out }))
+      }
+      if (p === '/api/email/message') {
+        const cfg = getEmailConfig()
+        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
+        const folder = str(q.folder) || 'INBOX'
+        const uid = str(q.uid)
+        if (!uid) return res.end(JSON.stringify({ ok: false, error: 'MISSING_UID' }))
+        const msg = await emailClient.fetchMessage(cfg, cfg.authCode, folder, uid)
+        return res.end(JSON.stringify({ ok: true, message: msg }))
+      }
+      if (p === '/api/email/whoami') {
+        const cfg = getEmailConfig()
+        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
+        return res.end(JSON.stringify({ ok: true, email: cfg.email }))
+      }
+      if (p === '/api/email/send') {
+        let body = ''
+        try {
+          for await (const chunk of req) body += chunk
+        } catch (e) { /* 忽略读取异常 */ }
+        let payload = {}
+        try { payload = JSON.parse(body || '{}') }
+        catch (e) {
+          res.writeHead(400)
+          return res.end(JSON.stringify({ ok: false, error: 'BAD_JSON_BODY' }))
+        }
+        const cfg = getEmailConfig()
+        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
+        try {
+          const out = await emailSender.sendMail(cfg, cfg.authCode, {
+            to: payload.to,
+            subject: payload.subject,
+            text: payload.text,
+            html: payload.html,
+            from: payload.from,
+          })
+          return res.end(JSON.stringify({ ok: true, ...out }))
+        } catch (e) {
+          return res.end(JSON.stringify({
+            ok: false,
+            error: 'SEND_FAIL: ' + (e && e.message),
+            detail: e && e.response,
+            code: e && e.code,
+          }))
+        }
+      }
+      res.writeHead(404)
+      res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }))
+    } catch (err) {
+      res.writeHead(500)
+      res.end(JSON.stringify({
+        ok: false,
+        error: humanizeImapError(err),
+        detail: err && err.message,
+        code: err && err.code,
+        responseText: err && err.responseText,
+      }))
+    }
+  })()
+  return true
+}
 
 // ─── Workbench window (个人工作台：四象限 + 日历) ──────
 function openWorkbenchWindow() {

@@ -1,6 +1,6 @@
 {
   "name": "mylog-desktop-notifier",
-  "version": "1.4.1",
+  "version": "1.5.1",
   "author": "ixu",
   "description": "e日志-桌面端",
   "main": "main.js",
@@ -26,6 +26,7 @@
     "asarUnpack": [
       "assets/**/*"
     ],
+    "afterPack": "build/after-pack.js",
     "directories": {
       "output": "dist-installer-new"
     },
@@ -48,7 +49,17 @@
         }
       ],
       "icon": "assets/icon.ico",
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "extraResources": [
+        {
+          "from": "vendor/php",
+          "to": "vendor/php"
+        },
+        {
+          "from": "vendor/snappymail",
+          "to": "vendor/snappymail"
+        }
+      ]
     },
     "mac": {
       "target": [
@@ -68,6 +79,23 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "notarize": true,
+      "extraResources": [
+        {
+          "from": "vendor/php-mac",
+          "to": "vendor/php",
+          "filter": [
+            "**/*",
+            "!bin/**"
+          ]
+        },
+        {
+          "from": "vendor/snappymail",
+          "to": "vendor/snappymail"
+        }
+      ],
+      "binaries": [
+        "Contents/Resources/vendor/php/php"
+      ],
       "extendInfo": {
         "LSUIElement": true,
         "NSHighResolutionCapable": true,
@@ -98,7 +126,10 @@
     }
   },
   "dependencies": {
+    "imapflow": "^2.4.2",
+    "mailparser": "^3.7.1",
     "pinyin-pro": "^3.29.1",
+    "sanitize-html": "2.17.0",
     "solarlunar": "^3.1.0",
     "ws": "8.18.0"
   },
