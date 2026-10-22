@@ -66,19 +66,44 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 缺 vendor 时 electron-builder 不报错，所以必须自己验一次
+      # 缺 vendor 时 electron-builder 不报错，所以必须自己验一次。
+      # 血泪教训：早期只验 php.exe 存在，而 trim 逻辑把整个 ext/ 删了，
+      # 构建全绿、用户装完才看到「邮箱服务启动超时（端口 x 无响应）」。
+      # 所以这里必须验到「扩展真的能加载」这一层。
       - name: Verify email vendor in package
         shell: bash
         run: |
           set -euo pipefail
-          for f in dist-installer-new/win-unpacked/resources/vendor/php/php.exe \
-                   dist-installer-new/win-unpacked/resources/vendor/snappymail/index.php; do
+          V=dist-installer-new/win-unpacked/resources/vendor
+          for f in "$V/php/php.exe" "$V/php/php.ini" "$V/php/router.php" \
+                   "$V/php/cacert.pem" "$V/snappymail/index.php"; do
             if [ ! -f "$f" ]; then
               echo "::error::安装包里缺少邮箱运行时：$f"
               exit 1
             fi
             echo "OK $f ($(stat -c%s "$f") bytes)"
           done
+
+          if [ ! -d "$V/php/ext" ]; then
+            echo "::error::安装包里缺少 php/ext 目录：所有 extension= 都会加载失败，SnappyMail 打不开"
+            exit 1
+          fi
+          for dll in php_mbstring.dll php_openssl.dll php_sodium.dll php_curl.dll \
+                     php_zip.dll php_fileinfo.dll php_sockets.dll php_pdo_sqlite.dll php_sqlite3.dll; do
+            [ -f "$V/php/ext/$dll" ] || { echo "::error::缺少扩展 $dll"; exit 1; }
+          done
+
+          # 真跑一次：文件在但依赖 DLL 缺失时扩展仍会加载失败
+          "$V/php/php.exe" -c "$V/php/php.ini" -m > "$RUNNER_TEMP/mods.txt" 2>"$RUNNER_TEMP/mods.err" || true
+          cat "$RUNNER_TEMP/mods.txt"
+          for e in mbstring openssl sodium curl zip fileinfo sockets pdo_sqlite sqlite3 gd; do
+            if ! tr -d '\r' < "$RUNNER_TEMP/mods.txt" | grep -qix "$e"; then
+              echo "::error::内置 PHP 未能加载扩展 $e"
+              head -20 "$RUNNER_TEMP/mods.err" || true
+              exit 1
+            fi
+          done
+          echo "OK 内置 PHP 扩展齐全"
 
       - uses: actions/upload-artifact@v4
         with:

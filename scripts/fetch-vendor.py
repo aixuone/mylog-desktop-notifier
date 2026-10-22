@@ -26,7 +26,9 @@ fetch-vendor.py —— 拉取并准备邮箱界面所需的第三方运行时
 import io
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import urllib.request
 import zipfile
@@ -35,12 +37,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENDOR = os.path.join(ROOT, "vendor")
 DL = os.path.join(VENDOR, "_dl")
 
-PHP_VERSION = "8.4.26"
-PHP_ZIP = "php-{}-nts-Win32-vs17-x64.zip".format(PHP_VERSION)
-PHP_URLS = [
-    "https://downloads.php.net/~windows/releases/" + PHP_ZIP,
-    "https://windows.php.net/downloads/releases/" + PHP_ZIP,
+# 优先用这个版本；官方 releases 目录只留最近几个小版本，下架后自动
+# 回退到目录里最新的 8.4.x（见 discover_latest_php）。绝不让脚本因为
+# 某个小版本消失就再也拉不到运行时。
+PHP_VERSION = "8.4.27"
+PHP_ZIP_TPL = "php-{}-nts-Win32-vs17-x64.zip"
+PHP_DIRS = [
+    "https://downloads.php.net/~windows/releases/",
+    "https://windows.php.net/downloads/releases/",
 ]
+UA = "mylog-fetch-vendor"
 
 SNAPPY_VERSION = "2.38.2"
 SNAPPY_ZIP = "snappymail-{}.zip".format(SNAPPY_VERSION)
@@ -82,10 +88,18 @@ KEEP_TOP = {
     "php.exe", "php8.dll", "php.ini", "router.php",
     "license.txt",              # PHP 许可（合规必需）
     "readme-redist-bins.txt",   # PHP 所捆绑的第三方组件声明（合规必需）
+    "cacert.pem",               # TLS 根证书（IMAP/SMTP over SSL 必须，见 PHP_INI）
 }
 
-PHP_INI = r"""; 由 scripts/fetch-vendor.py 生成，请勿手工修改（改动会被覆盖）
-; e日志 桌面端内置 PHP 运行时（NTS x64，{ver}）
+# TLS 根证书包（Mozilla CA bundle）。缺它会导致连 imap.qiye.aliyun.com:993
+# 时 cURL/OpenSSL 校验失败，表现为「无法连接至服务器」。
+CACERT_URLS = [
+    "https://curl.se/ca/cacert.pem",
+    "https://raw.githubusercontent.com/bagder/ca-bundle/master/ca-bundle.crt",
+]
+
+PHP_INI_TEMPLATE = r"""; 由 scripts/fetch-vendor.py 生成，请勿手工修改（改动会被覆盖）
+; e日志 桌面端内置 PHP 运行时（NTS x64，__PHP_VER__）
 
 [PHP]
 extension_dir = "ext"
@@ -133,16 +147,31 @@ extension=sqlite3
 ; ctype / tokenizer / session / iconv 在 PHP 8.4 Windows 版中为内置模块，
 ; 用 extension= 加载会报 "Unable to load dynamic library"。
 
+; ── TLS 根证书（IMAP/SMTP over SSL 与 curl HTTPS 校验）──
+; 随包附带 Mozilla 根证书包，不依赖目标机器的证书库。
+; 路径相对 PHP 进程工作目录（主进程 spawn 时 cwd = vendor 根目录）。
+openssl.cafile = "php/cacert.pem"
+curl.cainfo = "php/cacert.pem"
+
 ; ── opcache（Zend 扩展，必须用 zend_extension）──
+; 【勿改】enable / enable_cli 必须保持 0。
+; 开启后部分 Windows 环境（尤其父进程不是普通 shell 时）会直接致命错误
+; 「Opcode handlers are unusable due to ASLR」→ 进程立刻退出 → php -S 起不来
+; → 邮箱窗口空白 /「邮箱服务启动超时」。本地单用户 webmail 关掉只多几毫秒。
 zend_extension=opcache
-opcache.enable = 1
-opcache.enable_cli = 1
+opcache.enable = 0
+opcache.enable_cli = 0
 opcache.memory_consumption = 128
 opcache.interned_strings_buffer = 16
 opcache.max_accelerated_files = 10000
 opcache.validate_timestamps = 1
 opcache.revalidate_freq = 60
-""".format(ver=PHP_VERSION)
+"""
+
+
+def php_ini(ver):
+    return PHP_INI_TEMPLATE.replace("__PHP_VER__", ver)
+
 
 ROUTER_PHP = r"""<?php
 /**
@@ -194,9 +223,9 @@ def log(msg):
     print(msg, flush=True)
 
 
-def download(urls, target, label):
+def download(urls, target, label, min_size=1024 * 1024):
     """按序尝试多个地址下载；支持断点重试。"""
-    if os.path.exists(target) and os.path.getsize(target) > 1024 * 1024:
+    if os.path.exists(target) and os.path.getsize(target) > min_size:
         log("  [跳过] {} 已存在 ({:.1f} MB)".format(label, os.path.getsize(target) / 1048576))
         return True
     for i, url in enumerate(urls, 1):
@@ -206,8 +235,8 @@ def download(urls, target, label):
             with urllib.request.urlopen(req, timeout=180) as resp, open(target, "wb") as out:
                 shutil.copyfileobj(resp, out, 1024 * 256)
             size = os.path.getsize(target)
-            if size > 1024 * 1024:
-                log("         OK {:.1f} MB".format(size / 1048576))
+            if size > min_size:
+                log("         OK {:.1f} KB".format(size / 1024))
                 return True
             log("         文件过小，换下一个源")
         except Exception as e:
@@ -249,6 +278,13 @@ def trim_php(php_dir):
                 except OSError:
                     pass
     for f in os.listdir(php_dir):
+        # 【勿删】ext 目录存放全部扩展 DLL。它本身要被保留，只裁里面内容
+        # （裁剪在上面做）。早期版本漏了这个 continue，把整个 ext 删掉，
+        # 导致包里 PHP 无任何扩展 → SnappyMail 报
+        # "[302] The following PHP extensions are not available"，
+        # 而探活要求响应体 >500 字节，于是表现为「邮箱服务启动超时」。
+        if f == "ext":
+            continue
         p = os.path.join(php_dir, f)
         if os.path.isdir(p):
             shutil.rmtree(p, ignore_errors=True)
@@ -274,22 +310,117 @@ def dir_size_mb(d):
     return total / 1048576
 
 
+def verify_vendor(php_dir):
+    """产物自检：缺任何一项都直接失败，不要靠安装包事后才发现。
+
+    历史事故：trim_php 曾把整个 ext/ 删掉，CI 仍然绿，用户装完才看到
+    「邮箱服务启动超时（端口 x 无响应）」。这里把上线前必须成立的
+    条件全部断言一遍。
+    """
+    problems = []
+    ext_dir = os.path.join(php_dir, "ext")
+    if not os.path.isdir(ext_dir):
+        problems.append("缺少 ext 目录（php.ini 里 extension= 全部失效）")
+    else:
+        for dll in sorted(KEEP_EXT):
+            if not os.path.isfile(os.path.join(ext_dir, dll)):
+                problems.append("缺少扩展 " + dll)
+    for name in ("php.exe", "php8.dll", "cacert.pem"):
+        if not os.path.isfile(os.path.join(php_dir, name)):
+            problems.append("缺少 " + name)
+    for name in ("php.ini", "router.php"):
+        if not os.path.isfile(os.path.join(php_dir, name)):
+            problems.append("缺少 " + name)
+
+    if problems:
+        for p in problems:
+            log("  [自检失败] " + p)
+        return False
+    log("  文件齐全：ext {} 个扩展 + cacert.pem".format(len(KEEP_EXT)))
+
+    # 真跑一次 php -m：文件在但依赖 DLL 缺失时扩展仍会加载失败，
+    # 只有实际加载一遍才能证明这份运行时可用。
+    php_exe = os.path.join(php_dir, "php.exe" if os.name == "nt" else "php")
+    if not os.path.isfile(php_exe):
+        log("  [跳过] 本机无法执行 PHP（非 Windows 或无 php.exe），仅做了文件检查")
+        return True
+    try:
+        r = subprocess.run(
+            [php_exe, "-c", os.path.join(php_dir, "php.ini"), "-m"],
+            cwd=VENDOR, capture_output=True, text=True, timeout=90,
+        )
+    except Exception as e:
+        log("  [自检失败] 无法执行 php -m：{}".format(e))
+        return False
+    mods = set()
+    for line in (r.stdout or "").splitlines():
+        t = line.strip().lower()
+        if t and not t.startswith("["):
+            mods.add(t)
+    missing = [e for e in ("mbstring", "openssl", "sodium", "curl", "zip",
+                           "fileinfo", "sockets", "pdo_sqlite", "sqlite3", "gd")
+               if e not in mods]
+    if missing:
+        log("  [自检失败] php -m 缺少扩展：{}".format(", ".join(missing)))
+        log("  php 输出：{}".format((r.stdout or "")[:600]))
+        return False
+    log("  php -m 通过：{} 个模块（含 mbstring/openssl/sodium/pdo_sqlite/sqlite3）".format(len(mods)))
+    return True
+
+
+def discover_latest_php():
+    """抓官方 releases 目录，返回其中最新的 8.4.x（拿不到返回 None）。"""
+    pat = re.compile(r"php-(8\.4\.\d+)-nts-Win32-vs17-x64\.zip")
+    best = None
+    for d in PHP_DIRS:
+        try:
+            req = urllib.request.Request(d, headers={"User-Agent": UA})
+            html = urllib.request.urlopen(req, timeout=60).read().decode("utf-8", "replace")
+        except Exception as e:
+            log("  探测 {} 失败：{}".format(d, e))
+            continue
+        for v in pat.findall(html):
+            key = tuple(int(x) for x in v.split("."))
+            if best is None or key > tuple(int(x) for x in best.split(".")):
+                best = v
+    return best
+
+
+def fetch_php():
+    """下载便携 PHP，返回 (版本, zip 路径)；彻底失败返回 (None, None)。"""
+    ver = PHP_VERSION
+    for attempt in (1, 2):
+        zip_name = PHP_ZIP_TPL.format(ver)
+        target = os.path.join(DL, zip_name)
+        urls = [d + zip_name for d in PHP_DIRS]
+        if download(urls, target, "PHP " + ver):
+            return ver, target
+        if attempt == 1:
+            latest = discover_latest_php()
+            if latest and latest != ver:
+                log("  {} 已下架，改用目录里最新的 8.4.x：{}".format(ver, latest))
+                ver = latest
+                continue
+        break
+    return None, None
+
+
 def main():
     os.makedirs(DL, exist_ok=True)
 
-    log("== 1/4 下载便携版 PHP {}（PHP License v3.01）".format(PHP_VERSION))
-    php_zip = os.path.join(DL, PHP_ZIP)
-    if not download(PHP_URLS, php_zip, "PHP " + PHP_VERSION):
+    log("== 1/5 下载便携版 PHP（PHP License v3.01）")
+    php_ver, php_zip = fetch_php()
+    if not php_zip:
         log("PHP 下载失败，请检查网络后重试。")
         return 1
 
-    log("== 2/4 下载 SnappyMail {}（AGPL-3.0）".format(SNAPPY_VERSION))
+    log("== 2/5 下载 SnappyMail {}（AGPL-3.0）".format(SNAPPY_VERSION))
     snap_zip = os.path.join(DL, SNAPPY_ZIP)
     if not download(SNAPPY_URLS, snap_zip, "SnappyMail " + SNAPPY_VERSION):
         log("SnappyMail 下载失败，请检查网络后重试。")
         return 1
 
-    log("== 3/4 解压")
+    log("== 3/5 解压")
     php_dir = os.path.join(VENDOR, "php")
     snap_dir = os.path.join(VENDOR, "snappymail")
     extract_zip(php_zip, php_dir)
@@ -297,14 +428,26 @@ def main():
     extract_zip(snap_zip, snap_dir)
     log("  SnappyMail -> vendor/snappymail")
 
-    log("== 4/4 裁剪与配置")
+    log("== 4/5 裁剪与配置")
     trim_php(php_dir)
     with open(os.path.join(php_dir, "php.ini"), "w", encoding="utf-8", newline="\n") as f:
-        f.write(PHP_INI)
+        f.write(php_ini(php_ver))
     with open(os.path.join(php_dir, "router.php"), "w", encoding="utf-8", newline="\n") as f:
         f.write(ROUTER_PHP)
     with open(os.path.join(snap_dir, "include.php"), "w", encoding="utf-8", newline="\n") as f:
         f.write(SNAPPY_INCLUDE_PHP)
+
+    # CA 根证书（约 220KB，故 min_size 用小阈值）
+    cacert = os.path.join(php_dir, "cacert.pem")
+    if not download(CACERT_URLS, cacert, "Mozilla CA 根证书", min_size=100 * 1024):
+        log("CA 根证书下载失败：IMAP over SSL 将无法校验证书。请检查网络后重试。")
+        return 1
+
+    log("== 5/5 自检")
+    ok = verify_vendor(php_dir)
+    if not ok:
+        log("产物不完整，已中止（不要用它打包）。")
+        return 1
 
     shutil.rmtree(DL, ignore_errors=True)
 
