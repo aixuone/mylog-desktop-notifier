@@ -281,7 +281,7 @@ def main():
     if not os.path.isfile(_idx):
         log("  [失败] 缺少 SnappyMail 模板 Index.html")
         ok = False
-    elif "eb-mail-theme" not in io.open(_idx, encoding="utf-8", errors="replace").read():
+    elif "eb-mail-theme" not in open(_idx, encoding="utf-8", errors="replace").read():
         log("  [失败] Index.html 缺 eb-mail-theme 注入层（邮箱会显示原版界面）")
         ok = False
     else:
