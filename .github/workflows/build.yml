@@ -287,17 +287,23 @@ jobs:
 
       - name: Build / Sign / Notarize / Staple
         run: |
-          set -eo pipefail
+          set -o pipefail
           # 双保险：清掉 electron-builder 判定 PR 的唯一依据，
           # 不依赖 CSC_FOR_PULL_REQUEST 的行为是否随版本变化。
           unset GITHUB_BASE_REF
+          set +e
           npx electron-builder --mac --publish never 2>&1 | tee "$RUNNER_TEMP/build.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          # 构建成功留个标记，后面的诊断步骤据此决定要不要打注解（绿构建不该有黄标）
+          if [ "$rc" -eq 0 ]; then touch "$RUNNER_TEMP/build.ok"; fi
 
           # 宁可这里红叉，也不要发出一个 adhoc 签名的包。
           if grep -q "code signing will be skipped" "$RUNNER_TEMP/build.log"; then
             echo "::error::electron-builder 跳过了签名（仍会产出 adhoc 包），构建无效"
             exit 1
           fi
+          exit "$rc"
 
       # electron-builder 找不到身份时只 warning 不失败，必须主动核实它到底签没签。
       # job 日志需 admin 才能下载，注解有 10 条上限，所以关键信息写进
@@ -325,9 +331,12 @@ jobs:
           if summary:
               with open(summary, 'a', encoding='utf-8') as f:
                   f.write('## Signing diagnostics\n' + text + '\n')
-          # 日志末尾才是 electron-builder 的报错，转成 warning 注解（公开可读）
-          for l in [x.strip() for x in lines if x.strip()][-8:]:
-              print('::warning::' + l[:400])
+          # 只有构建真的失败时，才把日志末尾转成 warning 注解（公开可读）；
+          # 构建成功时打黄标只会让人误以为有问题。
+          _ok = os.path.exists(os.path.join(os.environ.get('RUNNER_TEMP', '/tmp'), 'build.ok'))
+          if not _ok:
+              for l in [x.strip() for x in lines if x.strip()][-8:]:
+                  print('::warning::' + l[:400])
           PY
 
       # ── 逐个二进制的签名详情，压缩成注解上报 ──
@@ -355,7 +364,8 @@ jobs:
               msg = ' ; '.join(picked)
               if not msg:
                   msg = raw.strip().replace('\n', ' ')[:220] or '无输出(rc=%d)' % r.returncode
-              print('::error::[%s] %s' % (os.path.relpath(t, app), msg[:380].replace('\n', ' ')))
+              # 这是「信息展示」不是失败：用 notice，避免绿色构建上挂一堆红叉注解
+              print('::notice::[%s] %s' % (os.path.relpath(t, app), msg[:380].replace('\n', ' ')))
           PY
 
       # ── 验收：把「公证没生效」变成明确红叉（x64 与 arm64 两份都验） ──
