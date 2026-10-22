@@ -869,26 +869,61 @@ function clearAgentRequestsFor(ws) {
 }
 
 // 置前主页面窗口，并可选地跳转到指定 url（SPA 路由跳转，不刷新页面）
-function focusMainWindow(url) {
+//
+// ⚠️ 2026-10 修复「点未读提醒进入会话，聊天记录空白」：
+//   url 由网页端拼成 `origin + '/message?conv=' + encodeURIComponent(convID)`。
+//   C2C 会话 id 形如 `C2Cadministrator`、群会话形如 `@TGS#aBcDe`，encode 后分别变成
+//   `C2Cadministrator` / `%40TGS%23aBcDe` —— **`:` `@` `#` `/` `?` `%` 在路径/查询里都可能被浏览器再解码一次**，
+//   一旦会话 id 被改写，网页端 setActiveConversation 找不到会话 → 右侧空白。
+//   （v5 → v6 换 IM SDK 后会话 id 口径变了，这个隐患才被暴露出来，见 docs 说明。）
+//   所以这里**不再靠字符串拼接猜会话 id**，而是把 convId 作为独立参数注入：
+//     · 优先用调用方直接给的 convId（通知中心从 unreadMap 里拿的原始会话 id，最权威）；
+//     · 否则从 url 里解析 `conv=` 再 decodeURIComponent；
+//     · history API 不经过 URL 规范化，`?conv=` 用原文（未 encode）写入；
+//     · 网页端优先读 `window.__MYLOG_FOCUS_CONV__`（最稳），读不到再退回 route.query.conv。
+//   仅当 url 与 convId 都没有时直接返回。
+function focusMainWindow(url, convId) {
   if (!mainPageWindow || mainPageWindow.isDestroyed()) return
   if (mainPageWindow.isMinimized()) mainPageWindow.restore()
   mainPageWindow.show()
   mainPageWindow.focus()
-  // 如果有 url，用 executeJavaScript 在页面内触发 SPA 路由跳转
-  // 网页端可能未处理 FOCUS_CONVERSATION 消息，直接用 history.pushState + popstate 最可靠
-  if (url) {
-    try {
-      mainPageWindow.webContents.executeJavaScript(
-        "(function(u){" +
-        "  try {" +
-        "    if (window.location.pathname + window.location.search === u.split('//')[1].split('/').slice(1).join('/')) return;" +
-        "    window.history.pushState({}, '', u);" +
-        "    window.dispatchEvent(new PopStateEvent('popstate'));" +
-        "  } catch(e) { window.location.href = u; }" +
-        "})(" + JSON.stringify(url) + ")"
-      )
-    } catch (e) { console.warn('[FocusMain] executeJavaScript failed:', e && e.message) }
-  }
+  const hint = convId ? String(convId) : ''
+  if (!url && !hint) return
+  try {
+    mainPageWindow.webContents.executeJavaScript(
+      '(function(full, hint){' +
+      '  try {' +
+      '    var u = full || "";' +
+      '    var cid = hint || "";' +
+      '    if (!cid) {' +
+      '      var m = /[?&]conv=([^&]*)/.exec(u);' +
+      '      var raw = m ? m[1] : "";' +
+      '      try { cid = raw ? decodeURIComponent(raw) : ""; } catch (e0) { cid = raw }' +
+      '    }' +
+      // origin 去掉后取 path（保留部署 base，如 /mylog-pc）
+      '    var path = u.replace(/^https?:\\/\\/[^/]+/i, "").replace(/\\?[^#]*$/, "");' +
+      '    if (!path || path.charAt(0) !== "/") path = "";' +
+      '    var target = cid ? ((path && path.indexOf("/message") !== -1 ? path : (path ? path.replace(/\\/[^\\/]*$/, "") : "") + "/message") || "/message") + "?conv=" + cid : (u.replace(/^https?:\\/\\/[^/]+/i, "") || "/message");' +
+      '    if (cid) window.__MYLOG_FOCUS_CONV__ = { conversationId: cid, at: Date.now() };' +
+      '    var cur = window.location.pathname + window.location.search;' +
+      // 已是同一个会话：不重复 pushState（相同 URL 不触发路由更新），改为派发事件让网页端聚焦。
+      // 判定只看 pathname 是否停在 /message + conv 是否一致（不比较 base，防止部署路径差异导致误判）。
+      '    var curConv = "";' +
+      '    try { curConv = new URLSearchParams(window.location.search).get("conv") || ""; } catch (e3) {}' +
+      '    if (cid && curConv === cid) {' +
+      '      try { window.dispatchEvent(new CustomEvent("mylog:focus-conversation", { detail: { conversationId: cid } })) } catch (e1) {}' +
+      '      return "same";' +
+      '    }' +
+      '    window.history.pushState({}, "", target);' +
+      '    window.dispatchEvent(new PopStateEvent("popstate"));' +
+      '    return "navigated:" + target;' +
+      '  } catch (e) {' +
+      '    try { window.location.href = full } catch (e2) {}' +
+      '    return "fallback";' +
+      '  }' +
+      '})(' + JSON.stringify(url || '') + ',' + JSON.stringify(hint) + ')'
+    ).catch((e) => { console.warn('[FocusMain] deep-link evaluate failed:', e && e.message) })
+  } catch (e) { console.warn('[FocusMain] executeJavaScript failed:', e && e.message) }
 }
 
 // ─── Safe open external ──
@@ -3232,7 +3267,7 @@ ipcMain.on('titlebar:menu', (e, key) => {
 // will-download 处理：落盘到用户下载目录 + 记录任务 + 广播进度/状态
 // 注意 fs/path 已在文件顶部 require（这里可直接使用）
 function handleWillDownload(event, item) {
-  const downDir = app.getPath('downloads')
+  const downDir = settingsStore.getDownloadDir()
   try { if (!fs.existsSync(downDir)) fs.mkdirSync(downDir, { recursive: true }) } catch (e) {}
   // 同名文件自动加序号 (1)/(2)…，避免覆盖已有文件
   let name = item.getFilename() || 'download'
@@ -3492,6 +3527,16 @@ function broadcastDownloads() {
     try { downloadsWindow.webContents.send('downloads-changed', publicDownloads()) } catch (e) {}
   }
 }
+// 标记某下载记录为「不可访问」（文件被移动/删除）：置灰 + 删除线展示，隐藏打开/打开所在目录按钮。
+// 既广播给面板即时刷新，也落盘使重启后保持不可访问状态。
+function markDownloadInaccessible(id) {
+  const d = downloads.find(x => x.id === id)
+  if (!d || d.inaccessible) return
+  d.inaccessible = true
+  broadcastDownloads()
+  try { settingsStore.persistDownloadHistory(downloads) } catch (e2) {}
+  try { if (mainPageWindow && !mainPageWindow.isDestroyed()) mainPageWindow.setMenu(buildWindowMenu()) } catch (e3) {}
+}
 // 向下载中心窗口推送「当前用户」信息（切换账号时刷新归属标识）
 function sendDownloadsUser() {
   if (downloadsWindow && !downloadsWindow.isDestroyed()) {
@@ -3525,25 +3570,87 @@ ipcMain.handle('downloads:current-user', () => ({
 }))
 ipcMain.handle('downloads:open', (e, id) => {
   const d = downloads.find(x => x.id === id)
-  if (d && fs.existsSync(d.savePath)) shell.openPath(d.savePath)
+  if (!d) return { ok: false, reason: '下载记录不存在' }
+  if (!d.savePath || !fs.existsSync(d.savePath)) {
+    markDownloadInaccessible(id) // 文件已不可访问：置灰 + 删除线，隐藏打开/打开所在目录
+    return { ok: false, reason: '文件已不存在（可能已被移动或删除）', inaccessible: true }
+  }
+  try {
+    // shell.openPath 返回 Promise<string>：空串=成功，非空=错误描述
+    return Promise.resolve(shell.openPath(d.savePath))
+      .then(err => err ? { ok: false, reason: err } : { ok: true })
+      .catch(e2 => ({ ok: false, reason: String((e2 && e2.message) || e2) }))
+  } catch (e2) { return { ok: false, reason: String((e2 && e2.message) || e2) } }
 })
 ipcMain.handle('downloads:open-folder', (e, id) => {
   const d = downloads.find(x => x.id === id)
-  if (d && fs.existsSync(d.savePath)) shell.showItemInFolder(d.savePath)
+  if (!d) return { ok: false, reason: '下载记录不存在' }
+  if (!d.savePath) return { ok: false, reason: '文件路径缺失' }
+  try {
+    if (fs.existsSync(d.savePath)) {
+      shell.showItemInFolder(d.savePath) // 同步：打开所在目录并选中文件
+      return { ok: true }
+    }
+    // 文件已不存在：标记不可访问，并退而打开所在文件夹（下载目录）便于用户自行查找
+    markDownloadInaccessible(id)
+    const dir = path.dirname(d.savePath)
+    if (fs.existsSync(dir)) { shell.openPath(dir); return { ok: true, note: '文件已不存在，已打开所在文件夹', inaccessible: true } }
+    return { ok: false, reason: '文件与所在文件夹均已不存在', inaccessible: true }
+  } catch (e2) { return { ok: false, reason: String((e2 && e2.message) || e2) } }
 })
 ipcMain.handle('downloads:open-in-browser', (e, id) => {
   const d = downloads.find(x => x.id === id)
-  if (!d || !d.url) return
+  if (!d || !d.url) return { ok: false, reason: '原始下载地址缺失' }
   let u
-  try { u = new URL(d.url) } catch (e2) { return }
+  try { u = new URL(d.url) } catch (e2) { return { ok: false, reason: '原始下载地址无效' } }
   // 仅允许 http/https 协议，避免 file:/data 等被滥用
-  if (u.protocol === 'http:' || u.protocol === 'https:') shell.openExternal(d.url)
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, reason: '仅支持 http/https 链接' }
+  try {
+    return Promise.resolve(shell.openExternal(d.url))
+      .then(() => ({ ok: true }))
+      .catch(e2 => ({ ok: false, reason: String((e2 && e2.message) || e2) }))
+  } catch (e2) { return { ok: false, reason: String((e2 && e2.message) || e2) } }
 })
 ipcMain.handle('downloads:cancel', (e, id) => {
   const d = downloads.find(x => x.id === id)
   if (d && d.item && typeof d.item.cancel === 'function') { try { d.item.cancel() } catch (err) {} }
 })
 ipcMain.handle('downloads:clear', () => { clearDownloads() })
+// 读取当前下载目录（未自定义则回落系统下载文件夹）
+ipcMain.handle('downloads:get-dir', () => settingsStore.getDownloadDir())
+// 弹出文件夹选择器，让用户更改下载目录（仅影响之后的下载）
+// 注意：必须用「无父窗口」写法（与 pick-ringtone 一致）。把 frameless + alwaysOnTop 的
+// 下载窗口当作父窗口传进去，在 Windows 上会导致模态对话框创建失败/抛错（表现为“更改位置失败”）。
+// 弹窗期间临时关闭 alwaysOnTop，确保对话框浮在下载窗口之上、可见可点。
+ipcMain.handle('downloads:pick-dir', async () => {
+  try {
+    const cur = settingsStore.getDownloadDir()
+    let defaultPath = cur
+    try { if (cur && fs.existsSync(cur)) defaultPath = cur } catch (e) {}
+    let restoreTop = false
+    try {
+      if (downloadsWindow && !downloadsWindow.isDestroyed() && downloadsWindow.isAlwaysOnTop()) {
+        downloadsWindow.setAlwaysOnTop(false)
+        restoreTop = true
+      }
+    } catch (e) {}
+    const res = await dialog.showOpenDialog({
+      title: '选择下载文件夹',
+      defaultPath: defaultPath,
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (restoreTop) { try { downloadsWindow.setAlwaysOnTop(true) } catch (e) {} }
+    if (res.canceled || !res.filePaths || !res.filePaths.length) return { ok: false, canceled: true }
+    const dir = res.filePaths[0]
+    try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }) } catch (e2) {}
+    settingsStore.setDownloadDir(dir)
+    // 切换下载目录后，广播一次让下载中心界面刷新展示
+    try { if (downloadsWindow && !downloadsWindow.isDestroyed()) downloadsWindow.webContents.send('downloads-dir-changed', dir) } catch (e3) {}
+    return { ok: true, dir }
+  } catch (err) {
+    return { ok: false, reason: String((err && err.message) || err) }
+  }
+})
 
 // ─── Email (阿里企业邮箱：收件 + 查看) ──────────────
 // 阿里云报错翻译成中文，降低用户困惑

@@ -151,6 +151,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloadsCancel: (id) => ipcRenderer.invoke('downloads:cancel', id),
   /** 清空已完成/失败/取消的任务记录 */
   downloadsClear: () => ipcRenderer.invoke('downloads:clear'),
+  /** 读取当前下载目录 */
+  downloadsGetDir: () => ipcRenderer.invoke('downloads:get-dir'),
+  /** 弹出文件夹选择器更改下载目录（返回 { ok, dir } 或 { ok:false, canceled:true }） */
+  downloadsPickDir: () => ipcRenderer.invoke('downloads:pick-dir'),
+  /** 订阅下载目录变更（主进程更改后推送新路径） */
+  onDownloadsDirChanged: (callback) => ipcRenderer.on('downloads-dir-changed', (_, dir) => callback(dir)),
   /** 订阅下载列表实时变化（进度/状态） */
   onDownloadsChanged: (callback) => ipcRenderer.on('downloads-changed', (_, list) => callback(list)),
   /** 获取当前登录用户（用于下载记录归属显示） */

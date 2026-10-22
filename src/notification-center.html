@@ -202,25 +202,22 @@ if (!api) {
       sysp.forEach(function (id) { html += sysCardHtml(sysAlerts[id]) })
     }
 
-    // 只展示「本次触发弹窗的那条」未读消息：优先 focusId，找不到再按时间倒序取最新；
-    // 其余未读会话只保留在通知中心列表里（不在弹窗中陈列），避免残留其它会话内容。
+    // 展示本次「展示期」内的全部未读会话：同一批接连进来的多条一起累加，
+    // 最新触发的会话（focusId）置顶，其余按时间倒序。窗口高度随条目增加，
+    // 主进程按 nc-resize 回传的真实高度调整（已可见时只做高度微调，不重播入场动画）。
     var activeUnread = unreadList.filter(function (it) { return (it.count || 0) > 0 })
       .sort(function (a, b) { return (b.time || 0) - (a.time || 0) })
-
+    if (focusId) {
+      var fi = -1
+      for (var k = 0; k < activeUnread.length; k++) {
+        if (activeUnread[k].conversationId === focusId) { fi = k; break }
+      }
+      if (fi > 0) { var moved = activeUnread.splice(fi, 1)[0]; activeUnread.unshift(moved) }
+    }
+    // 超出可视高度的靠列表自身滚动（.list 已有 max-height + overflow-y）
     if (activeUnread.length > 0) {
-      var head = null
-      if (focusId) {
-        head = activeUnread.filter(function (it) { return it.conversationId === focusId })[0] || null
-      }
-      if (!head) head = activeUnread[0]
       html += '<div class="section-title">会话</div>'
-      html += convHtml(head)   // 仅渲染这一条
-      var rest = activeUnread.reduce(function (s, it) {
-        return s + (it.conversationId === head.conversationId ? 0 : (it.count || 1))
-      }, 0)
-      if (rest > 0) {
-        html += '<div class="more-footer" id="more-footer">还有 ' + rest + ' 条未读消息</div>'
-      }
+      activeUnread.forEach(function (it) { html += convHtml(it) })
     }
 
     if (sysp.length === 0 && activeUnread.length === 0) {
@@ -232,12 +229,6 @@ if (!api) {
     // 不用 requestAnimationFrame —— 隐藏窗口的 rAF 会被节流，导致高度回传延迟、
     // 主进程只能用占位高度先 show，进而出现「先长后短」的闪动。
     resizeWindow()
-
-    // "还有更多" 点击 → 标记全部已读（简化：直接清空）
-    var moreBtn = document.getElementById('more-footer')
-    if (moreBtn) {
-      moreBtn.addEventListener('click', function () { api.markRead('all') })
-    }
   }
 
   function resizeWindow() {
