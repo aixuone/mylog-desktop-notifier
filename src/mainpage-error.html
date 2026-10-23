@@ -40,20 +40,49 @@
     var reason = q.get('reason') || ''
     var home = q.get('home') || ''
     var btn = document.getElementById('retry')
+    var titleEl = document.querySelector('.title')
+    var iconEl = document.querySelector('.icon')
+    var descEl = document.getElementById('url')
+
+    /**
+     * 回到主页。
+     * ★ 必须走主进程（preload 暴露的 retryMainPage），不能用 window.location.href = home：
+     *   本页是 file:// 页面，跨协议导航到 https 会再次触发主窗口的 will-navigate，
+     *   守卫把"从错误页跳出站点"又判一次（home 与主页同站能过，但依赖 file:// 的
+     *   来源判定，历史上出现过点了没反应），交给主进程 loadURL 最可靠。
+     */
+    function goHome() {
+      if (window.mylogErr && typeof window.mylogErr.retryMainPage === 'function') {
+        window.mylogErr.retryMainPage(home)
+        return
+      }
+      if (home) { window.location.href = home; return }
+      // 兜底：主进程没给 home（老版本错误页链接 / 参数被截断）。绝不回落到 url——
+      // 那正是加载失败、或者被带到站外的那个地址，重试只会再失败一次。
+      try { window.location.href = '/' } catch (e) {}
+    }
+
     if (reason === 'blocked') {
       // 主页首屏就被重定向到站外（如 patrol.tygps.com）时，主窗口不允许加载该站点，
       // 这里给出说明而不是留一个空白窗口；按钮直接回主页，避免用户手动改地址。
       document.title = '已阻止打开外部页面'
-      document.querySelector('.title').textContent = '已阻止打开外部页面'
-      document.querySelector('.icon').textContent = '🛡️'
-      document.getElementById('url').textContent = url
+      titleEl.textContent = '已阻止打开外部页面'
+      iconEl.textContent = '🛡️'
+      descEl.textContent = url
         ? ('该地址不属于主页所在站点，已阻止在主窗口中打开：' + url)
         : '目标地址不属于主页所在站点，已阻止在主窗口中打开'
       btn.textContent = '返回主页'
-      btn.onclick = function () { if (home) window.location.href = home }
+      btn.onclick = goHome
     } else {
-      document.getElementById('url').textContent = url ? ('地址：' + url) : ''
-      btn.onclick = function () { if (url) window.location.href = url }
+      // ★ 关键：超时 / 加载失败 / 崩溃都不能再重试「当初失败的那个地址」。
+      //   线上事故：主窗口被带到 patrol.tygps.com（站外）后加载不出来 → 20s 超时 → 本页 →
+      //   点「重试」又去加载那个站外地址 → 再超时 → 死循环，用户永远回不到默认主页。
+      //   现在一律回主页（真实主页地址），「重试」与「返回主页」是同一个动作。
+      var why = reason === 'timeout' ? '（加载超时）' : reason === 'crash' ? '（页面异常退出）' : ''
+      document.title = '无法打开主页'
+      descEl.textContent = url ? ('地址：' + url + why) : why
+      btn.textContent = '重试'
+      btn.onclick = goHome
     }
   </script>
 </body>

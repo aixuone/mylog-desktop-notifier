@@ -5,6 +5,15 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 console.log('[Preload] Loaded')
 
+// ─── 错误页专用桥（mainpage-error.html）────────────────────────────
+// 错误页是 file:// 页面，「回主页」不能用 window.location.href 跨协议跳转
+// （会再走一次主窗口导航守卫，历史上出现过点了没反应）。改由主进程 loadURL。
+// 单独暴露一个小对象，不往 electronAPI 里塞，避免网页侧拿到"能换主窗口地址"的能力。
+contextBridge.exposeInMainWorld('mylogErr', {
+  /** 让主进程把主窗口导航到主页（忽略传入值也会回落到配置里的主页地址） */
+  retryMainPage: (home) => ipcRenderer.send('mainpage-retry', typeof home === 'string' ? home : ''),
+})
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Call window ──────────────────────────────
   /** Send user action (accept/reject/ignore/timeout) for audio/video calls */
@@ -40,6 +49,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onToastData: (callback) => ipcRenderer.on('toast-data', (_, data) => callback(data)),
 
   // ─── Notification center window ──────────────
+  /** 全量状态快照（唯一数据源：unread / sysAlerts / focusId / settings）。
+   *  通知中心 v2 起只认这一条，旧的分通道事件（nc-init/nc-unread/...）保留仅为兼容。 */
+  onNcState: (callback) => ipcRenderer.on('nc-state', (_, data) => callback(data)),
+  /** 主进程要求立即回传真实内容高度（show 前调用，保证以最终高度一次性出现） */
+  onNcMeasure: (callback) => ipcRenderer.on('nc-measure', () => callback()),
   /** 首帧初始化数据 */
   onNcInit: (callback) => ipcRenderer.on('nc-init', (_, data) => callback(data)),
   /** 会话未读列表刷新 */
@@ -67,6 +81,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeNc: (force) => ipcRenderer.send('nc-close', !!force),
   /** 动态调整通知中心高度 */
   resizeNc: (height) => ipcRenderer.send('nc-resize', height),
+  /** 渲染层日志回传：渲染进程的异常主进程看不到，必须送回主进程落盘（logs/notify-*.log） */
+  ncLog: (msg) => ipcRenderer.send('nc-log', String(msg)),
 
   // ─── Settings window ─────────────────────────
   /** 读取全部设置（invoke，返回 { settings, presets, names, localRingtones, contacts }） */

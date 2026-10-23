@@ -22,6 +22,7 @@ const emailCreds = require('./lib/emailCreds')
 const emailClient = require('./lib/emailClient')
 const emailSender = require('./lib/emailSender')
 const phpServer = require('./lib/phpServer')
+const appLog = require('./lib/appLog')
 
 // ─── Single instance lock ──────────────────────────
 // Prevent multiple instances of the notifier from running,
@@ -838,6 +839,17 @@ function hasAppClient() {
   return Array.from(connectedClients.values()).some(u => u.isAppWindow && u.connected)
 }
 
+// 多客户端消歧：桌面主窗口在线时，忽略外部浏览器标签页发来的「消息/未读」事件。
+// 同一个账号同时开在两个客户端时，两边各自维护 conversation.unreadCount 并发全量下发，
+// 桌面端会看到数字在 3/1/3/1 之间来回跳（表现为提醒框里的未读数闪动）。
+// 只屏蔽这两类事件：MARK_READ 等用户主动行为仍然全客户端生效。
+function isMirrorClient(ws) {
+  const e = connectedClients.get(ws)
+  if (!e) return false
+  if (e.isAppWindow) return false
+  return hasAppClient()
+}
+
 // ─── Agent 中继（WorkBuddy 连接器 ↔ 应用窗口）──────────────
 // 无 token：WS 仅绑 127.0.0.1，本地边界由该绑定 + 文件 ACL 提供。
 // Agent 连接通过 REGISTER 时 browserType==='agent' 标识，不另设鉴权。
@@ -1308,6 +1320,17 @@ function updateTrayMenu() {
     },
   })
   menuItems.push({ type: 'separator' })
+  // 日志目录：排查「没有消息提示」时可直接把最新日志发给开发
+  menuItems.push({
+    label: '打开日志目录',
+    click: () => {
+      try {
+        const d = appLog.getDir()
+        console.log('[TrayMenu] open log dir:', d)
+        if (d) shell.openPath(d)
+      } catch (e) { console.error('[TrayMenu] open log dir failed:', e) }
+    },
+  })
   menuItems.push({ label: '设置', click: () => openSettingsWindow() })
   menuItems.push({
     label: '开机自启',
@@ -1708,6 +1731,15 @@ function startHttpServer(callback) {
 // 真退出由菜单「退出」或 Cmd+Q 触发 isQuitting 控制。
 
 app.whenReady().then(() => {
+  // ── 关键日志落盘（排查「没有消息提示」类问题）──
+  // 打包后没有可见 stdout，只能让 [NC]/[WS]/[Dedup]/[NCR] 等前缀的日志留在磁盘上。
+  // 位置：%APPDATA%\mylog-desktop-notifier\logs\notify-YYYYMMDD.log
+  try {
+    const logInfo = appLog.init(app.getPath('userData'))
+    appLog.patchConsole()
+    appLog.log('Log', 'file=' + logInfo.file)
+  } catch (e) {}
+
   // Windows 系统通知（下载完成等）必须设置 AppUserModelId，否则 Notification 不显示
   try { app.setAppUserModelId('com.tianyuan.mylog.desktop-notifier') } catch (e) {}
 
@@ -1851,6 +1883,10 @@ app.on('before-quit', () => {
 // ─── System tray ──────────────────────────────────────────
 let mainPageWindow = null
 const MAIN_PAGE_DEFAULT = 'https://data.tygps.com/mylog-pc/'
+// 主窗口「远程主页加载超时」计时器。★ 必须是模块级：错误页的 mainpage-retry 处理器在顶层，
+//   之前它引用了 openMainPage() 里的同名局部变量 → ReferenceError → 点「重试」直接弹
+//   "A JavaScript error occurred in the main process"。
+let mainLoadTimer = null
 
 // 读取/保存主页面窗口尺寸与位置（记忆上次状态，首次才用默认 1300x700）
 function loadMainPageBounds() {
@@ -1943,6 +1979,48 @@ function setAutoStart(v) {
 // 本次启动是否由「开机自启」带 --hidden 触发（仅进程启动时判定一次）
 const LAUNCHED_HIDDEN = process.argv.includes('--hidden')
 
+// ─── 主窗口加载超时兜底（首次加载与错误页「重试」共用）──────────────
+// 20s 内没加载完（卡死/超慢/挂起）就兜底，避免无限空白。
+// 注意：站点判定用 homeUrl()/inMainSite() 实时读配置，这里不缓存主机名。
+function armMainLoadTimeout(expectUrl) {
+  if (mainLoadTimer) { clearTimeout(mainLoadTimer); mainLoadTimer = null }
+  mainLoadTimer = setTimeout(() => {
+    mainLoadTimer = null
+    if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+    const cur = mainPageWindow.webContents.getURL() || ''
+    if (cur.indexOf('mainpage-error') !== -1) return
+    const home = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
+    const special = /^(about|data|blob|devtools|chrome-extension):/i.test(cur)
+    // 当前页已离开主页站点（被换站/被带到站外且加载不出来）→ 直接拉回主页，
+    // 不要给一张"重试站外地址"的错误页：用户要的是回到 e日志，而不是继续等那个站点。
+    const sameHost = (() => {
+      try {
+        const a = new URL(cur), b = new URL(home)
+        return a.hostname.toLowerCase() === b.hostname.toLowerCase() && (a.port || '') === (b.port || '')
+      } catch (e) { return false }
+    })()
+    if (cur && !special && cur.indexOf('file://') !== 0 && !sameHost) {
+      console.warn('[MainPage] 当前页已离开主页站点且加载超时，直接回到主页:', cur)
+      mainPageWindow.loadURL(home)
+      return
+    }
+    console.warn('[MainPage] 远程主页加载超时，显示错误页')
+    // ★ 错误页必须带 home：错误页的「重试」要回主页，而不是重试一个加载不出来的地址。
+    mainPageWindow.loadURL('file://' + path.join(__dirname, 'src', 'mainpage-error.html') +
+      '?url=' + encodeURIComponent(cur || expectUrl || home) +
+      '&reason=timeout&home=' + encodeURIComponent(home))
+  }, 20000)
+  // 加载结束（成功或失败）就收掉计时器。用 on 而非 once：重试会重新 arm，
+  // once 只生效一次会导致后续加载完全没有兜底。
+  const wc = mainPageWindow.webContents
+  if (!wc.__mainLoadStopBound) {
+    wc.__mainLoadStopBound = true
+    wc.on('did-stop-loading', () => {
+      if (mainLoadTimer) { clearTimeout(mainLoadTimer); mainLoadTimer = null }
+    })
+  }
+}
+
 function openMainPage() {
   const rawUrl = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
   // 规范化 + 安全上下文升级：
@@ -1976,7 +2054,6 @@ function openMainPage() {
   }
 
   const b = loadMainPageBounds()
-  let mainLoadTimer = null
   mainPageWindow = new BrowserWindow({
     ...(b ? { x: b.x, y: b.y, width: b.width, height: b.height } : { width: 1300, height: 700, center: true }),
     minWidth: 800,
@@ -2121,6 +2198,8 @@ function openMainPage() {
   //   true＝还要求目标 path 落在主页地址所在目录内（如只许 /mylog-pc/ 下的页面）。
   //   默认不收紧的原因：线上存在 /login、/sso 这类主页目录之外的同站跳转，收紧会把登录流程一起拦死。
   const STRICT_DIR_SCOPE = false
+  // 当前配置里的主页地址（错误页「重试」要回到这里）。每次实时读，改设置后立即生效。
+  const homeUrl = () => (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
   const mainSite = () => {
     const raw = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
     try {
@@ -2132,11 +2211,24 @@ function openMainPage() {
       return { host: u.hostname.toLowerCase().replace(/\.$/, ''), port: u.port || '', dir }
     } catch (e) { return null }
   }
+  // 本地开发地址：localhost / 127.0.0.1 / [::1]（任意端口）始终视为「站内」。
+  // 理由：主窗口通常配的是生产地址（如 data.tygps.com），但开发/联调时必须能切到本地
+  // dev server（vite 5173，且端口可能漂移），否则每次都要改设置、还会被跨站守卫拦成错误页。
+  // 安全边界：目标仍是本机回环地址，不属于「外部站点」，不会把主窗口带到任意公网页面。
+  const isLocalDevUrl = (target) => {
+    try {
+      const u = new URL(target)
+      if (!/^https?:$/i.test(u.protocol)) return false
+      const h = u.hostname.toLowerCase().replace(/\.$/, '')
+      return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]'
+    } catch (e) { return false }
+  }
   const inMainSite = (target) => {
     if (!target) return false
     let u
     try { u = new URL(target) } catch (e) { return false }
     if (!/^https?:$/i.test(u.protocol)) return false
+    if (isLocalDevUrl(target)) return true      // 本地开发地址一律放行
     const site = mainSite()
     if (!site) return false
     if (u.hostname.toLowerCase().replace(/\.$/, '') !== site.host) return false
@@ -2169,15 +2261,21 @@ function openMainPage() {
     }
     event.preventDefault()
     console.warn('[MainPage] 已阻止跨站' + kind + ':', target, '| 允许站点:', (mainSite() || {}).host || '(未配置)')
-    // 首屏就被带去站外时页面还没有任何内容，别把用户留在空白窗口——给一张可读的说明页
+    // 用户手上有活页（已正常打开主页）时，跨站跳转一律"外面开、主页不动"：
+    //   站外地址不是没法访问，只是不该把 e日志 主窗口换掉——主窗口一丢，IM/会议/画板全部脱节，
+    //   而且网页侧可能已经把内存状态（正在编辑的内容、未发送草稿）一并带走。
+    //   注意：这里不做站点白名单，只影响"在哪打开"，与 setWindowOpenHandler 的口径一致。
     try {
       const cur = mainPageWindow.webContents.getURL() || ''
-      if (!cur || cur === 'about:blank' || cur.indexOf('splash.html') !== -1) {
-        const home = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
+      const hasLivePage = cur && cur !== 'about:blank' && cur.indexOf('splash.html') === -1 && cur.indexOf('mainpage-error') === -1
+      if (hasLivePage && /^https?:/i.test(target)) {
+        shell.openExternal(target)
+      } else if (!hasLivePage) {
+        // 首屏就被带去站外时页面还没有任何内容，别把用户留在空白窗口——给一张可读的说明页
         mainPageWindow.loadURL('file://' + path.join(__dirname, 'src', 'mainpage-error.html') +
-          '?reason=blocked&home=' + encodeURIComponent(home) + '&url=' + encodeURIComponent(target))
+          '?reason=blocked&home=' + encodeURIComponent(homeUrl()) + '&url=' + encodeURIComponent(target))
       }
-    } catch (e) { console.warn('[MainPage] 加载拦截说明页失败:', e && e.message) }
+    } catch (e) { console.warn('[MainPage] 处理跨站跳转失败:', e && e.message) }
   }
   try {
     mainPageWindow.webContents.on('will-navigate', guardMainFrameNav('跳转'))
@@ -2261,7 +2359,8 @@ function openMainPage() {
       if (mainPageWindow.getURL() !== fu) mainPageWindow.loadURL(fu)
       return
     }
-    const errPage = 'file://' + path.join(__dirname, 'src', 'mainpage-error.html') + '?url=' + encodeURIComponent(validatedURL || url)
+    const errPage = 'file://' + path.join(__dirname, 'src', 'mainpage-error.html') +
+      '?url=' + encodeURIComponent(validatedURL || url) + '&home=' + encodeURIComponent(homeUrl())
     // 防递归：错误页自身加载失败时不再二次 load（避免无限循环空白）
     if (mainPageWindow.getURL() !== errPage) mainPageWindow.loadURL(errPage)
   })
@@ -2270,7 +2369,8 @@ function openMainPage() {
     console.error('[MainPage] 渲染进程崩溃:', details && details.reason)
     if (mainLoadTimer) { clearTimeout(mainLoadTimer); mainLoadTimer = null }
     if (mainPageWindow && !mainPageWindow.isDestroyed()) {
-      const errPage = 'file://' + path.join(__dirname, 'src', 'mainpage-error.html') + '?url=' + encodeURIComponent(url) + '&reason=crash'
+      const errPage = 'file://' + path.join(__dirname, 'src', 'mainpage-error.html') +
+        '?url=' + encodeURIComponent(url) + '&reason=crash&home=' + encodeURIComponent(homeUrl())
       if (mainPageWindow.getURL() !== errPage) mainPageWindow.loadURL(errPage)
     }
   })
@@ -2302,16 +2402,8 @@ function openMainPage() {
     // splash 已就绪，转去加载真正的远程主页（后台加载，完成即替换内容，无白屏）
     if (mainPageWindow && !mainPageWindow.isDestroyed()) {
       mainPageWindow.loadURL(url)
-      // 加载超时兜底：远程主页 20s 内未完成（卡死/超慢/挂起）则显示错误页，避免无限空白
-      if (mainLoadTimer) clearTimeout(mainLoadTimer)
-      mainLoadTimer = setTimeout(() => {
-        if (!mainPageWindow || mainPageWindow.isDestroyed()) return
-        const cur = mainPageWindow.webContents.getURL() || ''
-        if (cur.indexOf('mainpage-error') !== -1) return
-        console.warn('[MainPage] 远程主页加载超时，显示错误页')
-        mainPageWindow.loadURL('file://' + path.join(__dirname, 'src', 'mainpage-error.html') + '?url=' + encodeURIComponent(url) + '&reason=timeout')
-      }, 20000)
-      mainPageWindow.webContents.once('did-stop-loading', () => { if (mainLoadTimer) { clearTimeout(mainLoadTimer); mainLoadTimer = null } })
+      // 加载超时兜底（逻辑见 armMainLoadTimeout，重试路径也复用它）
+      armMainLoadTimeout(url)
     }
   })
 }
@@ -2420,7 +2512,13 @@ function startWSServer() {
 
 // ─── Handle browser messages ──────────────────────────
 function handleBrowserMessage(ws, msg) {
-  console.log('[WS] Message:', msg.type, msg.payload)
+  // payload 必须序列化后再打：直接传对象会输出 [object Object]，排查时等于没日志
+  try {
+    const raw = JSON.stringify(msg.payload || {})
+    console.log('[WS] Message:', msg.type, raw.length > 800 ? raw.slice(0, 800) + '…' : raw)
+  } catch (e) {
+    console.log('[WS] Message:', msg.type, '(unserializable)')
+  }
 
   switch (msg.type) {
     case 'REGISTER':
@@ -2461,13 +2559,30 @@ function handleBrowserMessage(ws, msg) {
       }
       break
 
-    case 'SHOW_MESSAGE_NOTIFICATION':
-      if (isDuplicateToast(msg.payload?.conversationId, msg.payload?.content)) {
+    case 'SHOW_MESSAGE_NOTIFICATION': {
+      const p = msg.payload || {}
+      // 每一次消息都留痕（含判定结果）：排查「没提醒」时先看这一行在不在
+      const mirror = isMirrorClient(ws)
+      console.log('[NC] SHOW_MESSAGE_NOTIFICATION cid=', p.conversationId,
+        '| count=', p.unreadCount, '| muted=', !!p.muted,
+        '| mirror=', mirror, '| hasAppClient=', hasAppClient())
+      // 桌面主窗口在线时，外部浏览器标签页的消息不再驱动提醒（避免双端未读数互相覆盖）
+      if (mirror) {
+        console.log('[Dedup] Ignore message notify from mirror client (app window is online)')
+        break
+      }
+      // 去重只在「没有权威未读数」时启用（兼容老版本网页）。
+      // ★ 有 unreadCount 时绝不能按「会话+内容」去重：同一个人连发几条相同的「好的」，
+      //   3s 窗口内后几条会被当成重复直接丢掉 —— 表现为未读数不涨、提醒不弹。
+      //   有权威值时重复推送本身就是幂等的（计数被归一、响铃按会话去重）。
+      const hasAuthCount = (typeof p.unreadCount === 'number' && p.unreadCount > 0)
+      if (!hasAuthCount && isDuplicateToast(p.conversationId, p.content)) {
         console.log('[Dedup] Skip duplicate toast')
         return
       }
-      if (notificationCenter) notificationCenter.pushMessage(msg.payload || {})
+      if (notificationCenter) notificationCenter.pushMessage(p)
       break
+    }
 
     case 'SYNC_CONTACTS':
       if (notificationCenter && Array.isArray(msg.payload?.contacts)) {
@@ -2478,6 +2593,10 @@ function handleBrowserMessage(ws, msg) {
 
     // 网页端实时下发的权威未读状态（IM SDK 真实未读数），桌面端以此为准重建聚合
     case 'SYNC_UNREAD':
+      if (isMirrorClient(ws)) {
+        console.log('[Dedup] Ignore SYNC_UNREAD from mirror client (app window is online)')
+        break
+      }
       if (notificationCenter && Array.isArray(msg.payload?.items)) {
         notificationCenter.syncUnread(msg.payload.items)
         console.log('[WS] Synced unread from web:', msg.payload.items.length, 'items')
@@ -2878,6 +2997,11 @@ function focusMainPage() {
 }
 
 // ─── IPC handlers ─────────────────────────────────────
+// 通知中心渲染层的日志（渲染进程异常无法被主进程看到，必须回传落盘）
+ipcMain.on('nc-log', (event, msg) => {
+  try { console.log('[NCR]', String(msg).slice(0, 2000)) } catch (e) {}
+})
+
 ipcMain.on('call-action', (event, action) => {
   console.log('[IPC] Call action:', action)
   // 接听：把网页窗口拉到最前（拒绝/超时无需处理）
@@ -3065,6 +3189,34 @@ ipcMain.handle('navigate-mainpage', (event, url) => {
 
 // 设置面板「通用」页拉取当前在线用户列表（与托盘菜单一致）
 ipcMain.handle('tray-users-get', () => getTrayUsersData())
+
+// 错误页（mainpage-error.html）的「重试 / 返回主页」。
+// ★ 只接受「主页同站点」的地址，其余一律回落到配置里的主页地址——错误页是 file:// 页面，
+//   若不校验，网页侧只要能把人带到错误页就能借这个通道把主窗口导航到任意站点。
+ipcMain.on('mainpage-retry', (event, requested) => {
+  if (!mainPageWindow || mainPageWindow.isDestroyed()) return
+  const home = (settingsStore.get() && settingsStore.get().mainPageUrl) || MAIN_PAGE_DEFAULT
+  let target = home
+  // 只接受字符串：渲染进程可以传任意类型（对象/数字/undefined），直接 .trim() 会抛异常
+  const want = typeof requested === 'string' ? requested.trim() : ''
+  if (want) {
+    try {
+      const a = new URL(want), b = new URL(home)
+      const sameHost = a.hostname.toLowerCase() === b.hostname.toLowerCase() && (a.port || '') === (b.port || '')
+      if (/^https?:$/i.test(a.protocol) && sameHost) target = want
+    } catch (e) {}
+  }
+  console.log('[MainPage] 错误页请求重试 →', target)
+  // ★ 这里只能碰模块级的 mainLoadTimer / armMainLoadTimeout()。
+  //   曾经写成引用 mainLoadTimer，而它当时是 openMainPage() 的局部变量 → 本处理器在
+  //   模块顶层，作用域里没有它 → ReferenceError: mainLoadTimer is not defined →
+  //   点「重试」直接弹 "A JavaScript error occurred in the main process"，页面毫无反应。
+  mainPageWindow.loadURL(target)
+  // 重新武装超时兜底：重试也可能再次超时，不能让它变成无边界的等待
+  armMainLoadTimeout(target)
+  if (!mainPageWindow.isVisible()) mainPageWindow.show()
+  mainPageWindow.focus()
+})
 
 // ─── Settings window singleton ────────────────────
 // tab: 可选，传入则打开后直接跳转到对应面板（general/ringtone/contacts）
@@ -3691,14 +3843,22 @@ function startEmailSync(force) {
       refreshEmailUnread() // 新邮件到达立即刷新角标
     } catch (e) {}
   }, (st) => {
-    // 同步状态 → 托盘菜单；首次失败弹一次系统通知（避免重复轰炸）
+    // 同步状态 → 托盘菜单；同一类失败「只提示一次」（跨启动持久化抑制），
+    // 避免授权码失效等持久故障每次打开都弹窗轰炸；错误类别变化或连接成功（online）
+    // 后才解除抑制。失败状态始终可在托盘菜单查看，故弹窗仅作一次性提醒。
     emailSyncState = st || { state: 'off', error: null, at: Date.now() }
     try { updateTrayMenu() } catch (e) {}
-    if (emailSyncState.state === 'error' && !emailSyncErrorNotified) {
-      emailSyncErrorNotified = true
-      notify('邮件同步失败', (emailSyncState.error || '未知错误') + '｜可在托盘菜单重试', true)
+    if (emailSyncState.state === 'error') {
+      if (!emailSyncErrorNotified && !emailErrorToastSuppressed(emailSyncState.error)) {
+        emailSyncErrorNotified = true
+        notify('邮件同步失败', (emailSyncState.error || '未知错误') + '｜可在托盘菜单重试', true)
+        recordEmailErrorToast(emailSyncState.error)
+      }
     }
-    if (emailSyncState.state === 'online') emailSyncErrorNotified = false
+    if (emailSyncState.state === 'online') {
+      emailSyncErrorNotified = false
+      clearEmailErrorToastRecord()
+    }
   }).catch((e) => {
     emailSyncStarted = false
     emailSyncState = { state: 'error', error: (e && e.message) || String(e), at: Date.now() }
@@ -3709,9 +3869,38 @@ function startEmailSync(force) {
 
 // ─── 邮件同步状态（托盘透出）+ 未读角标 ───
 let emailSyncState = { state: 'off', error: null, at: 0 }
+// 本次会话内是否已为「当前错误类别」弹过系统通知（同会话去重）
 let emailSyncErrorNotified = false
 let emailUnreadCount = 0
 let emailUnreadTimer = null
+
+// ─── 邮箱同步失败弹窗「跨启动只提示一次」──
+// 按错误类别（auth/network/other）持久化到 settings.email.syncErrorNotifiedSignature：
+// 同一类持久故障不再每次启动弹窗；类别变化或连接成功（online）后才重新提示一次。
+function emailErrorCategory(msg) {
+  const m = String(msg || '')
+  if (/认证失败|授权码|LOGIN failed|Authentication failed|Invalid credentials/i.test(m)) return 'auth'
+  if (/无法连接|网络|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|timeout|Certificate|SSL|TLS/i.test(m)) return 'network'
+  return 'other'
+}
+function emailErrorToastSuppressed(msg) {
+  const e = (settingsStore.get() && settingsStore.get().email) || {}
+  return e.syncErrorNotifiedSignature === emailErrorCategory(msg)
+}
+function recordEmailErrorToast(msg) {
+  const s = settingsStore.get()
+  const e = Object.assign({}, s.email || {})
+  e.syncErrorNotifiedSignature = emailErrorCategory(msg)
+  settingsStore.set({ email: e })
+}
+function clearEmailErrorToastRecord() {
+  // 注意：settingsStore 的 deepMerge 不会删除旧 key，故用 null 覆盖（null 可正常覆盖），
+  // 使后续同类错误重新获得「提示一次」的机会（例如用户修复授权码后再次失败）。
+  const s = settingsStore.get()
+  const e = Object.assign({}, s.email || {})
+  e.syncErrorNotifiedSignature = null
+  settingsStore.set({ email: e })
+}
 
 // 带点击跳转的新邮件通知：点系统通知直接打开邮箱窗
 function notifyNewMail(title, body) {

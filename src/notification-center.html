@@ -2,8 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-<title>通知中心</title>
+<title>消息通知</title>
 <style>
 @font-face {
   font-family: 'System UI';
@@ -13,6 +12,7 @@
        local(system-ui), local(sans-serif);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
 body {
   font-family: 'System UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
   background: #F5F6F8;
@@ -20,23 +20,17 @@ body {
   -webkit-font-smoothing: antialiased;
   color: #2C2C2A;
 }
-#app {
-  width: 100%; height: 100%;
-  display: flex; flex-direction: column;
-  background: #F5F6F8;
-}
+#app { width: 100%; height: 100%; display: flex; flex-direction: column; background: #F5F6F8; }
 
-/* Header (NOT draggable - fixed position) */
+/* ── Header ── */
 .header {
-  height: 48px; flex-shrink: 0;
+  height: 48px; flex: 0 0 48px;
   display: flex; align-items: center; gap: 8px;
   padding: 0 14px;
   background: #ffffff;
   border-bottom: 1px solid #ECECEC;
 }
-.header .header-icon {
-  width: 20px; height: 20px; border-radius: 4px; flex-shrink: 0;
-}
+.header .header-icon { width: 20px; height: 20px; border-radius: 4px; flex-shrink: 0; }
 .header .title { font-size: 15px; font-weight: 600; }
 .header .badge {
   font-size: 11px; color: #fff; background: #E8453C;
@@ -49,55 +43,79 @@ body {
   cursor: pointer; -webkit-app-region: no-drag; font-family: inherit;
   transition: background 0.15s;
 }
-.header .btn:hover { background: #E0DDD6; }
 .header .btn.close { background: transparent; font-size: 16px; padding: 2px 8px; }
+.header .btn.close:hover { background: #E8E6E1; }
 
-/* List */
+/* ── List ──
+   max-height 保证窗口封顶时内部滚动；高度由主进程按实测值 setBounds。 */
 .list {
-  flex: 1; overflow-y: auto; padding: 10px 10px 0;
-  max-height: 380px; min-height: 60px;
-}
-.section-title {
-  font-size: 11px; color: #9A9893; margin: 6px 4px 6px;
-  font-weight: 600; letter-spacing: 0.5px;
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 10px 10px 10px;
+  max-height: 472px;
 }
 .list::-webkit-scrollbar { width: 6px; }
 .list::-webkit-scrollbar-thumb { background: #D8D5CF; border-radius: 3px; }
 
-/* Conversation card */
+.section-title {
+  font-size: 11px; color: #9A9893; margin: 2px 4px 6px;
+  font-weight: 600; letter-spacing: 0.5px;
+}
+#sec-sys:empty, #sec-conv:empty { display: none; }
+#title-sys, #title-conv { display: none; }
+
+/* ── 会话行 ── */
 .conv {
   display: flex; align-items: center; gap: 10px;
   background: #fff; border-radius: 10px; padding: 10px 12px;
   margin-bottom: 8px; cursor: pointer;
   box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-  transition: transform 0.12s, box-shadow 0.12s;
+  transition: box-shadow 0.12s;
 }
-.conv:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.08); }
+.conv:last-child { margin-bottom: 0; }
+.conv:hover { box-shadow: 0 3px 8px rgba(0,0,0,0.08); }
+.conv.is-focus { box-shadow: inset 3px 0 0 #185FA5, 0 1px 2px rgba(0,0,0,0.04); }
+
 .avatar {
   width: 42px; height: 42px; border-radius: 50%; background: #E6F1FB;
   display: flex; align-items: center; justify-content: center;
   font-size: 15px; font-weight: 600; color: #185FA5; flex-shrink: 0;
   overflow: hidden; position: relative;
 }
-.avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; position: absolute; top:0; left:0; }
+.avatar img {
+  width: 100%; height: 100%; border-radius: 50%; object-fit: cover;
+  position: absolute; top: 0; left: 0; display: none;
+}
+.avatar.has-img img { display: block; }
+.avatar.has-img .afb { visibility: hidden; }
+
 .conv .body { flex: 1; min-width: 0; }
 .conv .row1 { display: flex; align-items: baseline; gap: 6px; }
-.conv .name { font-size: 13px; font-weight: 600; color: #2C2C2A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv .name {
+  font-size: 13px; font-weight: 600; color: #2C2C2A;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .conv .time { font-size: 11px; color: #B0AEA8; margin-left: auto; flex-shrink: 0; }
-.conv .last { font-size: 12px; color: #5F5E5A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+.conv .last {
+  font-size: 12px; color: #5F5E5A; line-height: 18px; height: 18px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px;
+}
 .conv .count {
   background: #E8453C; color: #fff; font-size: 11px; font-weight: 600;
   border-radius: 10px; min-width: 18px; height: 18px; padding: 0 5px;
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-/* 仅数量模式：隐藏文字 */
-body.nc-hide-content .conv .last { display: none; }
+body.nc-hide-content .conv .last { visibility: hidden; }
 
-/* System alert card */
-.sys {
-  border-radius: 10px; padding: 11px 12px; margin-bottom: 8px;
-  display: flex; flex-direction: column; gap: 6px;
+/* 新行入场：只作用于「新增行」，绝不重播整窗动画（S1.5） */
+@keyframes ncRowIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
+.conv.is-new { animation: ncRowIn 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+
+/* ── 系统通知卡 ── */
+.sys { border-radius: 10px; padding: 11px 12px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
 .sys.kick { background: #FDECEA; border: 1px solid #F3B5AE; }
 .sys.offline { background: #FEF6E7; border: 1px solid #F2D98A; }
 .sys .sys-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
@@ -113,31 +131,21 @@ body.nc-hide-content .conv .last { display: none; }
 .sys .sys-btn.primary:hover { background: #15508C; }
 .sys .sys-btn.ghost { background: rgba(0,0,0,0.05); color: #5F5E5A; }
 .sys .sys-btn.ghost:hover { background: rgba(0,0,0,0.1); }
-.sys .sys-pin { font-size: 11px; color: #9A9893; line-height: 1.4; margin-top: 2px; }
+.sys .sys-pin { font-size: 11px; color: #9A9893; line-height: 1.4; }
 
-/* Empty */
+/* ── 空态 ── */
 .empty {
-  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  color: #B0AEA8; gap: 8px; font-size: 13px;
+  height: 80px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: #B0AEA8; gap: 6px; font-size: 13px;
 }
-.empty svg { opacity: 0.5; }
+.empty svg { opacity: 0.45; }
 
-/* More unread footer */
-.more-footer {
-  flex-shrink: 0;
-  text-align: center; padding: 8px 0 10px;
-  font-size: 12px; color: #185FA5; cursor: pointer;
-  border-top: 1px solid #ECECEC; margin-top: 4px;
-}
-.more-footer:hover { background: #EDEBE6; }
-
-/* 入场动画：从下往上滑入 + 淡入。仅由主进程「隐藏→可见」时通过 nc-show 触发，
-   避免列表刷新（renderUnread）时反复播放；动画结束后移除 class 以便下次重新触发。 */
+/* 整窗入场：仅「隐藏→可见」时由 nc-show 触发 */
 @keyframes ncSlideUp {
-  from { opacity: 0; transform: translateY(28px); }
+  from { opacity: 0; transform: translateY(24px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-#app.nc-enter { animation: ncSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1); }
+#app.nc-enter { animation: ncSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1); }
 </style>
 </head>
 <body>
@@ -147,29 +155,59 @@ body.nc-hide-content .conv .last { display: none; }
     <span class="title">消息通知</span>
     <span class="badge" id="badge" style="display:none;">0</span>
     <span class="spacer"></span>
-    <!-- <button class="btn" id="btn-readall">全部已读</button> -->
-    <button class="btn close" id="btn-close">✕</button>
+    <button class="btn close" id="btn-close" title="关闭">✕</button>
   </div>
   <div class="list" id="list"></div>
 </div>
 <audio id="nc-audio" style="display:none;"></audio>
 
 <script>
-var api = window.electronAPI
-if (!api) {
-  document.body.innerHTML = '<div style="color:red;padding:20px;">Error: electronAPI not available</div>'
-} else {
+(function () {
+  var api = window.electronAPI
+  if (!api) {
+    document.body.innerHTML = '<div style="color:red;padding:20px;">Error: electronAPI not available</div>'
+    return
+  }
+
   var settings = {}
-  var unreadList = []
-  var sysAlerts = {}
-  var focusId = null   // 本次弹窗聚焦展示的会话（主进程下发）：确保只显示触发弹窗的那条，不残留其它未读会话内容
+  var unread = []            // 主进程已排好序（索引 0 = 最上面），渲染层**不排序**
+  var sysList = []           // 系统卡数组（主进程已排序）
+  var focusId = null
+  var rowMap = {}            // cid -> { el, parts, avatar }
+  var sysRowMap = {}         // aid -> { el, sig }
   var audioEl = document.getElementById('nc-audio')
+  var listEl = document.getElementById('list')
+  var badgeEl = document.getElementById('badge')
+  var appEl = document.getElementById('app')
+  var MIN_H = 132, MAX_H = 520
+  var lastSentH = 0
+  var lastLoggedSig = ''
+
+  // 渲染层日志回传：渲染进程的异常在主进程里完全看不到，必须送回主进程落盘
+  // （%APPDATA%\mylog-desktop-notifier\logs\notify-*.log，前缀 [NCR]）
+  function ncLog(s) {
+    try { if (api && api.ncLog) api.ncLog(s) } catch (e) {}
+  }
+  window.onerror = function (m, src, line, col, err) {
+    ncLog('JS_ERROR ' + m + ' @' + line + ':' + col +
+      (err && err.stack ? ' | ' + String(err.stack).split('\n').slice(0, 3).join(' ') : ''))
+    return false
+  }
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason
+    ncLog('UNHANDLED ' + (r && r.message ? r.message : String(r)))
+  })
+
+  var EMPTY_HTML = '<div class="empty"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#B0AEA8" stroke-width="1.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><div>暂无新通知</div></div>'
 
   function fmtTime(ts) {
-    var d = new Date(ts)
-    var h = ('0' + d.getHours()).slice(-2)
-    var m = ('0' + d.getMinutes()).slice(-2)
-    return h + ':' + m
+    var d = new Date(ts || Date.now())
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2)
+  }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    })
   }
 
   function applyDisplayMode() {
@@ -178,89 +216,110 @@ if (!api) {
     else document.body.classList.remove('nc-hide-content')
   }
 
-  function avatarHtml(item) {
-    var fb = (item.name || '?').charAt(0)
-    if (item.avatar) {
-      return '<div class="avatar"><img src="' + item.avatar + '" onerror="this.style.display=\'none\'">' + fb + '</div>'
-    }
-    return '<div class="avatar">' + fb + '</div>'
+  // ── 结构（只建一次，后续全部原地更新） ──
+  function ensureSections() {
+    if (document.getElementById('sec-sys')) return
+    listEl.innerHTML =
+      '<div id="title-sys" class="section-title">系统通知</div><div id="sec-sys"></div>' +
+      '<div id="title-conv" class="section-title">会话</div><div id="sec-conv"></div>'
   }
 
-  function renderUnread() {
-    var list = document.getElementById('list')
-    // badge
-    var total = unreadList.reduce(function (s, it) { return s + (it.count || 0) }, 0)
-    var badge = document.getElementById('badge')
-    if (total > 0) { badge.style.display = ''; badge.textContent = total > 99 ? '99+' : total }
-    else badge.style.display = 'none'
+  function dropAll() {
+    rowMap = {}
+    sysRowMap = {}
+    listEl.innerHTML = ''
+  }
 
-    // Build: system alerts first, then conversations (max 4 visible)
-    var html = ''
-    var sysp = Object.keys(sysAlerts)
-    if (sysp.length > 0) {
-      html += '<div class="section-title">系统通知</div>'
-      sysp.forEach(function (id) { html += sysCardHtml(sysAlerts[id]) })
-    }
+  function placeIn(wrap, el, idx) {
+    if (!wrap || !el || el.nodeType !== 1) return
+    var cur = wrap.children[idx]
+    if (cur === el) return
+    wrap.insertBefore(el, cur || null)
+  }
 
-    // 展示本次「展示期」内的全部未读会话：同一批接连进来的多条一起累加，
-    // 最新触发的会话（focusId）置顶，其余按时间倒序。窗口高度随条目增加，
-    // 主进程按 nc-resize 回传的真实高度调整（已可见时只做高度微调，不重播入场动画）。
-    var activeUnread = unreadList.filter(function (it) { return (it.count || 0) > 0 })
-      .sort(function (a, b) { return (b.time || 0) - (a.time || 0) })
-    if (focusId) {
-      var fi = -1
-      for (var k = 0; k < activeUnread.length; k++) {
-        if (activeUnread[k].conversationId === focusId) { fi = k; break }
+  function trimTo(wrap, n) {
+    while (wrap.children.length > n) wrap.removeChild(wrap.lastElementChild)
+  }
+
+  // ── 会话行 ──
+  function ensureConvRow(it) {
+    var cid = it.conversationId
+    var rec = rowMap[cid]
+    if (rec) return rec
+    var el = document.createElement('div')
+    el.className = 'conv is-new'
+    el.setAttribute('data-id', encodeURIComponent(cid))
+    el.innerHTML =
+      '<div class="avatar"><span class="afb"></span><img alt=""></div>' +
+      '<div class="body"><div class="row1"><span class="name"></span><span class="time"></span></div>' +
+      '<div class="last"></div></div><span class="count"></span>'
+    rec = {
+      el: el,
+      fresh: true,              // 新建行：渲染后要把列表滚回顶部，保证最新会话可见
+      avatar: '\u0000',         // 哨兵：保证首帧一定会写一次
+      parts: {
+        av: el.querySelector('.avatar'),
+        fb: el.querySelector('.afb'),
+        img: el.querySelector('.avatar img'),
+        name: el.querySelector('.name'),
+        time: el.querySelector('.time'),
+        last: el.querySelector('.last'),
+        count: el.querySelector('.count')
       }
-      if (fi > 0) { var moved = activeUnread.splice(fi, 1)[0]; activeUnread.unshift(moved) }
     }
-    // 超出可视高度的靠列表自身滚动（.list 已有 max-height + overflow-y）
-    if (activeUnread.length > 0) {
-      html += '<div class="section-title">会话</div>'
-      activeUnread.forEach(function (it) { html += convHtml(it) })
-    }
-
-    if (sysp.length === 0 && activeUnread.length === 0) {
-      html = '<div class="empty"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#B0AEA8" stroke-width="1.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><div>暂无新通知</div></div>'
-    }
-    list.innerHTML = html
-
-    // 动态调整窗口高度：直接同步测量（读 scrollHeight 会强制布局），
-    // 不用 requestAnimationFrame —— 隐藏窗口的 rAF 会被节流，导致高度回传延迟、
-    // 主进程只能用占位高度先 show，进而出现「先长后短」的闪动。
-    resizeWindow()
+    rowMap[cid] = rec
+    return rec
   }
 
-  function resizeWindow() {
-    try {
-      var list = document.getElementById('list')
-      var header = document.querySelector('.header')
-      var listH = list ? list.scrollHeight : 0
-      var headerH = header ? header.offsetHeight : 48
-      // 最小高度要能放下 header + 一条空状态或一条消息
-      var newH = Math.max(160, Math.min(520, headerH + Math.max(listH, 80)))
-      api.resizeNc(newH)
-    } catch(e) {}
-  }
+  function setText(el, v) { if (el && el.textContent !== v) el.textContent = v }
+  function setDisplay(el, v) { if (el && el.style.display !== v) el.style.display = v }
 
-  function convHtml(it) {
-    var last = it.last || ''
+  function updateConvRow(rec, it) {
+    var p = rec.parts
+
+    var av = it.avatar || ''
+    if (rec.avatar !== av) {
+      rec.avatar = av
+      if (av) {
+        // 先等图片真正解码完成再显示，避免 "白块 → 头像" 闪一下（S1.9）
+        p.img.onload = function () { p.av.classList.add('has-img') }
+        p.img.onerror = function () { p.av.classList.remove('has-img') }
+        p.img.src = av
+      } else {
+        p.img.removeAttribute('src')
+        p.av.classList.remove('has-img')
+      }
+    }
+    setText(p.fb, (it.name || '?').charAt(0))
+    setText(p.name, it.name || '未知用户')
+    setText(p.time, fmtTime(it.time))
+
+    var last = String(it.last || '')
     if (last.length > 40) last = last.slice(0, 40) + '...'
-    var count = it.count > 0 ? '<span class="count">' + (it.count > 99 ? '99+' : it.count) + '</span>' : ''
-    return '<div class="conv" data-id="' + encodeURIComponent(it.conversationId) + '" data-url="' + encodeURIComponent(it.url || '') + '">' +
-      avatarHtml(it) +
-      '<div class="body"><div class="row1"><span class="name">' + escapeHtml(it.name || '未知用户') + '</span>' +
-      '<span class="time">' + fmtTime(it.time) + '</span></div>' +
-      '<div class="last">' + escapeHtml(last) + '</div></div>' + count + '</div>'
+    setText(p.last, last)
+
+    var c = it.count || 0
+    var cs = c > 99 ? '99+' : (c > 0 ? String(c) : '')
+    setText(p.count, cs)
+    var disp = cs ? '' : 'none'
+    if (p.count.style.display !== disp) p.count.style.display = disp
+
+    var url = it.url || ''
+    if (rec.el.getAttribute('data-url') !== encodeURIComponent(url)) {
+      rec.el.setAttribute('data-url', encodeURIComponent(url))
+    }
+    var on = !!(focusId && it.conversationId === focusId)
+    if (rec.el.classList.contains('is-focus') !== on) rec.el.classList.toggle('is-focus', on)
   }
 
+  // ── 系统卡 ──
   function sysCardHtml(a) {
     if (a.type === 'kick') {
       var d = a.data || {}
-      var body = '您的账号于 ' + fmtTime(d.time || Date.now()) + ' 在 ' + escapeHtml(d.device || '其他设备') + ' 登录，当前会话已结束。'
-      return '<div class="sys kick" data-id="' + a.id + '">' +
+      return '<div class="sys kick" data-id="' + escapeHtml(a.id) + '">' +
         '<div class="sys-title">⚠ 您已在其他设备登录</div>' +
-        '<div class="sys-body">' + body + '</div>' +
+        '<div class="sys-body">您的账号于 ' + fmtTime(d.time || Date.now()) + ' 在 ' +
+        escapeHtml(d.device || '其他设备') + ' 登录，当前会话已结束。</div>' +
         '<div class="sys-pin">🔒 常驻提醒：重连上线或点「知道了」后才会消失</div>' +
         '<div class="sys-actions">' +
           '<button class="sys-btn primary" data-act="reconnect">重新登录</button>' +
@@ -268,7 +327,7 @@ if (!api) {
         '</div></div>'
     }
     if (a.type === 'offline') {
-      return '<div class="sys offline" data-id="' + a.id + '">' +
+      return '<div class="sys offline" data-id="' + escapeHtml(a.id) + '">' +
         '<div class="sys-title">⚡ 网络已断开</div>' +
         '<div class="sys-body">消息可能无法实时接收，正在尝试重连…</div>' +
         '<div class="sys-pin">🔒 常驻提醒：恢复连接或点「关闭」后才会消失</div>' +
@@ -278,36 +337,128 @@ if (!api) {
     return ''
   }
 
-  function escapeHtml(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  // ── 主渲染 ──
+  function render() {
+    var total = unread.reduce(function (s, it) { return s + (it.count || 0) }, 0)
+    if (total > 0) {
+      setDisplay(badgeEl, '')
+      setText(badgeEl, total > 99 ? '99+' : String(total))
+    } else {
+      setDisplay(badgeEl, 'none')
+    }
+
+    if (!unread.length && !sysList.length) {
+      if (listEl.getAttribute('data-empty') !== '1') {
+        dropAll()
+        listEl.setAttribute('data-empty', '1')
+        listEl.innerHTML = EMPTY_HTML
+      }
+      measure(false)
+      return
+    }
+    if (listEl.hasAttribute('data-empty')) listEl.removeAttribute('data-empty')
+    ensureSections()
+
+    var secSys = document.getElementById('sec-sys')
+    var titleSys = document.getElementById('title-sys')
+    var secConv = document.getElementById('sec-conv')
+    var titleConv = document.getElementById('title-conv')
+
+    // 系统卡（固定在最上面，S4.5）
+    var i, keepSys = {}
+    for (i = 0; i < sysList.length; i++) {
+      var a = sysList[i]
+      keepSys[a.id] = 1
+      var html = sysCardHtml(a)
+      if (!html) continue
+      var sig = a.type + '|' + JSON.stringify(a.data || {})
+      var rec = sysRowMap[a.id]
+      if (!rec) {
+        var box = document.createElement('div')
+        box.innerHTML = html
+        var el = box.firstElementChild
+        if (!el) continue
+        rec = { el: el, sig: sig }
+        sysRowMap[a.id] = rec
+        secSys.appendChild(el)
+      } else if (rec.sig !== sig) {
+        var box2 = document.createElement('div')
+        box2.innerHTML = html
+        var el2 = box2.firstElementChild
+        if (el2) { secSys.replaceChild(el2, rec.el); rec.el = el2; rec.sig = sig }
+      }
+      placeIn(secSys, rec.el, i)
+    }
+    Object.keys(sysRowMap).forEach(function (id) {
+      if (!keepSys[id]) {
+        var r = sysRowMap[id]
+        if (r && r.el.parentNode) r.el.parentNode.removeChild(r.el)
+        delete sysRowMap[id]
+      }
     })
+    trimTo(secSys, Object.keys(keepSys).length)
+    setDisplay(titleSys, sysList.length ? '' : 'none')
+
+    // 会话行：严格按主进程给的顺序，不排序（排序会造成整列跳动）
+    var keepConv = {}
+    var addedConv = false
+    for (i = 0; i < unread.length; i++) {
+      var it = unread[i]
+      if (!it || !it.conversationId) continue
+      keepConv[it.conversationId] = 1
+      var r2 = ensureConvRow(it)
+      if (r2.fresh) { r2.fresh = false; addedConv = true }
+      updateConvRow(r2, it)
+      placeIn(secConv, r2.el, i)
+    }
+    Object.keys(rowMap).forEach(function (cid) {
+      if (!keepConv[cid]) {
+        var rr = rowMap[cid]
+        if (rr && rr.el.parentNode) rr.el.parentNode.removeChild(rr.el)
+        delete rowMap[cid]
+      }
+    })
+    trimTo(secConv, unread.length)
+    setDisplay(titleConv, unread.length ? '' : 'none')
+
+    // 有新会话进来时滚回顶部：提醒窗是被动接收的，最新一条必须可见（S1.6）。
+    // 已有行更新不滚（否则用户正在看的内容被抢走）。
+    if (addedConv && listEl.scrollTop > 0) listEl.scrollTop = 0
+
+    var sig = unread.length + '/' + sysList.length
+    if (sig !== lastLoggedSig) {
+      lastLoggedSig = sig
+      ncLog('render rows=' + unread.length + ' sys=' + sysList.length)
+    }
+
+    measure(false)
   }
 
-  // ── Events ──
-  api.onNcInit(function (data) {
+  // 实测高度：唯一可信来源（I4）。force=true 时即使没变化也回传（响应 nc-measure）。
+  function measure(force) {
+    var header = document.querySelector('.header')
+    var headerH = header ? header.offsetHeight : 48
+    var contentH = listEl ? listEl.scrollHeight : 0
+    var h = Math.max(MIN_H, Math.min(MAX_H, headerH + contentH))
+    if (!force && h === lastSentH) return
+    lastSentH = h
+    ncLog('measure h=' + h + ' header=' + headerH + ' content=' + contentH + (force ? ' (force)' : ''))
+    try { api.resizeNc(h) } catch (e) { ncLog('resizeNc FAILED ' + e.message) }
+  }
+
+  // ── 事件 ──
+  api.onNcState(function (data) {
+    data = data || {}
+    ncLog('nc-state recv unread=' + ((data.unread || []).length) + ' sys=' + ((data.sysAlerts || []).length) + ' phase=' + (data.phase || '?'))
     settings = data.settings || {}
-    unreadList = data.unread || []
-    sysAlerts = {}
-    ;(data.sysAlerts || []).forEach(function (a) { sysAlerts[a.id] = a })
-    applyDisplayMode()
-    renderUnread()
-  })
-
-  api.onNcUnread(function (data) {
-    unreadList = data.unread || []
     focusId = data.focusId || null
-    renderUnread()
-  })
-
-  api.onNcSysAlert(function (a) { sysAlerts[a.id] = a; renderUnread() })
-  api.onNcSysAlertDismiss(function (d) { delete sysAlerts[d.id]; renderUnread() })
-
-  api.onNcSettingsChanged(function (data) {
-    settings = data.settings || settings
+    unread = (data.unread || []).filter(function (it) { return !!(it && it.conversationId) })
+    sysList = data.sysAlerts || []
     applyDisplayMode()
-    renderUnread()
+    render()
   })
+
+  api.onNcMeasure(function () { ncLog('nc-measure recv'); measure(true) })
 
   api.onNcPlay(function (data) {
     var p = data && data.path
@@ -316,50 +467,55 @@ if (!api) {
       audioEl.src = p
       audioEl.loop = false
       audioEl.volume = 0.7
-      audioEl.play().catch(function (e) { console.warn('[NC] play failed', e && e.name) })
-    } catch (e) { console.warn('[NC] audio error', e) }
+      audioEl.play().catch(function () {})
+    } catch (e) {}
   })
 
-  // 入场动画：主进程在「隐藏→可见」时发 nc-show，这里重启动画让面板从下往上滑入。
-  var appEl = document.getElementById('app')
+  // 整窗入场动画：仅「隐藏→可见」时播放
   function playEnter() {
-    if (!appEl) return
     appEl.classList.remove('nc-enter')
-    void appEl.offsetWidth   // 强制重排，确保动画可重复触发
+    void appEl.offsetWidth
     appEl.classList.add('nc-enter')
+    if (listEl) listEl.scrollTop = 0
   }
   api.onNcShow(playEnter)
   appEl.addEventListener('animationend', function (e) {
     if (e.animationName === 'ncSlideUp') appEl.classList.remove('nc-enter')
   })
+  // 行级动画结束后移除 class（避免下次重复播放）
+  listEl.addEventListener('animationend', function (e) {
+    if (e.animationName === 'ncRowIn' && e.target && e.target.classList) {
+      e.target.classList.remove('is-new')
+    }
+  })
 
-  // Delegated clicks
-  document.getElementById('list').addEventListener('click', function (e) {
+  // ── 点击 ──
+  listEl.addEventListener('click', function (e) {
     var sysBtn = e.target.closest('.sys-btn')
     if (sysBtn) {
       var card = sysBtn.closest('.sys')
-      var id = card && card.getAttribute('data-id')
+      var sid = card && card.getAttribute('data-id')
       var act = sysBtn.getAttribute('data-act')
       if (act === 'reconnect') {
         api.reconnect()
-        if (id) api.dismissSysAlert(id) // 用户点击重新登录即视为已处理，隐藏该常驻通知
+        if (sid) api.dismissSysAlert(sid)
+      } else if (act === 'dismiss' && sid) {
+        api.dismissSysAlert(sid)
       }
-      else if (act === 'dismiss' && id) api.dismissSysAlert(id)
       return
     }
     var conv = e.target.closest('.conv')
     if (conv) {
-      var cid = decodeURIComponent(conv.getAttribute('data-id'))
+      var cid = decodeURIComponent(conv.getAttribute('data-id') || '')
       var url = decodeURIComponent(conv.getAttribute('data-url') || '')
       api.openConversation(cid, url)
     }
   })
 
   document.getElementById('btn-close').addEventListener('click', function () {
-    // 强制关闭：始终收起窗口（即使存在常驻系统通知也允许关闭；常驻提醒可由其自身按钮「知道了/关闭」正规消除）
     api.closeNc(true)
   })
-}
+})()
 </script>
 </body>
 </html>
