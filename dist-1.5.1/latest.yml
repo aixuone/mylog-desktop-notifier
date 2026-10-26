@@ -1,0 +1,8 @@
+version: 1.5.1
+files:
+  - url: mylog-desktop-notifier-setup-1.5.1.exe
+    sha512: lrMdlxnmeAEAjA0yxaQ+XbAoXzbDUyvKyUSjX/pZiftiQPpudd7V/hiUd+quv4iQ0FfZyims3kk3ECm7Om7Hag==
+    size: 102509318
+path: mylog-desktop-notifier-setup-1.5.1.exe
+sha512: lrMdlxnmeAEAjA0yxaQ+XbAoXzbDUyvKyUSjX/pZiftiQPpudd7V/hiUd+quv4iQ0FfZyims3kk3ECm7Om7Hag==
+releaseDate: '2026-10-22T08:01:01.958Z'

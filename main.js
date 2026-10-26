@@ -3591,6 +3591,8 @@ function openEmailWindow(options = {}) {
     backgroundColor: '#F6F8FA',
     title: '邮箱',
     icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
+    // 独立 partition：把邮箱会话/Cookie 与主页窗口隔离，且便于单独关闭 HTTP 缓存
+    partition: 'email',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -3604,6 +3606,9 @@ function openEmailWindow(options = {}) {
   if (hidden) winOpts.paintWhenInitiallyHidden = false
   emailWindowHidden = hidden
   emailWindow = new BrowserWindow(winOpts)
+  // 关闭邮箱窗口的 HTTP 缓存：SnappyMail 默认 Cache-Control/Expires=3600s，
+  // 否则浏览器会缓存整页一小时，导致「改了 UI 却仍显示旧版」。关闭后每次加载都取最新渲染。
+  try { emailWindow.webContents.session.setCacheEnabled(false) } catch (e) {}
   emailWindow.loadFile(loadingPage)
 
   // 邮箱组件自身的地址（本机回环 + 指定端口）——只有它能留在窗口内导航

@@ -123,6 +123,11 @@ function boot(settingsOverride) {
     settings: makeSettings(settingsOverride),
   }
   CURRENT = ctx
+  // 场景隔离：每个场景独立 boot，清空共享的可控时钟与待触发定时器，
+  // 避免前一个场景遗留的隐藏定时器被后一个场景的 tick 误触发（交叉污染）。
+  NOW = 1700000000000
+  timers.clear()
+  tid = 0
   for (const k of Object.keys(ipcHandlers)) delete ipcHandlers[k]
 
   const BW = makeBWClass(ctx)
@@ -337,6 +342,35 @@ for (const mode of ['dnd', 'blockChat']) {
   tick(300)
   eq('S2.5', rowsOf(c).length, 1, 'B 正常弹')
   eq('S2.5', rowsOf(c)[0].conversationId, 'b', '弹的是 B')
+}
+
+// D13 回归：消息弹出后，网页随后上报 ACTIVE_CONVERSATION=该会话（路由切换 / 收到消息后自动聚焦）
+// 不得立刻把正在显示的提醒清掉（否则「闪一下就消失，看不清是谁发的」）
+{
+  const c = boot()
+  c.nc.pushMessage(msg('a', '张三', 'x', { unreadCount: 1 }))
+  tick(200)
+  ok('D13', isShown(c), '弹出后窗口可见')
+  c.nc.setActiveConversation('a')   // 网页随后聚焦 / 路由到 a
+  tick(300)
+  ok('D13', isShown(c), 'ACTIVE_CONVERSATION=a 后窗口仍可见（提醒不被秒清）')
+  eq('D13', rowsOf(c).length, 1, 'a 仍在列表')
+  eq('D13', rowsOf(c)[0].conversationId, 'a', '仍是 a')
+}
+
+// D14 切到一个「当前无可见提醒、但有旧未读」的会话 → 仍应清掉它的旧未读（保留原语义，不误伤其它提醒）
+{
+  const c = boot()
+  c.nc.syncUnread([{ conversationId: 'a', name: '张三', count: 1, last: 'hi' }])   // 基线，a 不进 stack（idle）
+  tick(30)
+  c.nc.pushMessage(msg('b', '李四', 'y', { unreadCount: 1 }))                       // b 弹出
+  tick(200)
+  eq('D14', rowsOf(c).length, 1, '只有 b 在显示')
+  eq('D14', rowsOf(c)[0].conversationId, 'b', '显示的是 b')
+  c.nc.setActiveConversation('a')    // 用户切到 a（a 当前无可见提醒）→ 应清 a 的旧未读
+  tick(50)
+  eq('D14', c.nc.getUnread().find((x) => x.conversationId === 'a'), undefined, '切到 a → a 的旧未读被清')
+  ok('D14', isShown(c), 'b 的提醒不受影响，仍在显示')
 }
 
 // S2.6 双通道（先 SYNC 后 PUSH）
