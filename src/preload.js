@@ -238,26 +238,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Open browser to conversation page */
   openBrowser: (url) => ipcRenderer.send('open-browser', url),
 
-  // ─── Email (阿里企业邮箱：收件 + 查看) ──────────
-  /** 读取邮箱配置（不含明文授权码），返回 { configured, email, imapHost, imapPort, imapSecure } */
-  emailConfigLoad: () => ipcRenderer.invoke('email:config-load'),
-  /** 保存配置 + 加密授权码：cfg = { email, imapHost, imapPort, imapSecure, authCode } */
-  emailConfigSave: (cfg) => ipcRenderer.invoke('email:config-save', cfg),
-  /** 临时测试连接（向导用，不落盘）：cfg 含 authCode */
-  emailTest: (cfg) => ipcRenderer.invoke('email:test', cfg),
-  /** 列出服务器文件夹 */
-  emailMailboxes: () => ipcRenderer.invoke('email:mailboxes'),
-  /** 拉取某文件夹邮件列表：folder, limit */
-  emailMessages: (folder, limit) => ipcRenderer.invoke('email:messages', folder, limit),
-  /** 拉取单封邮件详情：folder, uid */
-  emailMessage: (folder, uid) => ipcRenderer.invoke('email:message', folder, uid),
-  /** 用系统程序打开已落盘的附件文件 */
-  emailOpenAttachment: (file) => ipcRenderer.invoke('email:open-attachment', file),
-  /** 另存附件到用户选择的位置 */
-  emailSaveAttachment: (file) => ipcRenderer.invoke('email:save-attachment', file),
-  /** 订阅后台新邮件推送（数组） */
-  onEmailNewMail: (callback) => ipcRenderer.on('email:new-mail', (_, msgs) => callback(msgs)),
-  /** 网页侧边栏「邮箱」入口：请求主进程打开邮箱窗口（与托盘「邮箱」同源） */
+  // ─── 邮箱（阿里云邮箱网页版入口）──────────
+  /** 网页侧边栏「邮箱」入口：请求主进程打开阿里云邮箱网页窗口（与托盘「邮箱」同源） */
   openEmailWindow: () => ipcRenderer.send('email:open-window'),
 
   // ─── Clipboard (复制图片到系统剪贴板) ──────────

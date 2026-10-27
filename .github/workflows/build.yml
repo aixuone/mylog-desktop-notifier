@@ -18,112 +18,11 @@ jobs:
         with:
           node-version: 22
 
-      # 邮箱功能的第三方运行时（便携 PHP 8.4 + SnappyMail，约 58MB）不在 git 里。
-      # 缺了它 electron-builder 只打一行 "file source doesn't exist" 就跳过，
-      # 出来的安装包没有邮箱功能，而且构建还是绿的 —— 必须自己补+自己验。
-      - name: Cache email vendor
-        uses: actions/cache@v4
-        with:
-          path: |
-            vendor/php
-            vendor/snappymail
-          key: vendor-win-${{ hashFiles('scripts/fetch-vendor.py') }}
-
-      - name: Fetch email vendor
-        shell: bash
-        # Windows runner 上 Python 的 stdout 是 cp1252，脚本 print 中文会直接
-        # UnicodeEncodeError（连下载都没开始）。必须强制 UTF-8。
-        env:
-          PYTHONUTF8: "1"
-          PYTHONIOENCODING: "utf-8"
-        run: |
-          set +e
-          set -o pipefail
-          if [ -f vendor/php/php.exe ] && [ -f vendor/snappymail/index.php ]; then
-            echo "缓存命中，跳过下载"
-            exit 0
-          fi
-          rc=1
-          for attempt in 1 2; do
-            echo "== 第 $attempt 次尝试 =="
-            python -u scripts/fetch-vendor.py 2>&1 | tee "$RUNNER_TEMP/fetch.log"
-            rc=${PIPESTATUS[0]}
-            if [ "$rc" -eq 0 ]; then break; fi
-            echo "第 $attempt 次失败（rc=$rc），5s 后重试"
-            sleep 5
-          done
-          if [ "$rc" -ne 0 ]; then
-            # job 日志要 admin 才能下载，把失败原因转成注解
-            tail -15 "$RUNNER_TEMP/fetch.log" | while IFS= read -r l; do
-              [ -n "$l" ] && echo "::error::${l:0:380}"
-            done
-            exit "$rc"
-          fi
-
       - run: npm ci
 
       - run: npx electron-builder --win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # 缺 vendor 时 electron-builder 不报错，所以必须自己验一次。
-      # 血泪教训：早期只验 php.exe 存在，而 trim 逻辑把整个 ext/ 删了，
-      # 构建全绿、用户装完才看到「邮箱服务启动超时（端口 x 无响应）」。
-      # 所以这里必须验到「扩展真的能加载」这一层。
-      - name: Verify email vendor in package
-        shell: bash
-        run: |
-          set -euo pipefail
-          V=dist-installer-new/win-unpacked/resources/vendor
-          for f in "$V/php/php.exe" "$V/php/php.ini" "$V/php/router.php" \
-                   "$V/php/cacert.pem" "$V/snappymail/index.php"; do
-            if [ ! -f "$f" ]; then
-              echo "::error::安装包里缺少邮箱运行时：$f"
-              exit 1
-            fi
-            echo "OK $f ($(stat -c%s "$f") bytes)"
-          done
-
-          if [ ! -d "$V/php/ext" ]; then
-            echo "::error::安装包里缺少 php/ext 目录：所有 extension= 都会加载失败，SnappyMail 打不开"
-            exit 1
-          fi
-          for dll in php_mbstring.dll php_openssl.dll php_sodium.dll php_curl.dll \
-                     php_zip.dll php_fileinfo.dll php_sockets.dll php_pdo_sqlite.dll php_sqlite3.dll; do
-            [ -f "$V/php/ext/$dll" ] || { echo "::error::缺少扩展 $dll"; exit 1; }
-          done
-
-          # 真跑一次：文件在但依赖 DLL 缺失时扩展仍会加载失败
-          "$V/php/php.exe" -c "$V/php/php.ini" -m > "$RUNNER_TEMP/mods.txt" 2>"$RUNNER_TEMP/mods.err" || true
-          cat "$RUNNER_TEMP/mods.txt"
-          for e in mbstring openssl sodium curl zip fileinfo sockets pdo_sqlite sqlite3 gd; do
-            if ! tr -d '\r' < "$RUNNER_TEMP/mods.txt" | grep -qix "$e"; then
-              echo "::error::内置 PHP 未能加载扩展 $e"
-              head -20 "$RUNNER_TEMP/mods.err" || true
-              exit 1
-            fi
-          done
-          echo "OK 内置 PHP 扩展齐全"
-
-          # ── 邮箱 UI 定制层（email-overlay）──
-          # 这些文件来自仓库 email-overlay/，由 fetch-vendor.py 覆盖到官方包里。
-          # 丢了 PHP 照样起得来、构建也照样绿，但用户看到的是原版 SnappyMail 界面。
-          IDX="$(ls "$V"/snappymail/snappymail/v/*/app/templates/Index.html 2>/dev/null | head -1)"
-          if [ -z "$IDX" ]; then
-            echo "::error::安装包里缺少 SnappyMail Index.html"
-            exit 1
-          fi
-          if ! grep -q "eb-mail-theme" "$IDX"; then
-            echo "::error::Index.html 缺 eb-mail-theme 注入层：email-overlay 没应用，邮箱会显示原版界面"
-            exit 1
-          fi
-          for f in "$V/snappymail/plugins/mylog-provider/index.php" \
-                   "$V/snappymail/plugins/mylog-provider/providers.php" \
-                   "$V/snappymail/data/_data_/_default_/configs/application.ini" \
-                   "$V/snappymail/data/_data_/_default_/domains/default.json"; do
-            [ -f "$f" ] || { echo "::error::安装包缺少 $f（email-overlay 没应用）"; exit 1; }
-          done
-          echo "OK 邮箱 UI 定制层（eb-mail-theme + mylog-provider + 域名配置）"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -137,16 +36,12 @@ jobs:
   # 签名交给 electron-builder（CSC_LINK 就是 base64 的 .p12），公证由
   # package.json 的 mac.notarize=true 在签名之后、打 DMG 之前完成。
   # electron-builder 时序：pack → sign → (afterSign) notarize + staple → build dmg，
-  # 所以 DMG 里的 .app 天然已 staple。旧流程「公证完再 electron-builder --mac
-  # 重建 DMG」会把 staple 覆盖掉，已去掉。
+  # 所以 DMG 里的 .app 天然已 staple。
   build-mac:
     runs-on: macos-latest
     env:
-      # 故意不设 CSC_LINK：让 electron-builder 自己建临时 keychain 导入 p12
-      # 在本仓库实测失败且只警告不报错（结果 .app 仍是 adhoc，公证 Invalid）。
-      # 改为自己导入 keychain + 显式 CSC_NAME，见 "Import signing certificate"。
-      # ★ 关键：electron-builder 的 isPullRequest() 用 GITHUB_BASE_REF 判 PR
-      # （builder-util/out/util.js:459），而 GitHub Actions 只在 pull_request
+      # 显式打开 PR 场景签名：electron-builder 的 isPullRequest() 用 GITHUB_BASE_REF
+      # 判 PR（builder-util/out/util.js:459），而 GitHub Actions 只在 pull_request
       # 事件里设这个变量。命中后它只打一行 warning 就跳过整包签名，包维持
       # Electron 自带的 adhoc 签名 → Helper 无 hardened runtime/时间戳 →
       # Apple 公证 Invalid。本仓库的 PR 都来自同一仓库的分支、secrets 可用，
@@ -167,7 +62,6 @@ jobs:
       # ── 预检 1：p12 能解开，证书类型 / Team 正确 ──
       # 这里只读证书（-nokeys）。私钥不由 openssl 判定：本仓库 p12 的私钥是
       # RC2-40 老 PBE，macOS 自带 LibreSSL 解不开，会误报「没有私钥」。
-      # 私钥可用性交给下一步用 security 判定。
       - name: Preflight - certificate type and team
         run: |
           set -euo pipefail
@@ -200,8 +94,6 @@ jobs:
           fi
 
       # ── 导入签名证书并显式指定身份 ──
-      # 这一步同时兼作预检：p12 导入后必须能以「含私钥的 Developer ID
-      # Application」身份被找到，否则后面 electron-builder 会静默跳过签名。
       - name: Import signing certificate
         run: |
           set -euo pipefail
@@ -217,18 +109,14 @@ jobs:
             || { echo "::error::security import 失败：p12 密码错误，或私钥无法导入"; exit 1; }
           security set-key-partition-list -S apple-tool:,apple:,codesign: -k "$KCP" "$KC" >/dev/null 2>&1 || true
 
-          # 设为用户搜索列表（替换掉 login），codesign / electron-builder 才找得到
           security list-keychains -d user -s "$KC"
 
-          # 写文件再 grep；不要 grep -q 直接接管道（pipefail 下上游 SIGPIPE 会误判）
           security find-identity -v -p codesigning > "$RUNNER_TEMP/ids.txt" 2>&1 || true
           cat "$RUNNER_TEMP/ids.txt"
 
           IDENTITY="$(grep -m1 'Developer ID Application' "$RUNNER_TEMP/ids.txt" | sed -E 's/^[[:space:]]*[0-9]+\)[[:space:]]*[0-9A-Fa-f]+[[:space:]]+"(.*)"/\1/' || true)"
-          # ★ 必须剥掉前缀：macCodeSign.checkPrefix() 见到 CSC_NAME 以
+          # 必须剥掉前缀：macCodeSign.checkPrefix() 见到 CSC_NAME 以
           # "Developer ID Application:" 开头会直接抛 InvalidConfigurationError
-          # （日志里表现为 "⨯ Please remove prefix ..."），随后整包不签名，
-          # 但构建步骤看起来只是 exit 1，很容易被当成公证问题。
           IDENTITY="${IDENTITY#Developer ID Application: }"
           if [ -z "$IDENTITY" ]; then
             echo "::error::keychain 里没有可用的 Developer ID Application 身份（证书无配对私钥，或导入未生效）"
@@ -252,39 +140,6 @@ jobs:
 
       - run: npm ci
 
-      # 邮箱运行时（macOS）：Windows 那份是 php.exe + DLL，mac 上跑不了，
-      # 必须用静态编译的 PHP（static-php-cli bulk 预编译，双架构各约 100MB）。
-      # 两份二进制都放在 vendor/php-mac/bin，由 build/after-pack.js 按架构挑一份，
-      # 再通过 package.json 的 mac.binaries 交给 osx-sign 签名 —— 漏签公证必 Invalid。
-      - name: Cache email vendor (mac)
-        uses: actions/cache@v4
-        with:
-          path: |
-            vendor/php-mac
-            vendor/snappymail
-          key: vendor-mac-${{ hashFiles('scripts/fetch-vendor-mac.py') }}
-
-      - name: Fetch email vendor (mac)
-        env:
-          PYTHONUTF8: "1"
-          PYTHONIOENCODING: "utf-8"
-        run: |
-          set +e
-          set -o pipefail
-          if [ -f vendor/php-mac/bin/php-arm64 ] && [ -f vendor/php-mac/bin/php-x64 ] \
-             && [ -f vendor/snappymail/index.php ]; then
-            echo "缓存命中，跳过下载"
-            exit 0
-          fi
-          python3 -u scripts/fetch-vendor-mac.py 2>&1 | tee "$RUNNER_TEMP/fetchmac.log"
-          rc=${PIPESTATUS[0]}
-          if [ "$rc" -ne 0 ]; then
-            tail -15 "$RUNNER_TEMP/fetchmac.log" | while IFS= read -r l; do
-              [ -n "$l" ] && echo "::error::${l:0:380}"
-            done
-            exit "$rc"
-          fi
-
       - name: Build / Sign / Notarize / Staple
         run: |
           set -o pipefail
@@ -295,7 +150,6 @@ jobs:
           npx electron-builder --mac --publish never 2>&1 | tee "$RUNNER_TEMP/build.log"
           rc=${PIPESTATUS[0]}
           set -e
-          # 构建成功留个标记，后面的诊断步骤据此决定要不要打注解（绿构建不该有黄标）
           if [ "$rc" -eq 0 ]; then touch "$RUNNER_TEMP/build.ok"; fi
 
           # 宁可这里红叉，也不要发出一个 adhoc 签名的包。
@@ -306,8 +160,6 @@ jobs:
           exit "$rc"
 
       # electron-builder 找不到身份时只 warning 不失败，必须主动核实它到底签没签。
-      # job 日志需 admin 才能下载，注解有 10 条上限，所以关键信息写进
-      # job summary（check-run 的 output.summary 公开可读）。
       - name: Signing diagnostics
         if: always()
         run: |
@@ -331,16 +183,13 @@ jobs:
           if summary:
               with open(summary, 'a', encoding='utf-8') as f:
                   f.write('## Signing diagnostics\n' + text + '\n')
-          # 只有构建真的失败时，才把日志末尾转成 warning 注解（公开可读）；
-          # 构建成功时打黄标只会让人误以为有问题。
           _ok = os.path.exists(os.path.join(os.environ.get('RUNNER_TEMP', '/tmp'), 'build.ok'))
           if not _ok:
               for l in [x.strip() for x in lines if x.strip()][-8:]:
                   print('::warning::' + l[:400])
           PY
 
-      # ── 逐个二进制的签名详情，压缩成注解上报 ──
-      # job 日志要 admin 才能下载，注解公开可读，所以关键字段走 ::error::
+      # 逐个二进制的签名详情，压缩成注解上报
       - name: Codesign detail
         if: always()
         run: |
@@ -364,11 +213,10 @@ jobs:
               msg = ' ; '.join(picked)
               if not msg:
                   msg = raw.strip().replace('\n', ' ')[:220] or '无输出(rc=%d)' % r.returncode
-              # 这是「信息展示」不是失败：用 notice，避免绿色构建上挂一堆红叉注解
               print('::notice::[%s] %s' % (os.path.relpath(t, app), msg[:380].replace('\n', ' ')))
           PY
 
-      # ── 验收：把「公证没生效」变成明确红叉（x64 与 arm64 两份都验） ──
+      # 验收：把「公证没生效」变成明确红叉（x64 与 arm64 两份都验）
       - name: Verify signature and notarization
         if: always()
         run: |
@@ -378,7 +226,6 @@ jobs:
             echo "::error::没有产出 .app"
             exit 1
           fi
-          NATIVE="$(uname -m)"
 
           for APP in $APPS; do
             echo "==================== $APP ===================="
@@ -395,70 +242,12 @@ jobs:
               exit 1
             fi
 
-            # ── 邮箱运行时：必须存在、可执行、架构匹配、且被签名 ──
-            PHP="$APP/Contents/Resources/vendor/php/php"
-            if [ ! -f "$PHP" ]; then
-              echo "::error::mac 包缺少邮箱运行时：Contents/Resources/vendor/php/php"
-              exit 1
-            fi
-            if [ ! -x "$PHP" ]; then
-              echo "::error::内置 php 没有可执行权限"
-              exit 1
-            fi
-
-            # ── 邮箱 UI 定制层（email-overlay）：丢了 PHP 照样起得来，但界面是原版 ──
-            SNAP="$APP/Contents/Resources/vendor/snappymail"
-            IDX="$(ls "$SNAP"/snappymail/v/*/app/templates/Index.html 2>/dev/null | head -1)"
-            if [ -z "$IDX" ]; then
-              echo "::error::mac 包缺少 SnappyMail Index.html"
-              exit 1
-            fi
-            if ! grep -q "eb-mail-theme" "$IDX"; then
-              echo "::error::mac 包 Index.html 缺 eb-mail-theme 注入层（email-overlay 没应用，界面会是原版）"
-              exit 1
-            fi
-            for f in "$SNAP/plugins/mylog-provider/index.php" \
-                     "$SNAP/data/_data_/_default_/configs/application.ini" \
-                     "$SNAP/data/_data_/_default_/domains/default.json"; do
-              [ -f "$f" ] || { echo "::error::mac 包缺少 $f（email-overlay 没应用）"; exit 1; }
-            done
-            echo "OK mac 邮箱 UI 定制层"
-
-            APP_ARCH="$(lipo -archs "$APP/Contents/MacOS/$(basename "$APP" .app)" 2>/dev/null || echo unknown)"
-            PHP_ARCH="$(lipo -archs "$PHP" 2>/dev/null || echo unknown)"
-            echo "app arch=$APP_ARCH | php arch=$PHP_ARCH"
-            case "$APP_ARCH" in
-              *arm64*)  echo "$PHP_ARCH" | grep -q arm64  || { echo "::error::php 架构与 app 不匹配（app=$APP_ARCH php=$PHP_ARCH）"; exit 1; } ;;
-              *x86_64*) echo "$PHP_ARCH" | grep -q x86_64 || { echo "::error::php 架构与 app 不匹配（app=$APP_ARCH php=$PHP_ARCH）"; exit 1; } ;;
-            esac
-
-            codesign -dv --verbose=4 "$PHP" > "$RUNNER_TEMP/php-codesign.txt" 2>&1 || true
-            cat "$RUNNER_TEMP/php-codesign.txt"
-            if ! grep -q "Authority=Developer ID Application" "$RUNNER_TEMP/php-codesign.txt"; then
-              echo "::error::内置 php 没有被 Developer ID 签名（公证会 Invalid）"
-              exit 1
-            fi
-            grep -qE "flags=.*runtime" "$RUNNER_TEMP/php-codesign.txt" \
-              || echo "::warning::内置 php 未启用 hardened runtime"
-
-            # 只有与 runner 同架构时才真跑一次，否则（x64 包在 arm64 runner 上）需要 Rosetta
-            if echo "$PHP_ARCH" | grep -q "$NATIVE"; then
-              "$PHP" -m 2>&1 | tr 'A-Z' 'a-z' > "$RUNNER_TEMP/phpm.txt" || true
-              echo "php -v: $("$PHP" -v 2>&1 | head -1)"
-              for e in mbstring openssl sodium curl zip fileinfo pdo_sqlite sqlite3 sockets; do
-                grep -qx "$e" "$RUNNER_TEMP/phpm.txt" || echo "::warning::内置 php 缺少扩展 $e"
-              done
-            else
-              echo "php 架构($PHP_ARCH)与本机($NATIVE)不同，跳过执行检查"
-            fi
-
             codesign --verify --deep --strict --verbose=2 "$APP"
             xcrun stapler validate "$APP"
             spctl -a -vvv --type execute "$APP"
           done
 
-      # ── 失败时重投一次，把 issues 打出来并转成注解 ──
-      # job 日志需要 admin 权限才能下载，注解是公开可读的，所以关键信息走 ::error::
+      # 失败时重投一次，把 issues 打出来并转成注解
       - name: Dump notarization issues (on failure)
         if: failure()
         run: |

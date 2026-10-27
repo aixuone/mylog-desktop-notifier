@@ -18,10 +18,6 @@ const settingsStore = require('./lib/settingsStore')
 const workbenchStore = require('./lib/workbenchStore')
 const { createRingtoneResolver } = require('./lib/ringtoneResolver')
 const { createNotificationCenter } = require('./lib/notificationCenter')
-const emailCreds = require('./lib/emailCreds')
-const emailClient = require('./lib/emailClient')
-const emailSender = require('./lib/emailSender')
-const phpServer = require('./lib/phpServer')
 const appLog = require('./lib/appLog')
 
 // ─── Single instance lock ──────────────────────────
@@ -98,8 +94,6 @@ let workbenchWindow = null     // 个人工作台窗口单例
 let downloadsWindow = null     // 下载中心面板窗口单例
 let boardOverlayWindow = null  // 画板「真·OS 全屏」透明覆盖窗口单例
 let emailWindow = null         // 邮箱窗口单例
-let emailWindowHidden = false  // 当前是否为隐藏后台窗（Skill 按需拉起）
-let emailAutoWindow = false    // 邮箱窗是否由邮件 API 自动拉起（仅此类可被空闲回收）
 let lastSharedScreen = null    // 共享源（选源窗口路径，优先级高）：{ type:'screen'|'window', displayId, name }
 let shimShareSource = null     // 共享源（shim 路径：SDK 实际共享的那个源，桌面端的主路径）
 // 本机（桌面端）当前是否真的在共享屏幕。
@@ -328,7 +322,7 @@ function endRingingState() {
 function deriveTrayState() {
   // Priority: ringing > unread(IM+邮件) > default/gray
   if (isRinging) return 'ringing'  // Don't auto-override ringing
-  if (unreadCount > 0 || emailUnreadCount > 0) return 'unread'
+  if (unreadCount > 0) return 'unread'
   return hasConnectedClients() ? 'default' : 'gray'
 }
 
@@ -1057,7 +1051,7 @@ function updateUnreadCount(count) {
   // ringing 状态优先级最高，不自动覆盖
   if (trayIconState === 'ringing') return
 
-  if (unreadCount > 0 || emailUnreadCount > 0) {
+  if (unreadCount > 0) {
     setTrayState('unread')
   } else if (trayIconState === 'unread') {
     setTrayState(deriveTrayState())
@@ -1070,15 +1064,14 @@ function updateUnreadCount(count) {
 function updateTrayTooltip() {
   if (!tray) return
   const onlineCount = Array.from(connectedClients.values()).filter(u => u.connected).length
-  const mailPart = emailUnreadCount > 0 ? ` | ${emailUnreadCount} 封未读邮件` : ''
   if (onlineCount > 0) {
     const names = Array.from(connectedClients.values())
       .filter(u => u.connected)
       .map(u => u.userName || u.userId)
       .join(', ')
-    tray.setToolTip(`e日志-通知助手 | ${onlineCount} 人在线${unreadCount > 0 ? ` | ${unreadCount} 条未读` : ''}${mailPart}`)
+    tray.setToolTip(`e日志-通知助手 | ${onlineCount} 人在线${unreadCount > 0 ? ` | ${unreadCount} 条未读` : ''}`)
   } else {
-    tray.setToolTip(`e日志-通知助手 | 未连接${unreadCount > 0 ? ` | ${unreadCount} 条未读` : ''}${mailPart}`)
+    tray.setToolTip(`e日志-通知助手 | 未连接${unreadCount > 0 ? ` | ${unreadCount} 条未读` : ''}`)
   }
 }
 
@@ -1248,20 +1241,8 @@ function updateTrayMenu() {
 
   // 下载中心：查看网页下载任务，打开文件 / 打开所在目录
   menuItems.push({ label: '下载中心', click: () => openDownloadsWindow() })
-  // 邮箱：阿里企业邮箱收件查看（仅收件，不发信）
+  // 邮箱：打开阿里企业邮箱（固定地址窗口）
   menuItems.push({ label: '邮箱', click: () => openEmailWindow() })
-  // 邮件同步状态透出：失败可见、可点击重试（其余状态为禁用展示项）
-  const sync = emailSyncState || { state: 'off' }
-  const syncLabel =
-    sync.state === 'online' ? '邮件同步：已连接' :
-    sync.state === 'connecting' ? '邮件同步：连接中…' :
-    sync.state === 'error' ? `邮件同步：失败（${(sync.error || '未知错误').slice(0, 40)}，点击重试）` :
-    sync.state === 'off' ? '邮件同步：未启用' : '邮件同步：未知'
-  menuItems.push({
-    label: syncLabel,
-    enabled: sync.state === 'error',
-    click: sync.state === 'error' ? () => startEmailSync(true) : undefined,
-  })
   // 屏幕画板（桌面端专属）：把透明涂鸦层开到被共享的屏幕 / 当前显示器上。
   // 仅手动入口（需求4：开启屏幕共享不再自动开屏板，必须用户主动点击才开）。
   // menuItems.push({
@@ -1644,12 +1625,6 @@ function createHttpHandler() {
           res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }))
         }
       })
-    } else if (req.url && req.url.startsWith('/api/email/')) {
-      // 邮件读取/发送（WorkBuddy Skill 用）：仅 loopback；复用桌面端邮箱窗口已登录会话
-      const parsed = url.parse(req.url, true)
-      if (handleEmailApiProxy(req, res, parsed)) return
-      res.writeHead(404)
-      res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }))
     } else if (req.url === '/api/desktop/activate' && req.method === 'GET') {
       // 大文件上传等场景：激活桌面端窗口，提示用户在桌面窗口操作
       try {
@@ -1658,9 +1633,6 @@ function createHttpHandler() {
           if (!emailWindow.isVisible()) emailWindow.show()
           emailWindow.focus()
           activated = 'email'
-        } else {
-          openEmailWindow()
-          activated = 'email-opened'
         }
         if (mainPageWindow && !mainPageWindow.isDestroyed()) {
           if (!mainPageWindow.isVisible()) mainPageWindow.show()
@@ -1740,6 +1712,11 @@ app.whenReady().then(() => {
     appLog.log('Log', 'file=' + logInfo.file)
   } catch (e) {}
 
+  // 邮箱：启动时恢复上次登录的 SSO 会话 Cookie（重启免登），并定时兜底保存
+  restoreEmailSession()
+  const emailSaveTimer = setInterval(() => { saveEmailSession() }, 60000)
+  if (emailSaveTimer.unref) emailSaveTimer.unref()
+
   // Windows 系统通知（下载完成等）必须设置 AppUserModelId，否则 Notification 不显示
   try { app.setAppUserModelId('com.tianyuan.mylog.desktop-notifier') } catch (e) {}
 
@@ -1775,10 +1752,6 @@ app.whenReady().then(() => {
     settingsStore.load()
     // 回灌上次会话的下载历史（终态记录），重启后下载中心仍有记录
     downloads = settingsStore.loadDownloads()
-    // 若已配置阿里企业邮箱，启动后台实时同步（新邮件通知 + 推送窗口）
-    startEmailSync()
-    // 未读邮件角标轮询（未配置时内部自动跳过）
-    startEmailUnreadPolling()
     ringtoneResolver = createRingtoneResolver({
       settingsStore,
       assetsDir: __dirname,                       // assets/ 位于项目根
@@ -1858,6 +1831,8 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  // 退出前把邮箱 SSO 会话落盘（关窗时已存过，这里兜底确保最新）
+  saveEmailSession()
   stopStaleCleanup()
   if (blinkInterval) { clearInterval(blinkInterval); blinkInterval = null }
   // Force-close all WebSocket connections
@@ -1876,8 +1851,6 @@ app.on('before-quit', () => {
   if (toastWindow && !toastWindow.isDestroyed()) { toastWindow.destroy(); toastWindow = null }
   if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.destroy(); settingsWindow = null }
   if (workbenchWindow && !workbenchWindow.isDestroyed()) { workbenchWindow.destroy(); workbenchWindow = null }
-  // 关闭内置邮箱服务（PHP 子进程），避免残留
-  try { phpServer.stop() } catch (e) {}
 })
 
 // ─── System tray ──────────────────────────────────────────
@@ -3547,127 +3520,156 @@ function openDownloadsWindow() {
   })
 }
 
-// ─── Email window（SnappyMail：成熟开源邮箱界面，与邮箱服务商无关）──
-// 说明：邮箱界面不再自研，改用随包分发的 SnappyMail（AGPL-3.0）+ 便携版 PHP（免费开源）。
-// 主进程负责拉起本机 PHP 服务（见 lib/phpServer.js），窗口加载 http://127.0.0.1:<port>/。
-// 因为 SnappyMail 是第三方应用，本窗口**不注入**我们的 preload，避免把 IPC 桥暴露给它。
-let emailServerPort = 0
+// ─── 邮箱窗口（固定地址：阿里企业邮箱登录页）──
+// 网页端「邮箱」入口 / 托盘「邮箱」都会调用 openEmailWindow：直接打开一个加载
+// https://qiye.aliyun.com/alimail/auth/login 的独立窗口，不再内置 SnappyMail / PHP / IMAP。
 
-// 登录成功后把 SnappyMail 会话 cookie（含 smtoken）自动加密持久化，
-// 使后续 e日志 自动化读/发邮件可走「无窗口」路径（仅起 PHP + 重放令牌），不再创建渲染窗口。
-function attachAuthCapture(win) {
-  const sess = win.webContents.session
-  const grab = () => {
-    const baseUrl = mailSession.baseUrl || 'http://127.0.0.1:' + (mailSession.phpPort || '')
-    if (baseUrl.indexOf('127.0.0.1') < 0) return
-    sess.cookies.get({ url: baseUrl }).then((cookies) => {
-      if (cookies && cookies.some((c) => c.name === 'smtoken')) saveStoredAuthCookies(cookies)
-    }).catch(() => {})
+// 邮箱站点判定：允许在邮箱窗口内导航 / 弹窗的域名。
+// 关键：qiye.aliyun.com 会 302 跳转到 mailsso.mxhichina.com（真正输密码的 SSO 页），
+// 二者都必须在白名单内，否则 SSO 跳转被拦截、登录态永远进不了邮箱窗口 → 每次都要重登。
+function isEmailSite(url) {
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'https:') return false
+    const h = u.hostname
+    return h === 'qiye.aliyun.com'
+      || h.endsWith('.aliyun.com')
+      || h === 'mailsso.mxhichina.com'
+      || h.endsWith('.mxhichina.com')
+  } catch (e) {
+    return false
   }
-  sess.cookies.on('changed', () => grab())
-  win.webContents.on('did-finish-load', () => setTimeout(grab, 1500))
-  win.webContents.on('did-navigate', () => setTimeout(grab, 1500))
 }
 
-function openEmailWindow(options = {}) {
-  const hidden = !!options.hidden // 隐藏模式：Skill 按需拉起的后台窗口（不可见、不打扰用户）
-  if (emailWindow && !emailWindow.isDestroyed()) {
-    if (hidden) {
-      // 已有窗口（可见的）就直接复用，不再创建隐藏窗
-      emailWindowHidden = false
-      return
+// ─── 邮箱会话持久化：登录一次，关窗 / 整程序重启后免登 ───
+// Electron 的 persist: 分区虽会落盘，但在被强杀或某些退出路径下会丢；
+// 这里在「邮箱窗口隐藏 / 退出 / 定时」时把分区 Cookie 显式导出，启动时再写回，
+// 让阿里邮箱 SSO 会话在关窗与重启后都还在，避免每次重新输入密码。
+const EMAIL_PARTITION = 'persist:alimail'
+function emailSessionFile() {
+  return path.join(app.getPath('userData'), 'email', 'alimail-session.json')
+}
+function emailPartitionSession() {
+  return session.fromPartition(EMAIL_PARTITION)
+}
+// 仅凭已保存会话里是否存在「会话型」Cookie 粗略判断是否已登录：
+// 命中则直接打开邮箱主页（服务端凭 Cookie 续登），否则回退到登录入口页。
+function hasSavedEmailSession() {
+  try {
+    if (!fs.existsSync(emailSessionFile())) return false
+    let raw = fs.readFileSync(emailSessionFile(), 'utf8')
+    if (raw.startsWith('enc:')) {
+      if (safeStorage && safeStorage.isEncryptionAvailable()) raw = safeStorage.decryptString(Buffer.from(raw.slice(4), 'base64'))
+      else return false
     }
-    // 用户主动打开（菜单/侧边栏）：隐藏窗直接转为可见
-    emailWindowHidden = false
+    const cookies = JSON.parse(raw)
+    // 只要存在「除长期设备信任 Cookie 之外」的任意阿里邮箱 Cookie，就视为已登录，
+    // 直接进邮箱主页；避免写死具体会话 Cookie 名导致误判回退到登录页。
+    const NON_SESSION = ['alimail_sso_device_id']
+    return Array.isArray(cookies) && cookies.some(c => !NON_SESSION.includes(c.name))
+  } catch (e) { return false }
+}
+async function saveEmailSession() {
+  try {
+    const cookies = await emailPartitionSession().cookies.get({})
+    if (!cookies.length) return
+    const keep = cookies.filter(c => {
+      const d = (c.domain || '').toLowerCase()
+      return d.endsWith('aliyun.com') || d.endsWith('mxhichina.com')
+    })
+    if (!keep.length) return
+    const file = emailSessionFile()
+    const dir = path.dirname(file)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    let payload = JSON.stringify(keep)
+    if (safeStorage && safeStorage.isEncryptionAvailable()) {
+      try { payload = 'enc:' + safeStorage.encryptString(payload).toString('base64') } catch (e) {}
+    }
+    fs.writeFileSync(file, payload)
+    console.log('[Mail] saved email session cookies:', keep.length)
+  } catch (e) { console.error('[Mail] saveEmailSession failed:', e) }
+}
+async function restoreEmailSession() {
+  try {
+    const file = emailSessionFile()
+    if (!fs.existsSync(file)) return
+    let raw = fs.readFileSync(file, 'utf8')
+    if (raw.startsWith('enc:')) {
+      if (safeStorage && safeStorage.isEncryptionAvailable()) raw = safeStorage.decryptString(Buffer.from(raw.slice(4), 'base64'))
+      else return
+    }
+    const cookies = JSON.parse(raw)
+    if (!Array.isArray(cookies) || !cookies.length) return
+    const ses = emailPartitionSession()
+    for (const c of cookies) {
+      const host = (c.domain || '').startsWith('.') ? c.domain.slice(1) : c.domain
+      const url = (c.secure ? 'https' : 'http') + '://' + host + (c.path || '/')
+      const details = { url, name: c.name, value: c.value, secure: !!c.secure, httpOnly: !!c.httpOnly, sameSite: c.sameSite }
+      if (typeof c.expirationDate === 'number') details.expirationDate = c.expirationDate
+      try { await ses.cookies.set(details) } catch (e2) {}
+    }
+    console.log('[Mail] restored email session cookies:', cookies.length)
+  } catch (e) { console.error('[Mail] restoreEmailSession failed:', e) }
+}
+
+function openEmailWindow() {
+  if (emailWindow && !emailWindow.isDestroyed()) {
     if (emailWindow.isVisible()) emailWindow.focus()
     else emailWindow.show()
     return
   }
-  const loadingPage = path.join(__dirname, 'src', 'email-loading.html')
-  const winOpts = {
+  emailWindow = new BrowserWindow({
     width: 1180, height: 780,
     minWidth: 900, minHeight: 600,
-    show: !hidden, frame: true, autoHideMenuBar: true,
+    show: true, frame: true, autoHideMenuBar: true,
     backgroundColor: '#F6F8FA',
     title: '邮箱',
+    partition: 'persist:alimail',
     icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
-    // 独立 partition：把邮箱会话/Cookie 与主页窗口隔离，且便于单独关闭 HTTP 缓存
-    partition: 'email',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      autoplayPolicy: 'no-user-gesture-required',
-      // 仅此一个桥：登录成功后把账号/授权码回写给主进程（safeStorage 加密）
-      preload: path.join(__dirname, 'src', 'email-bridge-preload.js'),
     },
+  })
+  // 已保存会话则直接进邮箱主页（服务端凭 Cookie 续登，免输密码）；否则走登录入口页
+  if (hasSavedEmailSession()) {
+    emailWindow.loadURL('https://qiye.aliyun.com/alimail/')
+  } else {
+    emailWindow.loadURL('https://qiye.aliyun.com/alimail/auth/login')
   }
-  // 隐藏窗不绘制首屏，进一步压低渲染开销（JS 仍正常运行）
-  if (hidden) winOpts.paintWhenInitiallyHidden = false
-  emailWindowHidden = hidden
-  emailWindow = new BrowserWindow(winOpts)
-  // 关闭邮箱窗口的 HTTP 缓存：SnappyMail 默认 Cache-Control/Expires=3600s，
-  // 否则浏览器会缓存整页一小时，导致「改了 UI 却仍显示旧版」。关闭后每次加载都取最新渲染。
-  try { emailWindow.webContents.session.setCacheEnabled(false) } catch (e) {}
-  emailWindow.loadFile(loadingPage)
-
-  // 邮箱组件自身的地址（本机回环 + 指定端口）——只有它能留在窗口内导航
-  const isMailAppUrl = (url) => {
+  // 页面内新开窗口 / 跳转统一交给系统默认浏览器，避免在主窗口内嵌外部站点
+  emailWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
-      const u = new URL(url)
-      const loopback = u.hostname === '127.0.0.1' || u.hostname === 'localhost'
-      return !!(loopback && (!emailServerPort || u.port === String(emailServerPort)))
-    } catch (e) { return false }
-  }
-  // 邮件里的链接一律交给系统默认浏览器；仅放行 http/https/mailto
-  const openMailLink = (url) => {
-    try {
+      if (isEmailSite(url)) return { action: 'allow' } // SSO 弹窗 / 跳转在应用内完成，登录态才能落进本窗口
       const u = new URL(url)
       if (u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:') shell.openExternal(url)
     } catch (e) {}
-  }
-  emailWindow.webContents.setWindowOpenHandler(({ url }) => {
-    openMailLink(url)
     return { action: 'deny' }
   })
   emailWindow.webContents.on('will-navigate', (e, url) => {
-    if (isMailAppUrl(url)) return       // 邮箱组件自身的前端路由
-    if (/^file:\/\//i.test(url)) return // 本地启动页 / 错误页
+    if (isEmailSite(url)) return // 允许在阿里邮箱及 SSO 子域（含 mailsso.mxhichina.com）内导航
     e.preventDefault()
-    openMailLink(url)
+    try { shell.openExternal(url) } catch (e2) {}
   })
-  emailWindow.on('closed', () => {
-    emailWindow = null
-    emailServerPort = 0
-    emailWindowHidden = false
-    emailAutoWindow = false
-    // 窗口销毁则其 Session/Cookie 随之失效，清理旧会话引用，下次按需重建
-    mailSession.baseUrl = null
-    mailSession.session = null
-    mailSession.phpPort = null
-  })
-
-  // 登录成功即自动持久化会话 cookie，供无窗口路径重放
-  attachAuthCapture(emailWindow)
-
-  // 拉起内置邮箱服务并加载界面
-  phpServer.ensureStarted().then((st) => {
-    if (!emailWindow || emailWindow.isDestroyed()) return
-    if (st && st.ok) {
-      emailServerPort = st.port
-      // 缓存 SnappyMail 会话，供 Skill 通过 /api/email/* 代理读写邮件（复用已登录会话，无需再次授权）
-      mailSession.baseUrl = 'http://127.0.0.1:' + st.port
-      mailSession.phpPort = st.port
-      mailSession.session = emailWindow.webContents.session
-      emailWindow.loadURL('http://127.0.0.1:' + st.port + '/')
-    } else {
-      emailWindow.loadFile(loadingPage, { query: { error: (st && st.error) || '未知错误' } })
+  // 关闭即隐藏（保留会话与页面），不销毁：登录态在内存里，重开免登；真正退出由 isQuitting 控制
+  emailWindow.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault()
+      emailWindow.hide()
     }
-  }).catch((err) => {
-    if (!emailWindow || emailWindow.isDestroyed()) return
-    emailWindow.loadFile(loadingPage, { query: { error: String((err && err.message) || err) } })
   })
+  // 隐藏（关窗）时把当前 SSO 会话落盘，确保下次/重启后能续登
+  emailWindow.on('hide', () => { saveEmailSession() })
+  emailWindow.on('closed', () => { emailWindow = null })
 }
+
+// 网页侧边栏「邮箱」入口 → 打开固定地址邮箱窗口
+ipcMain.on('email:open-window', () => {
+  console.log('[Mail] 网页侧边栏请求打开邮箱窗口')
+  openEmailWindow()
+})
+
 
 // 当前用户可见的下载记录（未登录 userId 为空时回退为全部，兼容旧行为）
 function visibleDownloads() {
@@ -3809,844 +3811,7 @@ ipcMain.handle('downloads:pick-dir', async () => {
   }
 })
 
-// ─── Email (阿里企业邮箱：收件 + 查看) ──────────────
-// 阿里云报错翻译成中文，降低用户困惑
-function humanizeImapError(err) {
-  const m = (err && (err.message || String(err))) || '未知错误'
-  if (/Authentication failed|Invalid credentials|LOGIN/i.test(m)) return '认证失败：请确认填的是「客户端授权码」而非登录密码，且授权码有效、未被重置。'
-  if (/ECONNREFUSED|ENOTFOUND|getaddrinfo|ETIMEDOUT|timeout/i.test(m)) return '无法连接服务器：请检查网络，并确认 IMAP 地址/端口正确（标准：imap.qiye.aliyun.com:993）。'
-  if (/Certificate|SSL|TLS/i.test(m)) return 'SSL/TLS 握手失败：请确认端口 993 且勾选了安全连接（SSL）。'
-  return '连接出错：' + m
-}
-
-// 组装完整配置（含解密后的授权码）；未配置或解密失败返回 null
-function getEmailConfig() {
-  const s = settingsStore.get()
-  const e = (s && s.email) || {}
-  if (!e.configured) return null
-  const auth = emailCreds.loadAuthCode()
-  if (!auth) return null
-  return Object.assign({}, e, { authCode: auth })
-}
-
-// 启动后台 IDLE 实时监听（仅在已配置时）
-let emailSyncStarted = false
-function startEmailSync(force) {
-  if (force) emailSyncStarted = false
-  const cfg = getEmailConfig()
-  if (!cfg || emailSyncStarted) return
-  emailSyncStarted = true
-  emailClient.startIdle(cfg, cfg.authCode, (msgs) => {
-    try {
-      for (const m of (msgs || [])) {
-        const who = m.from ? (m.from.name || m.from.address) : '未知发件人'
-        notifyNewMail('新邮件：' + who, m.subject || '')
-      }
-      if (emailWindow && !emailWindow.isDestroyed()) {
-        emailWindow.webContents.send('email:new-mail', msgs)
-      }
-      refreshEmailUnread() // 新邮件到达立即刷新角标
-    } catch (e) {}
-  }, (st) => {
-    // 同步状态 → 托盘菜单；同一类失败「只提示一次」（跨启动持久化抑制），
-    // 避免授权码失效等持久故障每次打开都弹窗轰炸；错误类别变化或连接成功（online）
-    // 后才解除抑制。失败状态始终可在托盘菜单查看，故弹窗仅作一次性提醒。
-    emailSyncState = st || { state: 'off', error: null, at: Date.now() }
-    try { updateTrayMenu() } catch (e) {}
-    if (emailSyncState.state === 'error') {
-      if (!emailSyncErrorNotified && !emailErrorToastSuppressed(emailSyncState.error)) {
-        emailSyncErrorNotified = true
-        notify('邮件同步失败', (emailSyncState.error || '未知错误') + '｜可在托盘菜单重试', true)
-        recordEmailErrorToast(emailSyncState.error)
-      }
-    }
-    if (emailSyncState.state === 'online') {
-      emailSyncErrorNotified = false
-      clearEmailErrorToastRecord()
-    }
-  }).catch((e) => {
-    emailSyncStarted = false
-    emailSyncState = { state: 'error', error: (e && e.message) || String(e), at: Date.now() }
-    try { updateTrayMenu() } catch (e2) {}
-    console.error('[Email] idle start failed:', e && e.message)
-  })
-}
-
-// ─── 邮件同步状态（托盘透出）+ 未读角标 ───
-let emailSyncState = { state: 'off', error: null, at: 0 }
-// 本次会话内是否已为「当前错误类别」弹过系统通知（同会话去重）
-let emailSyncErrorNotified = false
-let emailUnreadCount = 0
-let emailUnreadTimer = null
-
-// ─── 邮箱同步失败弹窗「跨启动只提示一次」──
-// 按错误类别（auth/network/other）持久化到 settings.email.syncErrorNotifiedSignature：
-// 同一类持久故障不再每次启动弹窗；类别变化或连接成功（online）后才重新提示一次。
-function emailErrorCategory(msg) {
-  const m = String(msg || '')
-  if (/认证失败|授权码|LOGIN failed|Authentication failed|Invalid credentials/i.test(m)) return 'auth'
-  if (/无法连接|网络|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|timeout|Certificate|SSL|TLS/i.test(m)) return 'network'
-  return 'other'
-}
-function emailErrorToastSuppressed(msg) {
-  const e = (settingsStore.get() && settingsStore.get().email) || {}
-  return e.syncErrorNotifiedSignature === emailErrorCategory(msg)
-}
-function recordEmailErrorToast(msg) {
-  const s = settingsStore.get()
-  const e = Object.assign({}, s.email || {})
-  e.syncErrorNotifiedSignature = emailErrorCategory(msg)
-  settingsStore.set({ email: e })
-}
-function clearEmailErrorToastRecord() {
-  // 注意：settingsStore 的 deepMerge 不会删除旧 key，故用 null 覆盖（null 可正常覆盖），
-  // 使后续同类错误重新获得「提示一次」的机会（例如用户修复授权码后再次失败）。
-  const s = settingsStore.get()
-  const e = Object.assign({}, s.email || {})
-  e.syncErrorNotifiedSignature = null
-  settingsStore.set({ email: e })
-}
-
-// 带点击跳转的新邮件通知：点系统通知直接打开邮箱窗
-function notifyNewMail(title, body) {
-  try {
-    if (Notification.isSupported && Notification.isSupported()) {
-      const n = new Notification({ title, body })
-      n.on('click', () => {
-        try { openEmailWindow() } catch (e) { console.error('[Email] open from notification failed:', e && e.message) }
-      })
-      n.show()
-    }
-  } catch (e) { /* 通知失败不影响主流程 */ }
-}
-
-// 轮询 INBOX 未读数（60s；失败静默——连接状态由 onState 负责）
-function startEmailUnreadPolling() {
-  if (emailUnreadTimer) return
-  emailUnreadTimer = setInterval(() => {
-    const cfg = getEmailConfig()
-    if (!cfg) return
-    refreshEmailUnread().catch(() => {})
-  }, 60000)
-}
-
-async function refreshEmailUnread() {
-  const cfg = getEmailConfig()
-  if (!cfg) return setEmailUnreadCount(0)
-  try {
-    const r = await emailClient.fetchUnseen(cfg, cfg.authCode)
-    if (r && typeof r.unseen === 'number') setEmailUnreadCount(r.unseen)
-  } catch (e) { /* 静默 */ }
-}
-
-function setEmailUnreadCount(n) {
-  n = Math.max(0, n | 0)
-  if (n === emailUnreadCount) return
-  emailUnreadCount = n
-  if (trayIconState !== 'ringing') {
-    if (unreadCount > 0 || emailUnreadCount > 0) setTrayState('unread')
-    else if (trayIconState === 'unread') setTrayState(deriveTrayState())
-  }
-  updateTrayTooltip()
-}
-
-ipcMain.handle('email:config-load', () => {
-  const s = settingsStore.get()
-  const e = (s && s.email) || {}
-  return {
-    configured: !!e.configured,
-    email: e.email || '',
-    imapHost: e.imapHost || 'imap.qiye.aliyun.com',
-    imapPort: e.imapPort || 993,
-    imapSecure: e.imapSecure !== false,
-  }
-})
-
-ipcMain.handle('email:config-save', (e, cfg) => {
-  const store = {
-    configured: true,
-    email: cfg.email,
-    imapHost: cfg.imapHost || 'imap.qiye.aliyun.com',
-    imapPort: cfg.imapPort || 993,
-    imapSecure: cfg.imapSecure !== false,
-    smtpHost: cfg.smtpHost || 'smtp.qiye.aliyun.com',
-    smtpPort: cfg.smtpPort || 465,
-    smtpSecure: cfg.smtpSecure !== false,
-  }
-  settingsStore.set({ email: store })
-  if (cfg.authCode) {
-    try { emailCreds.saveAuthCode(cfg.authCode) } catch (err) { return { ok: false, error: '授权码加密保存失败：' + err.message } }
-  }
-  // 凭据可能变化：先复位旧连接，再用新凭据重启后台同步
-  emailClient.resetClients().catch(() => {}).then(() => startEmailSync(true))
-  return { ok: true }
-})
-
-ipcMain.handle('email:test', async (e, cfg) => {
-  try {
-    const auth = cfg.authCode || emailCreds.loadAuthCode()
-    if (!auth) return { ok: false, error: '缺少授权码' }
-    const config = Object.assign({}, cfg)
-    if (!config.imapHost || !config.imapPort) return { ok: false, error: '请填写 IMAP 服务器与端口' }
-    const res = await emailClient.testConnection(config, auth)
-    return { ok: true, folderCount: res.folderCount }
-  } catch (err) {
-    return { ok: false, error: humanizeImapError(err) }
-  }
-})
-
-ipcMain.handle('email:mailboxes', async () => {
-  const cfg = getEmailConfig()
-  if (!cfg) return { ok: false, error: '未配置邮箱' }
-  try { return { ok: true, mailboxes: await emailClient.listMailboxes(cfg, cfg.authCode) } }
-  catch (err) { return { ok: false, error: humanizeImapError(err) } }
-})
-
-ipcMain.handle('email:messages', async (e, folder, limit) => {
-  const cfg = getEmailConfig()
-  if (!cfg) return { ok: false, error: '未配置邮箱' }
-  try { return { ok: true, messages: await emailClient.fetchMessages(cfg, cfg.authCode, folder, limit || 60) } }
-  catch (err) { return { ok: false, error: humanizeImapError(err) } }
-})
-
-ipcMain.handle('email:message', async (e, folder, uid) => {
-  const cfg = getEmailConfig()
-  if (!cfg) return { ok: false, error: '未配置邮箱' }
-  try { return { ok: true, message: await emailClient.fetchMessage(cfg, cfg.authCode, folder, uid) } }
-  catch (err) { return { ok: false, error: humanizeImapError(err) } }
-})
-
-// 附件路径必须落在邮箱附件目录内（防止渲染层传入任意路径被打开/复制）
-function isEmailAttachmentPath(file) {
-  try {
-    if (!file || typeof file !== 'string') return false
-    const dir = path.join(app.getPath('userData'), 'emailAttachments')
-    const resolved = path.resolve(file)
-    const rel = path.relative(dir, resolved)
-    return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel) && fs.existsSync(resolved)
-  } catch (e) { return false }
-}
-
-ipcMain.handle('email:open-attachment', async (e, file) => {
-  try {
-    if (!isEmailAttachmentPath(file)) return { ok: false, error: '附件文件不存在或路径非法' }
-    const err = await shell.openPath(file)
-    return err ? { ok: false, error: err } : { ok: true }
-  } catch (err) { return { ok: false, error: err.message } }
-})
-
-ipcMain.handle('email:save-attachment', async (e, file) => {
-  try {
-    if (!isEmailAttachmentPath(file)) return { ok: false, error: '附件文件不存在或路径非法' }
-    const opts = { defaultPath: path.basename(file) }
-    const parent = (emailWindow && !emailWindow.isDestroyed()) ? emailWindow : (BrowserWindow.getFocusedWindow() || null)
-    const { canceled, filePath } = parent
-      ? await dialog.showSaveDialog(parent, opts)
-      : await dialog.showSaveDialog(opts)
-    if (canceled || !filePath) return { ok: false, canceled: true }
-    fs.copyFileSync(file, filePath)
-    return { ok: true, filePath }
-  } catch (err) { return { ok: false, error: err.message } }
-})
-
-// 网页侧边栏「邮箱」入口 → 打开邮箱窗口（与托盘右键「邮箱」同源，复用 openEmailWindow）
-ipcMain.on('email:open-window', () => {
-  console.log('[Email] 网页侧边栏请求打开邮箱窗口')
-  openEmailWindow()
-})
-
-// ─── Email HTTP API（供 WorkBuddy Skill；仅 loopback；按需复用邮箱会话）───
-// 说明：桌面端「邮箱」使用 SnappyMail（内置 PHP 服务，端口动态），登录态凭据
-// （PHP 会话 Cookie + smtoken CSRF Cookie + SnappyMail 认证 Cookie）持久保存在 userData 中。
-// 本接口不维护独立 IMAP 凭据，而是按需**拉起隐藏后台窗**（show:false）加载邮箱组件、
-// 复用其已登录会话代理 SnappyMail REST API；连续 60s 无邮件请求即销毁窗口并停止 PHP 服务，
-// **内存零常驻**。仅在从未登录过时，才弹一次可见窗引导用户登录（仅首次）。
-//
-// SnappyMail API 契约（来自源码）：
-//   入口：POST http://127.0.0.1:<phpPort>/?/Json/   body(JSON): {"Action":"<动作>", ...}
-//   动作：Folders / MessageList / Message / SendMessage / AccountsAndIdentities ...
-//   鉴权：请求自动带窗口 Session 的全部 Cookie；POST 需 CSRF = smtoken Cookie 的值，经 X-Sm-Token 头传递。
-
-// 复用邮箱窗口 Session（在 openEmailWindow 内捕获）
-const mailSession = { baseUrl: null, session: null, phpPort: null }
-
-// ── 邮件后台窗（隐藏窗）的空闲回收：Skill 用完即走，不常驻内存 ──
-// 设计：邮件窗口只对「用户主动打开」的可见窗常驻；API 按需拉起的隐藏窗，
-// 在连续 60s 无邮件请求后自动销毁，并停掉内置 PHP 服务——内存零常驻。
-let emailIdleTimer = null
-function armEmailIdleReaper() {
-  if (!emailAutoWindow || !emailWindowHidden) return
-  if (!emailWindow || emailWindow.isDestroyed()) return
-  if (emailIdleTimer) clearTimeout(emailIdleTimer)
-  emailIdleTimer = setTimeout(() => {
-    emailIdleTimer = null
-    try {
-      if (emailWindow && !emailWindow.isDestroyed() && emailWindowHidden && emailAutoWindow) {
-        emailWindow.destroy() // 触发 closed：清理 mailSession / 状态位
-      }
-    } catch (e) {}
-    try { phpServer.stop() } catch (e) {}
-    console.log('[Email] 后台邮箱窗空闲超时，已回收（PHP 服务已停止）')
-  }, 60000)
-}
-
-// ── 无窗口（headless）路径的 PHP 空闲回收 ──
-// e日志 自动化读/发邮件走「存储令牌 + 仅起 PHP」的无窗口路径：没有 Chromium 渲染窗口可回收，
-// 所以单独用计时器，连续 60s 无请求后停掉 PHP，让邮箱内存增量回到 ~0。窗口存在时不回收（避免误杀用户正用的 UI）。
-let phpIdleTimer = null
-function armPhpIdleReaper() {
-  if (phpIdleTimer) clearTimeout(phpIdleTimer)
-  phpIdleTimer = setTimeout(() => {
-    phpIdleTimer = null
-    if (emailWindow && !emailWindow.isDestroyed()) return
-    try { phpServer.stop() } catch (e) {}
-    mailSession.baseUrl = null
-    mailSession.phpPort = null
-    mailSession.session = null
-    console.log('[Email] headless 路径空闲超时，已停止 PHP 服务（内存回收）')
-  }, 60000)
-}
-
-// ── 邮箱认证令牌持久化（内存极小化核心）────────────────────────
-// 登录成功后把 SnappyMail 的会话 cookie（含 smtoken）加密落盘；
-// 之后 e日志 自动化读/发邮件走「无窗口」路径：仅起 PHP + 重放存储令牌，
-// 完全不创建 Chromium 渲染窗口，空闲即停 PHP，邮箱内存增量≈0。
-const EMAIL_AUTH_PATH = () => path.join(app.getPath('userData'), 'email', 'auth-cookies.enc')
-let cachedStoredAuth = null
-
-function saveStoredAuthCookies(cookies) {
-  try {
-    if (!cookies || !cookies.length) return
-    const payload = JSON.stringify(cookies)
-    let buf
-    if (safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable()) {
-      buf = safeStorage.encryptString(payload)
-    } else {
-      buf = Buffer.from(payload, 'utf8')
-    }
-    const dir = path.dirname(EMAIL_AUTH_PATH())
-    fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(EMAIL_AUTH_PATH(), buf)
-    cachedStoredAuth = cookies
-  } catch (e) {
-    console.warn('[email] saveStoredAuthCookies failed:', e && e.message)
-  }
-}
-
-function loadStoredAuthCookies() {
-  if (cachedStoredAuth) return cachedStoredAuth
-  try {
-    if (!fs.existsSync(EMAIL_AUTH_PATH())) return null
-    const buf = fs.readFileSync(EMAIL_AUTH_PATH())
-    let payload
-    if (safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable()) {
-      payload = safeStorage.decryptString(buf)
-    } else {
-      payload = buf.toString('utf8')
-    }
-    cachedStoredAuth = JSON.parse(payload)
-    return cachedStoredAuth
-  } catch (e) {
-    console.warn('[email] loadStoredAuthCookies failed:', e && e.message)
-    return null
-  }
-}
-
-function clearStoredAuthCookies() {
-  cachedStoredAuth = null
-  try { fs.unlinkSync(EMAIL_AUTH_PATH()) } catch (e) {}
-}
-
-// 统一解析当前可用的认证来源：
-//   1) 优先存活窗口会话（用户正开着邮箱 UI，或刚自动拉起用于首次登录）；
-//   2) 否则回退「存储令牌 + 起 PHP」的无窗口路径（内存极小化的常态路径）。
-async function resolveEmailAuth() {
-  if (mailSession.baseUrl && mailSession.session) {
-    const cookies = await mailSession.session.cookies.get({ url: mailSession.baseUrl }).catch(() => [])
-    if (cookies.length) {
-      return {
-        baseUrl: mailSession.baseUrl,
-        cookieHeader: cookies.map((c) => c.name + '=' + c.value).join('; '),
-        smToken: (cookies.find((c) => c.name === 'smtoken') || {}).value || '',
-      }
-    }
-  }
-  const st = await phpServer.ensureStarted().catch(() => null)
-  if (st && st.ok) {
-    const baseUrl = 'http://127.0.0.1:' + st.port
-    const cookies = loadStoredAuthCookies()
-    if (cookies && cookies.length) {
-      return {
-        baseUrl,
-        cookieHeader: cookies.map((c) => c.name + '=' + c.value).join('; '),
-        smToken: (cookies.find((c) => c.name === 'smtoken') || {}).value || '',
-      }
-    }
-  }
-  return null
-}
-
-async function ensureMailSession() {
-  // 仅返回存活窗口会话；无窗口时交由 resolveEmailAuth 走存储令牌路径
-  if (!mailSession.baseUrl || !mailSession.session) {
-    try {
-      const st = phpServer.status && phpServer.status()
-      if (st && st.running && st.port) {
-        mailSession.baseUrl = 'http://127.0.0.1:' + st.port
-        mailSession.phpPort = st.port
-      }
-    } catch (e) {}
-    if (!mailSession.session && emailWindow && !emailWindow.isDestroyed()) {
-      mailSession.session = emailWindow.webContents.session
-    }
-  }
-  if (!mailSession.baseUrl || !mailSession.session) return null
-  return mailSession
-}
-
-// 代理一次 SnappyMail REST 调用：复用已登录会话（窗口或存储令牌皆可）
-async function snappyApi(action, params = {}, auth) {
-  if (!auth) auth = await resolveEmailAuth()
-  if (!auth) throw new Error('EMAIL_SESSION_MISSING')
-  const cookieHeader = auth.cookieHeader
-  const smToken = auth.smToken
-  const baseUrl = auth.baseUrl
-  const body = JSON.stringify(Object.assign({ Action: action }, params))
-  const u = new URL(baseUrl + '/?/Json/')
-  return new Promise((resolve, reject) => {
-    const req = http.request(
-      {
-        hostname: u.hostname,
-        port: u.port,
-        path: u.pathname + u.search,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          Cookie: cookieHeader,
-          'X-Sm-Token': smToken,
-        },
-      },
-      (res) => {
-        let d = ''
-        res.on('data', (c) => (d += c))
-        res.on('end', () => {
-          let json
-          try { json = JSON.parse(d) } catch (e) { return reject(new Error('BAD_RESPONSE: ' + d.slice(0, 200))) }
-          if (json && json.ErrorCode) return reject(new Error('SNAPPYMAIL_ERROR: ' + (json.ErrorMessage || json.ErrorCode)))
-          resolve(json)
-        })
-      },
-    )
-    req.on('error', reject)
-    req.write(body)
-    req.end()
-  })
-}
-
-// ── 响应归一化（把 SnappyMail 原生结构整理成 Skill 易读字段）──
-function _addr(x) {
-  if (!x) return { name: '', address: '' }
-  if (typeof x === 'string') return { name: '', address: x }
-  return { name: x.Name || x.name || '', address: x.Email || x.email || x.Address || '' }
-}
-function _arr(x) { return Array.isArray(x) ? x : x ? [x] : [] }
-function _toMs(v) {
-  if (v == null) return 0
-  const n = Number(v)
-  if (Number.isFinite(n)) return n > 1e12 ? n : n * 1000 // 秒→毫秒
-  const t = Date.parse(v)
-  return isNaN(t) ? 0 : t
-}
-function normalizeFolders(r) {
-  const res = (r && r.Result) || {}
-  return (res.Folders || []).map((f) => ({
-    name: f.FullName || f.Name || '',
-    fullName: f.FullName || f.Name || '',
-    unread: f.Unread || 0,
-    exists: f.Exists || 0,
-    isSystem: !!f.IsSystem,
-  }))
-}
-function normalizeMessages(r) {
-  const res = (r && r.Result) || {}
-  const mr = res.MessageResult || {}
-  return (mr.Messages || []).map((m) => ({
-    uid: String(m.Uid != null ? m.Uid : ''),
-    subject: m.Subject || '',
-    from: _addr(m.From),
-    to: _arr(m.To).map(_addr),
-    date: _toMs(m.TimeStamp != null ? m.TimeStamp : m.Date),
-    seen: !!m.IsSeen,
-    flagged: !!m.IsFlagged,
-    hasAttachment: !!m.HasAttachments,
-    size: m.Size || 0,
-  }))
-}
-function normalizeMessage(r) {
-  const res = (r && r.Result) || {}
-  const m = res.Message || res
-  return {
-    subject: m.Subject || '',
-    from: _addr(m.From),
-    to: _arr(m.To).map(_addr),
-    cc: _arr(m.Cc).map(_addr),
-    date: _toMs(m.TimeStamp != null ? m.TimeStamp : m.Date),
-    text: m.Text || '',
-    html: m.Html || '',
-    attachments: (m.Attachments || []).map((a) => ({
-      name: a.FileName || a.Name || '',
-      size: a.Size || 0,
-      contentType: a.MimeType || '',
-    })),
-  }
-}
-function filterMessages(out, q) {
-  const str = (v) => (typeof v === 'string' ? v.trim() : '')
-  let r = out
-  if (q.unreadOnly === '1' || q.unreadOnly === 'true') r = r.filter((m) => !m.seen)
-  if (str(q.from)) {
-    const kw = str(q.from).toLowerCase()
-    r = r.filter(
-      (m) =>
-        (m.from && ((m.from.name || '').toLowerCase().includes(kw) || (m.from.address || '').toLowerCase().includes(kw))) ||
-        (m.to || []).some((t) => ((t.name || '').toLowerCase().includes(kw) || (t.address || '').toLowerCase().includes(kw))),
-    )
-  }
-  if (str(q.to)) {
-    const kw = str(q.to).toLowerCase()
-    r = r.filter((m) => (m.to || []).some((t) => ((t.name || '').toLowerCase().includes(kw) || (t.address || '').toLowerCase().includes(kw))))
-  }
-  if (str(q.since)) {
-    const t = new Date(str(q.since)).getTime()
-    if (!isNaN(t)) r = r.filter((m) => m.date >= t)
-  }
-  if (str(q.before)) {
-    const t = new Date(str(q.before)).getTime()
-    if (!isNaN(t)) r = r.filter((m) => m.date <= t)
-  }
-  return r
-}
-
-/**
- * 确保邮箱会话就绪：按需拉起隐藏后台窗（不可见、不打扰），等待 PHP + SnappyMail + 登录态恢复。
- * 返回 { ready, needLogin }。首次从未登录过 → ready=false, needLogin=true（由调用方弹可见窗引导登录）。
- * 该逻辑同时被 /api/email/open-window 与数据类接口复用，使任意邮件请求都能"自愈"会话，
- * 无需客户端先做两阶段 open-window 调用，也无需用户手动打开邮箱页面。
- */
-async function ensureEmailSessionReady() {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  const waitReady = async (ms) => {
-    const t0 = Date.now()
-    while (Date.now() - t0 < ms) {
-      try {
-        const r = await snappyApi('Folders')
-        if (r && r.Result && Array.isArray(r.Result.Folders)) return true
-      } catch (e) {}
-      await sleep(400)
-    }
-    return false
-  }
-  let ready = await waitReady(1000)
-  if (!ready && emailWindow && !emailWindow.isDestroyed() && !emailWindowHidden) {
-    ready = await waitReady(15000) // 用户可见窗已开：等登录/加载
-  }
-  if (!ready && (!emailWindow || emailWindow.isDestroyed())) {
-    emailAutoWindow = true
-    openEmailWindow({ hidden: true })
-    ready = await waitReady(18000) // PHP 启动 + 隐藏窗加载 + 登录态恢复
-  }
-  let needLogin = false
-  if (!ready) {
-    // 隐藏窗也未就绪 → 收掉隐藏窗，弹可见窗让用户完成首次登录
-    try {
-      if (emailWindow && !emailWindow.isDestroyed() && emailWindowHidden) emailWindow.destroy()
-    } catch (e) {}
-    emailAutoWindow = false
-    openEmailWindow({ hidden: false })
-    needLogin = true
-  }
-  // 成功路径也要臂上空闲计时器，保证隐藏窗会被回收
-  if (ready && emailAutoWindow && emailWindowHidden) armEmailIdleReaper()
-  return { ready, needLogin }
-}
-
-function handleEmailApiProxy(req, res, parsed) {
-  const remote = (req.socket && (req.socket.remoteAddress || '')) || ''
-  const isLoopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
-  if (!isLoopback) {
-    res.writeHead(403)
-    res.end(JSON.stringify({ ok: false, error: 'FORBIDDEN: only loopback allowed' }))
-    return true
-  }
-  const p = parsed.pathname
-  if (p === '/api/email/send' && req.method !== 'POST') {
-    res.writeHead(405); res.end(JSON.stringify({ ok: false, error: 'METHOD_NOT_ALLOWED' })); return true
-  }
-  if (p !== '/api/email/send' && !(p === '/api/email/open-window' && req.method === 'POST') && req.method !== 'GET') {
-    res.writeHead(405); res.end(JSON.stringify({ ok: false, error: 'METHOD_NOT_ALLOWED' })); return true
-  }
-
-  const q = parsed.query || {}
-  const str = (v) => (typeof v === 'string' ? v.trim() : '')
-  const num = (v, d) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d }
-
-  ;(async () => {
-    // 每个邮件请求都刷新空闲计时器：窗口路径回收窗口+PHP；headless 路径回收 PHP（无窗口可回收）
-    armEmailIdleReaper()
-    armPhpIdleReaper()
-    try {
-      if (p === '/api/email/session') {
-        return res.end(JSON.stringify({
-          ok: true,
-          hasSession: !!mailSession.baseUrl,
-          phpPort: mailSession.phpPort,
-          windowOpen: !!(emailWindow && !emailWindow.isDestroyed()),
-          hidden: !!emailWindowHidden,
-        }))
-      }
-      if (p === '/api/email/open-window' && req.method === 'POST') {
-        // 优先无窗口存储令牌路径：已登录过则根本不建窗口（内存极小化）；
-        // 仅首次使用（无令牌、无窗口）才拉起窗口引导登录。
-        const auth = await resolveEmailAuth()
-        if (auth) {
-          return res.end(JSON.stringify({ ok: true, hasSession: true, needLogin: false, phpPort: mailSession.phpPort, windowOpen: !!(emailWindow && !emailWindow.isDestroyed()), hidden: !!emailWindowHidden }))
-        }
-        const { ready, needLogin } = await ensureEmailSessionReady()
-        return res.end(JSON.stringify({
-          ok: true,
-          hasSession: ready,
-          needLogin,
-          phpPort: mailSession.phpPort,
-          windowOpen: !!(emailWindow && !emailWindow.isDestroyed()),
-          hidden: !!emailWindowHidden,
-        }))
-      }
-      if (p === '/api/email/whoami') {
-        const cfg = getEmailConfig()
-        return res.end(JSON.stringify({ ok: true, email: cfg ? cfg.email : '' }))
-      }
-      // 以下均依赖已登录的邮箱会话。优先「无窗口」存储令牌路径（内存极小化），
-      // 仅当从未登录过（无存储令牌、无窗口）才回退到拉起窗口引导首次登录。
-      let auth = await resolveEmailAuth()
-      if (!auth) {
-        const er = await ensureEmailSessionReady()
-        if (er.needLogin) {
-          return res.end(JSON.stringify({ ok: false, error: 'EMAIL_SESSION_MISSING', needLogin: true, hint: '首次使用请在桌面端「邮箱」窗口登录一次' }))
-        }
-        auth = await resolveEmailAuth()
-      }
-      if (!auth) {
-        return res.end(JSON.stringify({ ok: false, error: 'EMAIL_SESSION_MISSING', hint: '邮箱会话未就绪，请在桌面端「邮箱」窗口登录一次' }))
-      }
-      if (p === '/api/email/mailboxes') {
-        const r = await snappyApi('Folders')
-        return res.end(JSON.stringify({ ok: true, mailboxes: normalizeFolders(r) }))
-      }
-      if (p === '/api/email/messages') {
-        const folder = str(q.folder) || 'INBOX'
-        // 带时间范围(since/before)时过滤是客户端按取样窗口做的，必须放大取样量，
-        // 否则会静默漏掉窗口早期的邮件（见 SKILL ⑧-quater）。
-        const hasRange = !!(q.since || q.before)
-        const limit = Math.min(q.limit ? num(q.limit, 200) : hasRange ? 1000 : 200, 1000)
-        const r = await snappyApi('MessageList', { folder, limit, offset: 0, search: '' })
-        let out = normalizeMessages(r)
-        out = filterMessages(out, q)
-        return res.end(JSON.stringify({ ok: true, folder, count: out.length, messages: out }))
-      }
-      if (p === '/api/email/message') {
-        const folder = str(q.folder) || 'INBOX'
-        const uid = str(q.uid)
-        if (!uid) return res.end(JSON.stringify({ ok: false, error: 'MISSING_UID' }))
-        const r = await snappyApi('Message', { folder, uid, mimeType: '', partId: '', all: 1 })
-        return res.end(JSON.stringify({ ok: true, message: normalizeMessage(r) }))
-      }
-      if (p === '/api/email/send') {
-        let body = ''
-        try { for await (const c of req) body += c } catch (e) {}
-        let pl = {}
-        try { pl = JSON.parse(body || '{}') } catch (e) {
-          res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: 'BAD_JSON_BODY' }))
-        }
-        if (!pl.to) return res.end(JSON.stringify({ ok: false, error: 'MISSING_TO' }))
-        const r = await snappyApi('SendMessage', {
-          to: pl.to,
-          subject: pl.subject || '',
-          plain: pl.text || '',
-          html: pl.html || '',
-          cc: pl.cc || '',
-          bcc: pl.bcc || '',
-          from: pl.from || '',
-        })
-        // SnappyMail 发送失败时返回 Result:false（如 InvalidToken[101]）。此处必须如实透出失败，
-        // 否则脚本/用户会误以为已发出（历史 bug：无条件 ok:true）。
-        const failed = !r || r.Result === false || (r && r.code && r.code !== 0 && r.code !== 200)
-        if (failed) {
-          const errMsg = (r && (r.message || (r.Result && r.Result.message))) || 'EMAIL_SEND_FAIL'
-          return res.end(JSON.stringify({ ok: false, error: errMsg, code: r && r.code, raw: r }))
-        }
-        return res.end(JSON.stringify({ ok: true, raw: (r && r.Result) || r }))
-      }
-      res.writeHead(404)
-      res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }))
-    } catch (err) {
-      const msg = String((err && err.message) || err)
-      // headless 路径：若存储令牌失效（过期/被服务端拒绝），清除并提示重新登录，
-      // 避免陷入「永远失败、却永不弹登录」的死局。
-      if (!mailSession.session && /SNAPPYMAIL_ERROR|EMAIL_SESSION_MISSING|EMAIL_NO_COOKIES/.test(msg)) {
-        clearStoredAuthCookies()
-        res.writeHead(200)
-        return res.end(JSON.stringify({ ok: false, error: 'EMAIL_SESSION_MISSING', needLogin: true, hint: '登录态已失效，请在桌面端「邮箱」窗口重新登录一次' }))
-      }
-      res.writeHead(500)
-      res.end(JSON.stringify({ ok: false, error: msg, detail: err && err.response }))
-    }
-  })()
-  return true
-}
-
-// ─── Email HTTP API（legacy：基于 imapflow + emailCreds.json 的独立通道，已弃用，保留仅供回退）───
-// 路由：/api/email/mailboxes | /api/email/messages | /api/email/message
-// 安全：仅接受来自 127.0.0.1 / ::1 的请求；只读 GET；绝不在响应里暴露授权码/密码。
-// 注：HTTP 服务 listen 未限定 host，故这里用 remoteAddress 强制回环，避免被局域网访问。
-function handleEmailApiLegacy(req, res, parsed) {
-  const remote = (req.socket && (req.socket.remoteAddress || '')) || ''
-  const isLoopback =
-    remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
-  if (!isLoopback) {
-    res.writeHead(403)
-    res.end(JSON.stringify({ ok: false, error: 'FORBIDDEN: only loopback allowed' }))
-    return true
-  }
-  // 方法校验：send 仅 POST，其余仅 GET（loopback 已在上方校验）
-  const p = parsed.pathname
-  if (p === '/api/email/send') {
-    if (req.method !== 'POST') {
-      res.writeHead(405)
-      res.end(JSON.stringify({ ok: false, error: 'METHOD_NOT_ALLOWED' }))
-      return true
-    }
-  } else if (req.method !== 'GET') {
-    res.writeHead(405)
-    res.end(JSON.stringify({ ok: false, error: 'METHOD_NOT_ALLOWED' }))
-    return true
-  }
-
-  const q = parsed.query || {}
-  const num = (v, d) => {
-    const n = Number(v)
-    return Number.isFinite(n) && n > 0 ? n : d
-  }
-  const str = (v) => (typeof v === 'string' ? v.trim() : '')
-
-  ;(async () => {
-    try {
-      if (p === '/api/email/mailboxes') {
-        const cfg = getEmailConfig()
-        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
-        const mailboxes = await emailClient.listMailboxes(cfg, cfg.authCode)
-        return res.end(JSON.stringify({ ok: true, mailboxes }))
-      }
-      if (p === '/api/email/messages') {
-        const cfg = getEmailConfig()
-        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
-        const folder = str(q.folder) || 'INBOX'
-        const limit = num(q.limit, 60)
-        const list = await emailClient.fetchMessages(cfg, cfg.authCode, folder, limit)
-        // 服务端预筛：未读 / 发件人关键字 / 时间范围，减少回传体积
-        let out = list || []
-        if (q.unreadOnly === '1' || q.unreadOnly === 'true') out = out.filter((m) => !m.seen)
-        if (str(q.from)) {
-          const kw = str(q.from).toLowerCase()
-          out = out.filter(
-            (m) =>
-              m.from &&
-              ((m.from.name || '').toLowerCase().includes(kw) ||
-                (m.from.address || '').toLowerCase().includes(kw)),
-          )
-        }
-        if (str(q.to)) {
-          const kw = str(q.to).toLowerCase()
-          out = out.filter((m) =>
-            (m.to || []).some(
-              (a) =>
-                ((a.name || '').toLowerCase().includes(kw) ||
-                  (a.address || '').toLowerCase().includes(kw)),
-            ),
-          )
-        }
-        if (str(q.since)) {
-          const t = new Date(str(q.since)).getTime()
-          if (!isNaN(t)) out = out.filter((m) => m.date >= t)
-        }
-        if (str(q.before)) {
-          const t = new Date(str(q.before)).getTime()
-          if (!isNaN(t)) out = out.filter((m) => m.date <= t)
-        }
-        return res.end(JSON.stringify({ ok: true, folder, count: out.length, messages: out }))
-      }
-      if (p === '/api/email/message') {
-        const cfg = getEmailConfig()
-        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
-        const folder = str(q.folder) || 'INBOX'
-        const uid = str(q.uid)
-        if (!uid) return res.end(JSON.stringify({ ok: false, error: 'MISSING_UID' }))
-        const msg = await emailClient.fetchMessage(cfg, cfg.authCode, folder, uid)
-        return res.end(JSON.stringify({ ok: true, message: msg }))
-      }
-      if (p === '/api/email/whoami') {
-        const cfg = getEmailConfig()
-        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
-        return res.end(JSON.stringify({ ok: true, email: cfg.email }))
-      }
-      if (p === '/api/email/send') {
-        let body = ''
-        try {
-          for await (const chunk of req) body += chunk
-        } catch (e) { /* 忽略读取异常 */ }
-        let payload = {}
-        try { payload = JSON.parse(body || '{}') }
-        catch (e) {
-          res.writeHead(400)
-          return res.end(JSON.stringify({ ok: false, error: 'BAD_JSON_BODY' }))
-        }
-        const cfg = getEmailConfig()
-        if (!cfg) return res.end(JSON.stringify({ ok: false, error: 'EMAIL_NOT_CONFIGURED' }))
-        try {
-          const out = await emailSender.sendMail(cfg, cfg.authCode, {
-            to: payload.to,
-            subject: payload.subject,
-            text: payload.text,
-            html: payload.html,
-            from: payload.from,
-          })
-          return res.end(JSON.stringify({ ok: true, ...out }))
-        } catch (e) {
-          return res.end(JSON.stringify({
-            ok: false,
-            error: 'SEND_FAIL: ' + (e && e.message),
-            detail: e && e.response,
-            code: e && e.code,
-          }))
-        }
-      }
-      res.writeHead(404)
-      res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }))
-    } catch (err) {
-      res.writeHead(500)
-      res.end(JSON.stringify({
-        ok: false,
-        error: humanizeImapError(err),
-        detail: err && err.message,
-        code: err && err.code,
-        responseText: err && err.responseText,
-      }))
-    }
-  })()
-  return true
-}
-
-// ─── Workbench window (个人工作台：四象限 + 日历) ──────
+//\ ───\ Workbench\ window\ \(个人工作台：四象限\ \+\ 日历\)\ ──────
 function openWorkbenchWindow() {
   if (workbenchWindow && !workbenchWindow.isDestroyed()) {
     if (workbenchWindow.isVisible()) workbenchWindow.focus()
