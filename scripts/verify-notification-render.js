@@ -24,6 +24,7 @@ const api = {
   onNcMeasure: (f) => { api._measure = f },
   onNcPlay: (f) => { api._play = f },
   onNcShow: (f) => { api._show = f },
+  onNcCountdown: (f) => { api._cd = f },
   openConversation: (cid, url) => calls.push(['open', cid, url]),
   closeNc: (f) => calls.push(['close', f]),
   markRead: () => {},

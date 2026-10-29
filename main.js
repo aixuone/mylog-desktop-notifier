@@ -1774,6 +1774,9 @@ app.whenReady().then(() => {
       sendToAppClient,
       hasAppClient,
       focusMainWindow,
+      // 主窗口是否处于「前台且可见且有焦点」：用于实现「打开会话 + 窗口在前台」才抑制该会话弹窗；
+      // 窗口被遮挡/失焦/收起（如切到别的程序、最小化到托盘）时返回 false → 该会话消息照常弹窗（用户可能没在看屏幕）。
+      isMainWindowActive: () => !!(mainPageWindow && !mainPageWindow.isDestroyed() && mainPageWindow.isVisible() && mainPageWindow.isFocused()),
     })
     notificationCenter.preCreate()
     // ─────────────────────────────────────────────
@@ -2242,7 +2245,9 @@ function openMainPage() {
       const cur = mainPageWindow.webContents.getURL() || ''
       const hasLivePage = cur && cur !== 'about:blank' && cur.indexOf('splash.html') === -1 && cur.indexOf('mainpage-error') === -1
       if (hasLivePage && /^https?:/i.test(target)) {
-        shell.openExternal(target)
+        // 跨站跳转也可能是下载响应（响应头 attachment）——交给 Chrome 式判定：
+        // 下载 → 进下载中心（主窗不动）；网页 → 系统浏览器（主窗仍不动，口径不变）
+        openExternalOrDownload(target)
       } else if (!hasLivePage) {
         // 首屏就被带去站外时页面还没有任何内容，别把用户留在空白窗口——给一张可读的说明页
         mainPageWindow.loadURL('file://' + path.join(__dirname, 'src', 'mainpage-error.html') +
@@ -2265,6 +2270,34 @@ function openMainPage() {
     if (!url) return false
     try { return DOWNLOAD_EXT_RE.test(new URL(url).pathname) } catch (e) { return DOWNLOAD_EXT_RE.test(url) }
   }
+  // ─── Chrome 式下载判定：隐藏窗试载，响应头说了算 ───
+  // 背景：下载直链（COS 签名 URL 无扩展名）在开窗拦截阶段无法与普通外链区分，旧逻辑一律 openExternal
+  //   → 下载跑进系统浏览器。Chrome 的做法是先导航、由响应（Content-Disposition）决定"下载 or 展示"。
+  // 复刻：同 session 的隐藏窗 loadURL——session 级 will-download 全局生效，下载响应会在页面加载完成前
+  //   触发 will-download 进下载中心（探针窗须保活到下载结束，销毁会取消下载）；否则视为普通网页交系统浏览器。
+  function openExternalOrDownload(url) {
+    let w = null
+    try {
+      w = new BrowserWindow({
+        show: false, skipTaskbar: true,
+        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+      })
+    } catch (e) { try { shell.openExternal(url) } catch (e2) {} return }
+    w.__dlProbe = true
+    // 判定收尾：实测 will-download 在 loadURL reject / did-finish-load 之后亚秒级才触发，
+    // "按网页处理"前必须延迟复查，避免把刚建立的下载误送系统浏览器。
+    const asPage = () => {
+      try {
+        if (w.isDestroyed() || w.__dlProbeDownloaded) return
+        if (/^https?:/i.test(url)) shell.openExternal(url)
+        w.destroy()
+      } catch (e) {}
+    }
+    const finishAsPage = () => setTimeout(asPage, 600)
+    w.webContents.once('did-finish-load', finishAsPage)
+    w.loadURL(url).catch(finishAsPage)
+    setTimeout(asPage, 20000) // 兜底：极端慢响应也不能留隐藏窗
+  }
   try {
     mainPageWindow.webContents.setWindowOpenHandler(({ url, disposition }) => {
       if (disposition === 'download' || disposition === 'saveToDisk' || looksLikeDownload(url)) {
@@ -2273,8 +2306,8 @@ function openMainPage() {
         return { action: 'deny' }
       }
       if (disposition === 'new-window' || disposition === 'foreground-tab' || disposition === 'background-tab') {
-        // 普通外链（_blank 等）用系统默认浏览器打开，不在应用内开新窗
-        if (url && /^https?:\/\//i.test(url)) { try { require('electron').shell.openExternal(url) } catch (e) {} }
+        // Chrome 式判定：隐藏窗试载——下载响应自动进下载中心，网页才开系统浏览器（不猜扩展名了）
+        openExternalOrDownload(url)
         return { action: 'deny' }
       }
       return { action: 'allow' } // 同窗口导航
@@ -2591,8 +2624,9 @@ function handleBrowserMessage(ws, msg) {
     // 网页端已读同步：payload = { conversationId? } 或 {} 表示全部已读
     case 'MARK_READ':
       if (notificationCenter) {
-        notificationCenter.markRead(msg.payload?.conversationId || 'all')
-        console.log('[WS] Mark read from web:', msg.payload?.conversationId || 'all')
+        // soft=true：网页端的「乐观已读」不立即拆掉正在显示的提醒（防闪退），真实未读由下次 SYNC 校准
+        notificationCenter.markRead(msg.payload?.conversationId || 'all', true)
+        console.log('[WS] Mark read from web (soft):', msg.payload?.conversationId || 'all')
       }
       break
 
@@ -3391,11 +3425,29 @@ ipcMain.on('titlebar:menu', (e, key) => {
 // ─── Downloads window (下载中心：任务列表 + 打开文件/所在目录) ──────
 // will-download 处理：落盘到用户下载目录 + 记录任务 + 广播进度/状态
 // 注意 fs/path 已在文件顶部 require（这里可直接使用）
+// 网页通过 downloads:trigger-url 发起的下载：URL → web 指定文件名 的临时映射，
+// will-download 命中后取一次即删。网页侧知道真实文件名（COS 签名 URL 路径里没有）。
+const pendingDownloadNames = new Map()
+function sanitizeDlName(n) {
+  return String(n || '').replace(/[\\/:*?"<>|]/g, '_').replace(/^\.+/, '').trim()
+}
 function handleWillDownload(event, item) {
+  // Chrome 式判定探针窗触发的下载：标记探针（此刻销毁会取消下载），挂 done 后再销毁
+  try {
+    const probeWin = BrowserWindow.fromWebContents(event.sender)
+    if (probeWin && probeWin.__dlProbe) {
+      probeWin.__dlProbeDownloaded = true
+      item.on('done', () => { try { if (!probeWin.isDestroyed()) probeWin.destroy() } catch (e) {} })
+    }
+  } catch (e) {}
   const downDir = settingsStore.getDownloadDir()
   try { if (!fs.existsSync(downDir)) fs.mkdirSync(downDir, { recursive: true }) } catch (e) {}
   // 同名文件自动加序号 (1)/(2)…，避免覆盖已有文件
   let name = item.getFilename() || 'download'
+  try {
+    const hint = pendingDownloadNames.get(item.getURL())
+    if (hint) { pendingDownloadNames.delete(item.getURL()); name = hint }
+  } catch (e) {}
   const extIdx = name.lastIndexOf('.')
   const base = extIdx > 0 ? name.slice(0, extIdx) : name
   const ext = extIdx > 0 ? name.slice(extIdx) : ''
@@ -3411,6 +3463,7 @@ function handleWillDownload(event, item) {
     state: 'progressing',
     receivedBytes: 0,
     totalBytes: item.getTotalBytes() || 0,
+    startedAt: Date.now(),   // 开始时间：下载中心列表展示「今天 HH:mm」用
     userId: (currentUser && currentUser.userId) || '',     // 归属用户：下载记录按用户隔离
     userName: (currentUser && currentUser.userName) || '',
     item: item, // 引用保留用于取消（广播前剥离）
@@ -3481,7 +3534,8 @@ function openDownloadsWindow() {
   const wa = screen.getPrimaryDisplay().workArea
   downloadsWindow = new BrowserWindow({
     width: 400, height: 480,
-    show: true, frame: false, resizable: false, minimizable: false, maximizable: false,
+    // 先不显示：等页面首帧就绪再 show，避免弹出 0.9s 的空白白框（用户会以为"没反应"）
+    show: false, frame: false, resizable: false, minimizable: false, maximizable: false,
     alwaysOnTop: true, skipTaskbar: true,
     backgroundColor: '#F2F5FA', // 与页面渐变底色一致，避免圆角四角露白
     icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico')),
@@ -3498,6 +3552,17 @@ function openDownloadsWindow() {
     }
   } catch (e) {}
   downloadsWindow.loadFile(path.join(__dirname, 'src', 'downloads-window.html'))
+  // 首帧就绪再显示：此时列表数据已由 did-finish-load 回推，窗口一出现就是有内容的界面。
+  // 兜底 3s：极端情况下若 did-finish-load 迟迟不触发，也不能让窗口永远不出现。
+  let dlShown = false
+  const showDlWin = () => {
+    if (dlShown) return
+    dlShown = true
+    try {
+      if (downloadsWindow && !downloadsWindow.isDestroyed()) { downloadsWindow.show(); downloadsWindow.focus() }
+    } catch (e) {}
+  }
+  setTimeout(showDlWin, 3000)
   // 关闭时不销毁，改为隐藏复用：渲染进程常驻，避免每次重开都经历 ~10s 渲染进程冷启动
   // （主窗口用 splash 把同样的冷启动藏起来了，下载窗口没有，于是裸奔成"白屏 10s"）。
   // 仅在应用退出（isQuitting）时允许真正关闭，以免阻碍进程退出。
@@ -3507,7 +3572,7 @@ function openDownloadsWindow() {
     try { downloadsWindow.hide() } catch (err) {}
   })
   downloadsWindow.on('closed', () => { downloadsWindow = null })
-  // 打开即推送一次最新列表
+  // 打开即推送一次最新列表，随后再显示窗口（顺序重要：先有数据，后露面）
   downloadsWindow.webContents.once('did-finish-load', () => {
     if (downloadsWindow && !downloadsWindow.isDestroyed()) {
       console.log('[Downloads] did-finish-load 距开窗', Date.now() - t0, 'ms')
@@ -3517,6 +3582,7 @@ function openDownloadsWindow() {
         userName: (currentUser && currentUser.userName) || '',
       })
     }
+    showDlWin()
   })
 }
 
@@ -3722,6 +3788,19 @@ ipcMain.handle('downloads:list', () => {
   const r = publicDownloads()
   console.log('[Downloads] downloads:list 构建', Date.now() - t, 'ms，条目', r.length)
   return r
+})
+// 网页主动触发的下载（聊天文件等）：主窗口 downloadURL → will-download → 下载中心。
+// 与 <a target=_blank> 的区别：不经过窗口打开拦截（不会误开浏览器），且可携带 web 端真实文件名。
+ipcMain.handle('downloads:trigger-url', (e, payload) => {
+  try {
+    const url = payload && payload.url
+    if (!url || !/^https?:/i.test(url)) return false
+    if (!mainPageWindow || mainPageWindow.isDestroyed()) return false
+    if (pendingDownloadNames.size > 50) pendingDownloadNames.clear() // 防泄漏：只认最近发起的一批
+    pendingDownloadNames.set(url, sanitizeDlName(payload.fileName) || undefined)
+    mainPageWindow.webContents.downloadURL(url)
+    return true
+  } catch (err) { console.warn('[Download] trigger-url 失败:', err && err.message); return false }
 })
 ipcMain.handle('downloads:current-user', () => ({
   userId: (currentUser && currentUser.userId) || '',

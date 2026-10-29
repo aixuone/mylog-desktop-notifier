@@ -43,7 +43,10 @@ body {
   cursor: pointer; -webkit-app-region: no-drag; font-family: inherit;
   transition: background 0.15s;
 }
-.header .btn.close { background: transparent; font-size: 16px; padding: 2px 8px; }
+.header .btn.close {
+  background: #F1EFE8; font-size: 12px; padding: 4px 10px; border-radius: 10px;
+  min-width: 66px; text-align: center; font-weight: 500;
+}
 .header .btn.close:hover { background: #E8E6E1; }
 
 /* ── List ──
@@ -155,7 +158,7 @@ body.nc-hide-content .conv .last { visibility: hidden; }
     <span class="title">消息通知</span>
     <span class="badge" id="badge" style="display:none;">0</span>
     <span class="spacer"></span>
-    <button class="btn close" id="btn-close" title="关闭">✕</button>
+    <button class="btn close" id="btn-close" title="关闭">关闭</button>
   </div>
   <div class="list" id="list"></div>
 </div>
@@ -182,6 +185,35 @@ body.nc-hide-content .conv .last { visibility: hidden; }
   var MIN_H = 132, MAX_H = 520
   var lastSentH = 0
   var lastLoggedSig = ''
+
+  // ── 关闭倒计时：主进程推真实关闭秒数，关闭按钮显示「N秒 关闭」──
+  var cdBtn = document.getElementById('btn-close')
+  var cdTimer = null
+  var cdRemain = 0
+  function renderCountdown() {
+    if (!cdBtn) return
+    cdBtn.textContent = cdRemain > 0 ? (cdRemain + '秒 关闭') : '关闭'
+  }
+  function stopCountdown() {
+    if (cdTimer) { clearInterval(cdTimer); cdTimer = null }
+    cdRemain = 0
+    renderCountdown()
+  }
+  function startCountdown(total) {
+    if (cdTimer) { clearInterval(cdTimer); cdTimer = null }
+    cdRemain = total
+    renderCountdown()
+    cdTimer = setInterval(function () {
+      cdRemain -= 1
+      if (cdRemain <= 0 && cdTimer) { clearInterval(cdTimer); cdTimer = null }
+      renderCountdown()
+    }, 1000)
+  }
+  api.onNcCountdown(function (data) {
+    data = data || {}
+    if (data.running) startCountdown(data.total || 5)
+    else stopCountdown()
+  })
 
   // 渲染层日志回传：渲染进程的异常在主进程里完全看不到，必须送回主进程落盘
   // （%APPDATA%\mylog-desktop-notifier\logs\notify-*.log，前缀 [NCR]）
@@ -477,6 +509,7 @@ body.nc-hide-content .conv .last { visibility: hidden; }
     void appEl.offsetWidth
     appEl.classList.add('nc-enter')
     if (listEl) listEl.scrollTop = 0
+    measure(true)   // 显示后再量一次，吃掉头像/字体等晚期布局造成的高度偏差
   }
   api.onNcShow(playEnter)
   appEl.addEventListener('animationend', function (e) {

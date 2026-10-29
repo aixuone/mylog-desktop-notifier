@@ -228,7 +228,7 @@ function transitionSeq(ctx) {
   ok('S1.3', !isShown(c), '完整时长后自动收起')
 }
 
-// D11 展示时长随行数递增：设定值是「一行」的扫读时间，多行要给足时间，上限 12s
+// D11 停留时长固定 5s，与堆叠行数无关（用户要求 7→5；多会话不再加时，行为可预期）
 {
   const c = boot({ messageNotify: { display: 'content', duration: 5 } })
   c.nc.pushMessage(msg('a', '张三', '1', { unreadCount: 1 }))
@@ -238,10 +238,10 @@ function transitionSeq(ctx) {
   c.nc.pushMessage(msg('c', '王五', '3', { unreadCount: 1 }))
   tick(300)
   eq('D11', rowsOf(c).length, 3, '3 行已就位')
-  tick(6000)
-  ok('D11', isShown(c), '3 行时 6s 仍在显示（5s + 2s）')
-  tick(1300)
-  ok('D11', !isShown(c), '7s 后收起')
+  tick(4500)
+  ok('D11', isShown(c), '5s 内（3 行）仍在显示')
+  tick(1500)
+  ok('D11', !isShown(c), '满 5s 后收起（不随行数加时）')
 }
 
 // S1.4 两个会话在 150ms 内到达 → 一次成型
@@ -358,7 +358,9 @@ for (const mode of ['dnd', 'blockChat']) {
   eq('D13', rowsOf(c)[0].conversationId, 'a', '仍是 a')
 }
 
-// D14 切到一个「当前无可见提醒、但有旧未读」的会话 → 仍应清掉它的旧未读（保留原语义，不误伤其它提醒）
+// D14 切到「当前无可见提醒、但有旧未读」的会话 → 不应清它的旧未读（修复「切换会话自动已读」bug）
+// 旧逻辑一切换就 markRead，未读被清、该会话再也不弹窗；未读归零权应交由网页端 MARK_READ。
+// 同时校验：切到 a 后 a 再来新消息应被抑制（activeConvId=a），避免「打开后回弹」。
 {
   const c = boot()
   c.nc.syncUnread([{ conversationId: 'a', name: '张三', count: 1, last: 'hi' }])   // 基线，a 不进 stack（idle）
@@ -367,10 +369,14 @@ for (const mode of ['dnd', 'blockChat']) {
   tick(200)
   eq('D14', rowsOf(c).length, 1, '只有 b 在显示')
   eq('D14', rowsOf(c)[0].conversationId, 'b', '显示的是 b')
-  c.nc.setActiveConversation('a')    // 用户切到 a（a 当前无可见提醒）→ 应清 a 的旧未读
+  c.nc.setActiveConversation('a')    // 用户切到 a（a 当前无可见提醒）
   tick(50)
-  eq('D14', c.nc.getUnread().find((x) => x.conversationId === 'a'), undefined, '切到 a → a 的旧未读被清')
+  ok('D14', c.nc.getUnread().find((x) => x.conversationId === 'a'), '切到 a → a 的旧未读保留（不再被自动已读）')
   ok('D14', isShown(c), 'b 的提醒不受影响，仍在显示')
+  c.nc.pushMessage(msg('a', '张三', '新消息', { unreadCount: 2 }))                  // 切到 a 后 a 再来消息
+  tick(200)
+  eq('D14', rowsOf(c).length, 1, 'a 新消息被抑制：仍只有 b 在显示')
+  eq('D14', rowsOf(c)[0].conversationId, 'b', '显示的是 b')
 }
 
 // S2.6 双通道（先 SYNC 后 PUSH）

@@ -68,6 +68,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onNcPlay: (callback) => ipcRenderer.on('nc-play', (_, data) => callback(data)),
   /** 窗口由隐藏→可见时触发（渲染进程据此播放入场动画，避免列表刷新时反复闪） */
   onNcShow: (callback) => ipcRenderer.on('nc-show', () => callback()),
+  /** 关闭倒计时（running=false 时停止；total 为真实关闭秒数，渲染层据此把关闭按钮显示成「N秒 关闭」） */
+  onNcCountdown: (callback) => ipcRenderer.on('nc-countdown', (_, data) => callback(data)),
 
   /** 打开会话（主进程 shell.openExternal） */
   openConversation: (conversationId, url) => ipcRenderer.send('nc-open-conversation', { conversationId, url }),
@@ -157,6 +159,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Downloads (下载中心：任务列表 / 打开文件 / 打开所在目录) ──
   /** 拉取下载任务列表 */
   downloadsList: () => ipcRenderer.invoke('downloads:list'),
+  /** 网页触发下载进下载中心（绕过 <a target=_blank> 的跨域 download 属性失效问题），可携带真实文件名 */
+  downloadFile: (url, fileName) => ipcRenderer.invoke('downloads:trigger-url', { url, fileName }),
   /** 用系统默认程序打开已下载文件 */
   downloadsOpen: (id) => ipcRenderer.invoke('downloads:open', id),
   /** 打开文件所在目录并选中该文件 */
